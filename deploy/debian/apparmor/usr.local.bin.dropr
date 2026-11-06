@@ -57,6 +57,9 @@ profile dropr /usr/local/bin/dropr {
   owner /var/backups/dropr/ r,
   owner /var/backups/dropr/* rw,
   owner /tmp/** rw,
+  # A unix: listen socket behind a reverse proxy (RuntimeDirectory=dropr).
+  owner /run/dropr/ rw,
+  owner /run/dropr/** rw,
 
   # Go runtime: huge page size, CPU quota for GOMAXPROCS.
   /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,

@@ -94,10 +94,10 @@ outside the Nix store and are passed with systemd `LoadCredential`.
   trusted_proxies = [ "127.0.0.1" ]; ... }` and `services.nginx` or Caddy in front.
 * Upgrade: `nix flake update dropr && nixos-rebuild switch`.
 
-### Debian or Ubuntu: Compose or bare-metal systemd
+### Debian 13 (systemd) or Docker Compose
 
-[deploy-debian.md](deploy-debian.md) is the step-by-step production guide for
-a Debian or Ubuntu server, with two ready-made kits:
+[deploy-debian.md](deploy-debian.md) is the step-by-step production guide,
+with two ready-made kits:
 
 * **Compose** (`deploy/docker/`): `setup.sh` lays out `/opt/dropr`
   (`compose.yaml`, `.env` with the image digest, `dropr.toml`, `secrets/`,
@@ -105,12 +105,16 @@ a Debian or Ubuntu server, with two ready-made kits:
   and upgrades with `--image <digest>` (backup, recreate, health check). The
   container runs as UID 65532 from a shell-less image with a read-only root,
   `cap_drop: ALL`, `no-new-privileges`, pid and memory limits.
-* **Binary and systemd** (`deploy/debian/`): `install.sh --binary FILE` or
-  `--version vX.Y.Z` (downloads the release binary and verifies its
-  signature) creates the `dropr` user, `/etc/dropr` with root-only
-  credentials passed through `LoadCredential`, a sandboxed `dropr.service`,
-  the `dropr-admin` wrapper, a daily backup timer and a 7-day journal
-  namespace. Rerunning it upgrades (backup, atomic swap, health check).
+* **Debian 13 and systemd** (`deploy/debian/`, the recommended path):
+  `harden-host.sh` hardens a dedicated host (SSH, nftables, sysctl,
+  unattended upgrades, NTS time) under a rollback guard. `install.sh
+  --binary FILE` or `--version vX.Y.Z` (downloads the release binary and
+  verifies its signature) creates the `dropr` user, `/etc/dropr` with
+  credentials sealed by `systemd-creds` (TPM2 when present), a sandboxed
+  `dropr.service` plus an AppArmor profile, the admin tools, daily backups
+  with optional restic off-site copies, a self-check timer with webhook or
+  email alerts, and a 7-day journal namespace. Rerunning it upgrades
+  (backup, atomic swap, health check).
 
 Both images (Nix and Containerfile) install the binary as `/bin/dropr` and
 declare a healthcheck: the image has no shell or curl, so
