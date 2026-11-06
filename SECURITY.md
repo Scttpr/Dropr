@@ -78,6 +78,8 @@ while read -r sum file; do
   case "$file" in
     sw.js) url="$HOST/sw.js" ;;
     manifest.json) continue ;;                 # build metadata, not served to browsers
+    app.css|favicon.svg)                       # fingerprinted at startup: name.<first 10 hex of sha256>.ext
+      url="$HOST/assets/${file%.*}.${sum:0:10}.${file##*.}" ;;
     *) url="$HOST/assets/$file" ;;
   esac
   got=$(curl -fsS "$url" | sha256sum | cut -d' ' -f1)
@@ -100,14 +102,22 @@ cosign verify ghcr.io/scttpr/dropr@sha256:<digest> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
+The SBOM is attached to the image as a signed SPDX attestation:
+
+```sh
+cosign verify-attestation --type spdxjson ghcr.io/scttpr/dropr@sha256:<digest> \
+  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/ci\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 Compose users pin the image by digest (`DROPR_IMAGE` in `.env`, see `deploy/docker/`). The Nix-built
 image is reproducible: `nix build .#image` yields the same layers as the release
 (the digest of the pushed image may differ in manifest packaging).
 
 ## Dependencies and supply chain
 
-* Browser: zero runtime dependencies. Dev dependencies (esbuild, TypeScript)
-  are pinned exactly in `web/package.json` and locked.
+* Browser: zero runtime dependencies. Dev dependencies (esbuild, TypeScript,
+  `@types/node`) are pinned exactly in `web/package.json` and locked.
 * Go: standard library plus a short, audited list (`go.mod`); `govulncheck` and
   `npm audit` run in CI.
 * No third-party scripts, fonts, analytics or CDN assets are ever loaded.
