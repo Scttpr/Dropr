@@ -1,0 +1,23 @@
+# Dev / CI only: a Keycloak with the seeded "dropr" realm so login works
+# without a real tenant. Start with `make keycloak-up` (podman-compose).
+#
+#   Keycloak:  http://localhost:8180  (admin console: admin / admin)
+#   Realm:     dropr — users alice / alice-dev-password and bob / bob-dev-password
+#              have the Dropr.User role; mallory / mallory-dev-password does not.
+#   Clients:   dropr        (client secret "dropr-dev-secret", PKCE S256 required)
+#              dropr-pkjwt  (private_key_jwt, TEST-ONLY key in keycloak/test-keys/)
+#
+# All credentials here are public test values.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5@sha256:45ae20191531eb608ddb0b775d012b40d3e4f942697f3214694887dd7c108d13
+    command: ["start-dev", "--import-realm", "--http-port=8180"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+      KC_LOG_LEVEL: info
+    ports:
+      - "127.0.0.1:8180:8180"
+    volumes:
+      - ./keycloak/dropr-realm.json:/opt/keycloak/data/import/dropr-realm.json:ro,Z

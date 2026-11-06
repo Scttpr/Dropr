@@ -1,0 +1,55 @@
+# Production Compose file for Dropr (podman-compose or docker compose).
+#
+#   1. Copy deploy/dropr.example.toml to ./dropr.toml and edit it.
+#      Keep the secret paths: /run/secrets/refresh_key and /run/secrets/oidc_key.
+#   2. Create the secrets (readable only by you; Compose mounts them 0444 inside
+#      the container, so keep the host directory private):
+#        mkdir -p secrets && chmod 700 secrets
+#        (umask 077; openssl rand -base64 32 > secrets/refresh_key)
+#        # secrets/oidc_key.pem: PEM private key followed by its certificate
+#        # (see docs/setup-entra.md or docs/setup-keycloak.md)
+#   3. Pin the image: replace <digest> with the digest of the release you
+#      verified (see SECURITY.md), then `docker compose up -d`.
+#
+# Dropr listens on 8443 inside the container. With tls = "acme" it obtains its
+# own Let's Encrypt certificate (TLS-ALPN-01, so only port 443 is needed).
+services:
+  dropr:
+    image: ghcr.io/scttpr/dropr@sha256:<digest>   # TODO: registry/org name is a project decision
+    restart: unless-stopped
+    ports:
+      - "443:8443"
+      # Optional HTTP -> HTTPS redirect: set redirect_http = true in dropr.toml
+      # (it listens on :8080 inside the container) and uncomment:
+      # - "80:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    # Binding 8443 inside the container needs no capability. Publishing host
+    # port 443 is done by the container engine, not by Dropr.
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - dropr-data:/data
+      - ./dropr.toml:/etc/dropr/dropr.toml:ro
+    secrets:
+      - refresh_key
+      - oidc_key
+    # The image has no shell or curl: the binary probes its own GET /healthz
+    # (same path in the Nix and Containerfile images).
+    healthcheck:
+      test: ["CMD", "/bin/dropr", "healthcheck", "--config", "/etc/dropr/dropr.toml"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+secrets:
+  refresh_key:
+    file: ./secrets/refresh_key
+  oidc_key:
+    file: ./secrets/oidc_key.pem
+
+volumes:
+  dropr-data:

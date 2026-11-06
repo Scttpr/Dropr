@@ -1,0 +1,42 @@
+# Local development against the Keycloak of compose.dev.yaml.
+# Run from the repository root: `make dev`.
+#
+# public_url uses http://localhost, which only dev mode allows. The session
+# cookie is still `__Host-dropr_session; Secure`: browsers treat
+# http://localhost as a secure context and Chrome and Firefox accept Secure
+# (and __Host-) cookies from it. Use exactly "localhost" (not 127.0.0.1) so
+# the redirect URI matches the one registered in the dev realm.
+
+mode       = "dev"
+tls        = "proxy"
+listen     = "127.0.0.1:8080"
+public_url = "http://localhost:8080"
+data_dir   = "./.dev-data"
+refresh_key_file = "./.dev-data/refresh_key"   # created by `make dev`
+login_label = "Sign in with Keycloak (dev)"
+log_level  = "debug"
+
+[limits]
+max_file_size  = "5GB"
+user_quota     = "50GB"
+default_expiry = "7d"
+
+[oidc]
+issuer           = "http://localhost:8180/realms/dropr"
+client_id        = "dropr"
+client_auth      = "client_secret"                 # dev mode only
+client_secret_file = "./deploy/dev/client_secret"  # "dropr-dev-secret"
+# Keycloak's offline_access scope yields offline tokens that survive SSO
+# logout; plain refresh tokens are what revalidation needs.
+scopes           = ["openid", "profile"]
+role_claim       = "realm_access.roles"
+required_role    = "Dropr.User"
+display_claim    = "name"
+revalidate_every = "15m"
+
+# To exercise private_key_jwt instead (as production requires):
+#   client_id       = "dropr-pkjwt"
+#   client_auth     = "private_key_jwt"
+#   client_key_file = "./deploy/keycloak/test-keys/dropr-pkjwt.TEST-ONLY.pem"
+#   client_key_id   = "dropr-dev-test"
+# and remove client_secret_file.

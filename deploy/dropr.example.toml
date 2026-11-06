@@ -1,0 +1,35 @@
+# Dropr configuration (production). See docs/ARCHITECTURE.md §5 and PLAN.md §5.1.
+public_url   = "https://drop.example.com"
+mode         = "production"
+data_dir     = "/data"
+listen       = ":8443"
+tls          = "acme"              # or "proxy" (then listen on 127.0.0.1:8080 or unix:/run/dropr.sock)
+acme_email   = "admin@example.com"
+redirect_http = false
+trusted_proxies = []               # proxy mode: REQUIRED (the proxy's address, e.g. ["127.0.0.1"])
+# trust_unix_socket_proxy = false  # proxy mode on unix:/run/dropr.sock: trust its X-Forwarded-For
+refresh_key_file = "/run/secrets/refresh_key"   # openssl rand -base64 32
+login_label  = "Sign in with Microsoft"
+
+[limits]
+max_file_size  = "5GB"             # at most 100GB (binary units)
+user_quota     = "50GB"
+default_expiry = "7d"              # 1h, 1d, 7d or 30d
+# disk_headroom = "10GB"          # free space kept after accepting an upload; default max(1GB, 5% of the disk)
+# max_transfers = 512              # concurrent part uploads + downloads
+# max_transfers_per_ip = 32
+# min_transfer_rate = "4KB"        # per second over 60 s; "0" disables
+
+[oidc]
+issuer          = "https://login.microsoftonline.com/<tenant-id>/v2.0"
+client_id       = "<application-id>"
+client_auth     = "private_key_jwt"
+client_key_file = "/run/secrets/oidc_key"   # PEM private key followed by its certificate
+scopes          = ["openid", "profile", "offline_access"]
+role_claim      = "roles"
+required_role   = "Dropr.User"
+display_claim   = "name"
+required_claims = { tid = "<tenant-id>" }
+revalidate_every = "15m"
+# Entra ID supports PKCE S256 but does not advertise it in discovery.
+allow_unadvertised_pkce = true
