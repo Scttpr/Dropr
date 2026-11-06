@@ -27,6 +27,7 @@ export {
   anonymousPage,
   downloadVia,
   expect,
+  expectNoPageModule,
   injectRequestKey,
   makeFile,
   requestIdOf,

@@ -170,6 +170,12 @@ export async function downloadVia(page: Page, trigger: Locator): Promise<{ name:
   return { name: dl.suggestedFilename(), sha256: await sha256File(path) };
 }
 
+/** Server-rendered dead pages (errors, 403) load no page module: prefs.js, on every page, is the only script. */
+export async function expectNoPageModule(page: Page): Promise<void> {
+  await expect(page.locator("script")).toHaveCount(1);
+  await expect(page.locator("script")).toHaveAttribute("src", /^\/assets\/prefs-[^/]+\.js$/);
+}
+
 /** Forward page errors and warnings to the test output (minus header noise). */
 export function logConsole(page: Page, label: string): void {
   page.on("console", (m: ConsoleMessage) => {

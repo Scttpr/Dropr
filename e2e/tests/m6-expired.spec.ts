@@ -6,7 +6,7 @@
  * download token issued before expiry stops working too.
  */
 
-import { anonymousPage, createRequest, gotoFresh, expect, linkId, makeFile, shareFile, sqlGet, sqlRun, test, type TestFile } from "../m6.ts";
+import { anonymousPage, createRequest, gotoFresh, expect, expectNoPageModule, linkId, makeFile, shareFile, sqlGet, sqlRun, test, type TestFile } from "../m6.ts";
 
 test.describe.configure({ mode: "serial" });
 test.use({ droprConfig: {} });
@@ -46,7 +46,7 @@ test("an expired share link shows the plain expired page and the API answers 410
   const res = await gotoFresh(page, shareUrl);
   expect(res?.status()).toBe(410);
   await expect(page.locator("main")).toContainText("This link has expired.");
-  await expect(page.locator("script")).toHaveCount(0);
+  await expectNoPageModule(page);
   await expect(page.locator("[data-share-id]")).toHaveCount(0);
 
   const api = await request.post(`${dropr.origin}/api/s/${id}/download`, { headers: { origin: dropr.origin }, data: {} });
@@ -76,7 +76,7 @@ test("an expired request link shows the plain expired page and refuses uploads",
   const res = await gotoFresh(page, requestUrl);
   expect(res?.status()).toBe(410);
   await expect(page.locator("main")).toContainText("This link has expired.");
-  await expect(page.locator("script")).toHaveCount(0);
+  await expectNoPageModule(page);
 
   const api = await request.post(`${dropr.origin}/api/r/${id}/files`, {
     headers: { origin: dropr.origin },

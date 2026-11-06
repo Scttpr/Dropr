@@ -11,6 +11,7 @@ import {
   blobExists,
   createRequest,
   expect,
+  expectNoPageModule,
   gotoFresh,
   linkId,
   makeFile,
@@ -63,7 +64,7 @@ test("owner revokes a share link while a recipient has the page open", async ({ 
   const res = await gotoFresh(page, url);
   expect(res?.status()).toBe(404);
   await expect(page.locator("main")).toContainText(REVOKED);
-  await expect(page.locator("script")).toHaveCount(0);
+  await expectNoPageModule(page);
   const api = await request.post(`${dropr.origin}/api/s/${id}/download`, { headers: { origin: dropr.origin }, data: {} });
   expect(api.status()).toBe(404);
   await context.close();
@@ -105,7 +106,7 @@ test("owner revokes a request link: its received files are deleted with it", asy
   const res = await gotoFresh(page, link);
   expect(res?.status()).toBe(404);
   await expect(page.locator("main")).toContainText(REVOKED);
-  await expect(page.locator("script")).toHaveCount(0);
+  await expectNoPageModule(page);
   const api = await request.post(`${dropr.origin}/api/r/${id}/files`, {
     headers: { origin: dropr.origin },
     data: { size: 1016, parts: 1, meta: "A".repeat(80), wrapped_key: "A".repeat(107) },

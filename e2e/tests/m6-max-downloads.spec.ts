@@ -7,7 +7,7 @@
  * fetched a token before the limit was reached.
  */
 
-import { anonymousPage, downloadVia, expect, gotoFresh, linkId, makeFile, shareFile, sqlGet, test, type TestFile } from "../m6.ts";
+import { anonymousPage, downloadVia, expect, expectNoPageModule, gotoFresh, linkId, makeFile, shareFile, sqlGet, test, type TestFile } from "../m6.ts";
 
 test.describe.configure({ mode: "serial" });
 test.use({ droprConfig: {} });
@@ -83,7 +83,7 @@ test("a second recipient sees that the download limit was reached", async ({ bro
   const res = await gotoFresh(page, url);
   expect(res?.status()).toBe(410);
   await expect(page.locator("main")).toContainText("This link has reached its download limit.");
-  await expect(page.locator("script")).toHaveCount(0);
+  await expectNoPageModule(page);
   const api = await request.post(`${dropr.origin}/api/s/${linkId(url)}/download`, { headers: { origin: dropr.origin }, data: {} });
   expect(api.status()).toBe(410);
   expect(((await api.json()) as { error: string }).error).toBe("exhausted");

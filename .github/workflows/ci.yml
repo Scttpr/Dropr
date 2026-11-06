@@ -105,6 +105,11 @@ jobs:
             sleep 2
           done
           docker logs keycloak; exit 1
+      # Ubuntu 24.04 denies unprivileged user namespaces through AppArmor;
+      # WebKit's web processes sandbox with bubblewrap and die without them
+      # ("Target page, context or browser has been closed" on newPage).
+      - name: Allow unprivileged user namespaces (WebKit sandbox)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # Browsers come from nixpkgs (PLAYWRIGHT_BROWSERS_PATH in the dev shell);
       # the npm @playwright/test version must equal $PLAYWRIGHT_VERSION.
       - run: nix develop -c bash -c 'cd e2e && npm ci && npx playwright test'

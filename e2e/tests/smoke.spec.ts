@@ -10,7 +10,7 @@
  * in the project's browser.
  */
 
-import { type TestFile, USERS, anonymousPage, downloadVia, expect, makeFile, requestIdOf, requestKeyIds, test } from "../fixtures.ts";
+import { type TestFile, USERS, anonymousPage, downloadVia, expect, expectNoPageModule, makeFile, requestIdOf, requestKeyIds, test } from "../fixtures.ts";
 
 const MiB = 1024 * 1024;
 
@@ -91,7 +91,7 @@ test("dead and broken share links are explained", async ({ browser, dropr }) => 
   const res = await page.goto(dropr.origin + "/s/AAAAAAAAAAAAAAAAAAAAAA#x");
   expect(res?.status()).toBe(404);
   await expect(page.locator("main")).toContainText("This link does not exist or has been revoked.");
-  await expect(page.locator("script")).toHaveCount(0);
+  await expectNoPageModule(page);
   await context.close();
 });
 
