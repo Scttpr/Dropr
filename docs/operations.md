@@ -94,90 +94,32 @@ outside the Nix store and are passed with systemd `LoadCredential`.
   trusted_proxies = [ "127.0.0.1" ]; ... }` and `services.nginx` or Caddy in front.
 * Upgrade: `nix flake update dropr && nixos-rebuild switch`.
 
-### Container (Compose)
+### Debian or Ubuntu: Compose or bare-metal systemd
 
-`deploy/compose.yaml` runs one hardened service: read-only root filesystem,
-`cap_drop: ALL`, `no-new-privileges`, `tmpfs /tmp`, a named volume on `/data`,
-the config mounted read-only, and Docker secrets for the two key files.
+[deploy-debian.md](deploy-debian.md) is the step-by-step production guide for
+a Debian or Ubuntu server, with two ready-made kits:
 
-```sh
-mkdir -p secrets && chmod 700 secrets
-(umask 077; openssl rand -base64 32 > secrets/refresh_key)
-cp /path/to/oidc_key.pem secrets/oidc_key.pem
-cp deploy/dropr.example.toml dropr.toml     # edit: public_url, oidc.*
-# put the verified release digest into compose.yaml (image: ...@sha256:...)
-docker compose -f deploy/compose.yaml up -d      # or podman-compose
-```
+* **Compose** (`deploy/docker/`): `setup.sh` lays out `/opt/dropr`
+  (`compose.yaml`, `.env` with the image digest, `dropr.toml`, `secrets/`,
+  `data/`, `backups/`), generates the secrets, installs a daily backup timer
+  and upgrades with `--image <digest>` (backup, recreate, health check). The
+  container runs as UID 65532 from a shell-less image with a read-only root,
+  `cap_drop: ALL`, `no-new-privileges`, pid and memory limits.
+* **Binary and systemd** (`deploy/debian/`): `install.sh --binary FILE` or
+  `--version vX.Y.Z` (downloads the release binary and verifies its
+  signature) creates the `dropr` user, `/etc/dropr` with root-only
+  credentials passed through `LoadCredential`, a sandboxed `dropr.service`,
+  the `dropr-admin` wrapper, a daily backup timer and a 7-day journal
+  namespace. Rerunning it upgrades (backup, atomic swap, health check).
 
-The image runs as UID 65532. Compose secrets mount world-readable inside the
-container, so keep the host `secrets/` directory at mode 0700. Build the image
-yourself with `nix build .#image` (reproducible) or
-`podman build -f deploy/Containerfile .` (portable). Admin commands:
-
-```sh
-docker compose exec dropr /bin/dropr user list --config /etc/dropr/dropr.toml
-# Both images (Nix and Containerfile) install the binary as /bin/dropr.
-```
-
-The image has no shell or curl, so the binary checks itself:
+Both images (Nix and Containerfile) install the binary as `/bin/dropr` and
+declare a healthcheck: the image has no shell or curl, so
 `dropr healthcheck --config /etc/dropr/dropr.toml` probes `GET /healthz` on the
 configured listener (TCP, Unix socket, or TLS in ACME mode) and exits 0 when
-healthy. `deploy/compose.yaml` and both images declare it as the container
-healthcheck; check it with `docker inspect --format "{{.State.Health.Status}}" <container>`.
-From outside, `GET /healthz` returns `ok` (use it for load balancers and monitoring).
-
-### Binary and systemd
-
-```sh
-useradd --system --home /var/lib/dropr --shell /usr/sbin/nologin dropr
-install -m 0755 dropr /usr/local/bin/dropr
-install -d -o dropr -g dropr -m 0700 /var/lib/dropr
-install -d -m 0750 -g dropr /etc/dropr
-```
-
-`/etc/systemd/system/dropr.service`:
-
-```ini
-[Unit]
-Description=Dropr
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-ExecStart=/usr/local/bin/dropr serve --config /etc/dropr/dropr.toml
-User=dropr
-StateDirectory=dropr
-StateDirectoryMode=0700
-LoadCredential=refresh_key:/etc/dropr/refresh_key
-LoadCredential=oidc_key:/etc/dropr/oidc_key.pem
-# dropr.toml: refresh_key_file = "/run/credentials/dropr.service/refresh_key"
-#             oidc.client_key_file = "/run/credentials/dropr.service/oidc_key"
-Restart=on-failure
-RestartSec=5
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-RestrictNamespaces=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-UMask=0077
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Drop the two capability lines if `listen` stays above port 1023. Set
-`data_dir = "/var/lib/dropr"`.
+healthy. From outside, `GET /healthz` returns `ok` (use it for load balancers
+and monitoring). Build the image yourself with `nix build .#image`
+(reproducible) or `docker build -f deploy/Containerfile .` (portable; add
+`--target binary --output type=local,dest=out` to get just the static binary).
 
 ## TLS modes
 
@@ -219,8 +161,9 @@ subdomain of the domain will serve HTTPS.
 
 Admin access is shell access. Every command takes
 `--config` (default `/etc/dropr/dropr.toml`) and, like the server, reads the
-secret files named in it, so run it as the service user (`sudo -u dropr`,
-`dropr-admin` on NixOS, `docker compose exec`).
+secret files named in it, so run it as the service user with the service's
+credentials: `sudo dropr-admin ...` (NixOS module and `deploy/debian`), or
+`docker compose exec dropr /bin/dropr ... --config /etc/dropr/dropr.toml`.
 
 | Command | Effect |
 |---|---|
@@ -266,7 +209,8 @@ Encrypt rate limits if you restore repeatedly).
 1. Read the release notes and verify the release (SECURITY.md).
 2. `dropr backup` first. Database migrations run automatically at startup and
    are not reversible; the backup is your rollback.
-3. Replace the binary or image (pin by digest), restart. Compose:
+3. Replace the binary or image (pin by digest), restart. Debian kits:
+   `install.sh` again or `setup.sh --image <digest>` (both back up first). Compose:
    change the digest, `docker compose up -d`. NixOS: `nixos-rebuild switch`.
 4. Check `dropr version`, the startup log (discovery results and warnings) and
    `/healthz`.
