@@ -51,15 +51,14 @@ func sanitizeSource(s string) string {
 	return s
 }
 
-// PermissionsPolicy disables every powerful feature except WebAuthn (needed
-// for passkeys) and clipboard writes (the "Copy link" button), both limited
-// to this origin.
+// PermissionsPolicy disables every powerful feature except clipboard writes
+// (the "Copy link" button), limited to this origin.
 const PermissionsPolicy = "accelerometer=(), ambient-light-sensor=(), autoplay=(), bluetooth=(), " +
 	"browsing-topics=(), camera=(), clipboard-read=(), clipboard-write=(self), display-capture=(), " +
 	"encrypted-media=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(), " +
 	"identity-credentials-get=(), idle-detection=(), local-fonts=(), magnetometer=(), microphone=(), " +
 	"midi=(), otp-credentials=(), payment=(), picture-in-picture=(), " +
-	"publickey-credentials-create=(self), publickey-credentials-get=(self), screen-wake-lock=(), " +
+	"publickey-credentials-create=(), publickey-credentials-get=(), screen-wake-lock=(), " +
 	"serial=(), storage-access=(), usb=(), web-share=(), window-management=(), xr-spatial-tracking=()"
 
 // HSTS is sent in both TLS modes (PLAN.md §7). Browsers ignore it over

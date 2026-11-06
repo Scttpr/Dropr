@@ -239,8 +239,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 // Range support. The first GET of a share token counts one download; later
 // requests with the same token (Range resumes) do not, but every token may
 // serve at most store.TokenByteBudget bytes in total (410 token_used
-// afterwards, audit L-2). Inbox tokens also require the owner's unlocked
-// session.
+// afterwards, audit L-2). Inbox tokens also require the owner's session.
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	tok := r.PathValue("token")
 	if !ids.ValidSecret(tok) {
@@ -259,7 +258,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	if t.ShareID == "" {
 		sess := session.FromContext(ctx)
-		if sess == nil || sess.UserID() != t.OwnerID || !s.sessions.IsUnlocked(sess) {
+		if sess == nil || sess.UserID() != t.OwnerID {
 			httpx.WriteError(w, errNotFound)
 			return
 		}

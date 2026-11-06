@@ -39,13 +39,6 @@ func fromNullUnix(v sql.NullInt64) *time.Time {
 	return &t
 }
 
-func nullUnix(t *time.Time) sql.NullInt64 {
-	if t == nil {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: t.Unix(), Valid: true}
-}
-
 func notFound(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound

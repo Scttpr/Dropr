@@ -91,9 +91,6 @@ func TestUserCommands(t *testing.T) {
 	if code, _, _ = runCLI(t, "no\n", "user", "purge", "--config", cfgPath, u.ID); code == 0 {
 		t.Fatal("purge without confirmation succeeded")
 	}
-	if code, _, _ = runCLI(t, "", "user", "reset-keys", "--config", cfgPath, "--yes", u.ID); code != 0 {
-		t.Fatal("reset-keys failed")
-	}
 
 	mapFile := filepath.Join(t.TempDir(), "map.csv")
 	_ = os.WriteFile(mapFile, []byte("old_subject,new_subject\n# comment\nalice-sub,alice-new\n"), 0o600)
@@ -204,8 +201,8 @@ func TestHealthcheck(t *testing.T) {
 	}
 }
 
-// TestFileCleanupCommands checks that gc, purge and reset-keys remove blob
-// files, not just rows.
+// TestFileCleanupCommands checks that gc and purge remove blob files, not
+// just rows.
 func TestFileCleanupCommands(t *testing.T) {
 	cfgPath, cfg := writeConfig(t)
 	u := seed(t, cfg)

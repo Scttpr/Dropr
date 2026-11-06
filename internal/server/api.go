@@ -31,7 +31,6 @@ const (
 // API errors, in plain language (ARCHITECTURE.md §3 "Error codes").
 var (
 	errUnauthenticated = httpx.Errorf(http.StatusUnauthorized, "unauthenticated", "Your session has expired. Please sign in again.")
-	errLocked          = httpx.Errorf(http.StatusForbidden, "locked", "Unlock your inbox with your passkey first.")
 	errBadRequest      = httpx.Errorf(http.StatusBadRequest, "bad_request", "The request was not accepted. Please reload the page and try again.")
 	errInvalidSize     = httpx.Errorf(http.StatusBadRequest, "invalid_size", "The file size does not match its parts. Please try again.")
 	errTooLarge        = httpx.Errorf(http.StatusRequestEntityTooLarge, "too_large", "This file is too large.")
@@ -62,16 +61,11 @@ func (s *Server) apiError(w http.ResponseWriter, r *http.Request, what string, e
 	httpx.WriteError(w, errInternal)
 }
 
-// apiSession returns the session or answers 401. With unlocked set it also
-// requires a passkey unlock (403 "locked").
-func (s *Server) apiSession(w http.ResponseWriter, r *http.Request, unlocked bool) *session.Session {
+// apiSession returns the session or answers 401.
+func apiSession(w http.ResponseWriter, r *http.Request) *session.Session {
 	sess := session.FromContext(r.Context())
 	if sess == nil {
 		httpx.WriteError(w, errUnauthenticated)
-		return nil
-	}
-	if unlocked && !s.sessions.IsUnlocked(sess) {
-		httpx.WriteError(w, errLocked)
 		return nil
 	}
 	return sess

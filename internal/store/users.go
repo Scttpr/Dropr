@@ -146,21 +146,17 @@ func (s *Store) FindUser(ctx context.Context, ref string) (*User, error) {
 	}
 }
 
-// UserSummary is a user with activity counters for `dropr user list`.
+// UserSummary is a user with its session count for `dropr user list`.
 type UserSummary struct {
 	User
 	Sessions int
-	Passkeys int
-	HasKeys  bool
 }
 
 // ListUsers returns all users ordered by creation time.
 func (s *Store) ListUsers(ctx context.Context) ([]UserSummary, error) {
 	rows, err := s.db.R.QueryContext(ctx, `
 		SELECT u.id, u.issuer, u.subject, u.display_name, u.created_at, u.disabled_at, u.quota_bytes,
-		       (SELECT count(*) FROM sessions s WHERE s.user_id = u.id),
-		       (SELECT count(*) FROM passkeys p WHERE p.user_id = u.id),
-		       EXISTS (SELECT 1 FROM user_keys k WHERE k.user_id = u.id)
+		       (SELECT count(*) FROM sessions s WHERE s.user_id = u.id)
 		FROM users u ORDER BY u.created_at, u.id`)
 	if err != nil {
 		return nil, err
@@ -175,7 +171,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]UserSummary, error) {
 			quota    sql.NullInt64
 		)
 		if err := rows.Scan(&us.ID, &us.Issuer, &us.Subject, &us.DisplayName, &created, &disabled, &quota,
-			&us.Sessions, &us.Passkeys, &us.HasKeys); err != nil {
+			&us.Sessions); err != nil {
 			return nil, err
 		}
 		us.CreatedAt = fromUnix(created)
@@ -189,9 +185,9 @@ func (s *Store) ListUsers(ctx context.Context) ([]UserSummary, error) {
 	return out, rows.Err()
 }
 
-// DeleteUser removes a user and, by cascade, all their rows (sessions,
-// passkeys, keys, links, inbox, blob rows). It returns the IDs of the blobs
-// whose files the caller must remove (gc reconciles any left behind).
+// DeleteUser removes a user and, by cascade, all their rows (sessions, links,
+// inbox, blob rows). It returns the IDs of the blobs whose files the caller
+// must remove (gc reconciles any left behind).
 func (s *Store) DeleteUser(ctx context.Context, id string) ([]string, error) {
 	var blobs []string
 	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
@@ -209,37 +205,6 @@ func (s *Store) DeleteUser(ctx context.Context, id string) ([]string, error) {
 	return blobs, err
 }
 
-// ResetUserKeys wipes a user's passkeys and key pair. Because request links
-// carry the old public key and inbox files are sealed to it, it also deletes
-// the user's request links and inbox (blob rows included) and ends their
-// sessions. Share links and the WebAuthn user handle are kept. It returns
-// the IDs of the blobs whose files the caller must remove.
-func (s *Store) ResetUserKeys(ctx context.Context, id string) ([]string, error) {
-	var blobs []string
-	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
-		var one int
-		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, id).Scan(&one); err != nil {
-			return notFound(err)
-		}
-		var err error
-		if blobs, err = deleteBlobsWhere(ctx, tx, `id IN (SELECT blob_id FROM inbox WHERE owner_id = ?)`, id); err != nil {
-			return err
-		}
-		for _, q := range []string{
-			`DELETE FROM requests WHERE owner_id = ?`,
-			`DELETE FROM passkeys WHERE user_id = ?`,
-			`DELETE FROM user_keys WHERE user_id = ?`,
-			`DELETE FROM sessions WHERE user_id = ?`,
-		} {
-			if _, err := tx.ExecContext(ctx, q, id); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	return blobs, err
-}
-
 // IdentityMapping relinks one account from an old subject to a new one.
 type IdentityMapping struct {
 	OldSubject string
@@ -247,7 +212,7 @@ type IdentityMapping struct {
 }
 
 // MigrateIdentities moves accounts from fromIssuer to toIssuer according to
-// mappings, atomically. Accounts keep their ID, so passkeys, keys and data
+// mappings, atomically. Accounts keep their ID, so their links and files
 // follow. All sessions of migrated users are ended. It fails without changes
 // if any old identity is missing or any new identity is already taken.
 func (s *Store) MigrateIdentities(ctx context.Context, fromIssuer, toIssuer string, mappings []IdentityMapping) (int, error) {

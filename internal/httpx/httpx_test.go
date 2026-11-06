@@ -38,7 +38,7 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 	pp := w.Header().Get("Permissions-Policy")
-	for _, s := range []string{"camera=()", "microphone=()", "geolocation=()", "publickey-credentials-get=(self)", "publickey-credentials-create=(self)"} {
+	for _, s := range []string{"camera=()", "microphone=()", "geolocation=()", "publickey-credentials-get=()", "publickey-credentials-create=()", "clipboard-write=(self)"} {
 		if !strings.Contains(pp, s) {
 			t.Errorf("Permissions-Policy lacks %s", s)
 		}

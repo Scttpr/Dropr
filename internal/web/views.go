@@ -10,19 +10,13 @@ type DashboardView struct {
 	// MaxRequestBytes is the default max_bytes of a new request link
 	// (data-max-request-bytes): the ciphertext size of one maximal file.
 	MaxRequestBytes int64
-	InboxCount      int // completely received files; -1 = hidden (session not unlocked)
+	InboxCount      int // completely received files
 	LinkCount       int // active share and request links
-}
-
-// SetupView is the view model of /setup.
-type SetupView struct {
-	PasskeyCount int    // data-passkey-count
-	Next         string // data-next
 }
 
 // InboxView is the view model of /inbox.
 type InboxView struct {
-	Count int // -1 = hidden (session not unlocked)
+	Count int
 }
 
 // LinksView is the view model of /links.

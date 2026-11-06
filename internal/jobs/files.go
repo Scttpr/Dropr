@@ -44,12 +44,6 @@ func FileTasks(st *store.Store, blobs *blob.Store, now func() time.Time) []Task 
 		{Name: "expired-download-tokens", Run: func(ctx context.Context) (int64, error) {
 			return st.DeleteExpiredDownloadTokens(ctx, now())
 		}},
-		{Name: "expired-passkey-ceremonies", Run: func(ctx context.Context) (int64, error) {
-			return st.DeleteExpiredCeremonies(ctx, now())
-		}},
-		{Name: "expired-passkey-grants", Run: func(ctx context.Context) (int64, error) {
-			return st.DeleteExpiredPasskeyGrants(ctx, now())
-		}},
 		{Name: "orphan-blobs", Run: func(ctx context.Context) (int64, error) {
 			return SweepOrphans(ctx, st, blobs, now().Add(-OrphanGrace))
 		}},
@@ -57,8 +51,8 @@ func FileTasks(st *store.Store, blobs *blob.Store, now func() time.Time) []Task 
 }
 
 // SweepOrphans removes blob directories older than before that have no
-// database row (left behind by a crash, `dropr user purge` or a failed
-// removal).
+// database row (left behind by a crash, `dropr user purge`, a schema
+// migration that deleted rows, or a failed removal).
 func SweepOrphans(ctx context.Context, st *store.Store, blobs *blob.Store, before time.Time) (int64, error) {
 	var n int64
 	err := blobs.Walk(ctx, func(id string, mod time.Time) error {

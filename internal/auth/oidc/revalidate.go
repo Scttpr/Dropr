@@ -19,9 +19,7 @@ import (
 // that has gone more than revalidate_every without a successful check.
 // Requests of one session are serialized during a refresh so a rotating
 // refresh token is redeemed exactly once. The lock is the session manager's
-// per-session lock, which session rotation also takes (audit L-5), so a
-// rotation never copies a refresh token that a concurrent revalidation is
-// about to replace.
+// per-session lock.
 //
 // Refresh responses without an id_token: OIDC Core §12.2 makes the ID token
 // optional on refresh. Dropr then calls the userinfo endpoint with the fresh

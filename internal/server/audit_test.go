@@ -113,7 +113,7 @@ func TestFinalizeDeletedUpload(t *testing.T) {
 func TestDownloadTokenByteBudget(t *testing.T) {
 	t.Parallel()
 	e := newTestEnv(t)
-	e.newOwner().setup()
+	e.newOwner()
 	anon := &http.Client{Transport: e.client.Transport}
 	u := e.createShare(e.client, smallSize, map[string]any{"max_downloads": 1})
 	data := randBytes(int(smallSize))
@@ -241,8 +241,7 @@ func TestDiskSpaceCountsInflightUploads(t *testing.T) {
 func TestRequestLinkClosedWhenOwnerLosesRole(t *testing.T) {
 	t.Parallel()
 	e := newTestEnv(t)
-	o := e.newOwner().setup()
-	o.mustUnlock()
+	o := e.newOwner()
 	id := o.createRequest(map[string]any{"max_files": 5, "max_bytes": 5 * smallSize})
 	if resp, _ := e.createRequestFile(id, smallSize); resp.StatusCode != http.StatusCreated {
 		t.Fatalf("upload while active: %d", resp.StatusCode)
@@ -288,32 +287,5 @@ func TestMuxGeneratedResponsesHaveHeaders(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode/100 != 3 || resp.Header.Get("Content-Security-Policy") == "" || resp.Header.Get("X-Content-Type-Options") != "nosniff" {
 		t.Errorf("mux redirect: %d %v", resp.StatusCode, resp.Header)
-	}
-}
-
-// I-6: the number of received files is shown only to an unlocked session.
-func TestInboxCountHiddenUntilUnlock(t *testing.T) {
-	t.Parallel()
-	e := newTestEnv(t)
-	e.newOwner().setup() // the first registration unlocked this session
-	other := e.newClient()
-	page := func(c *http.Client, path string) string {
-		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.origin+path, nil)
-		resp, err := c.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		b, _ := io.ReadAll(resp.Body)
-		return string(b)
-	}
-	if p := page(e.client, "/"); !strings.Contains(p, `Received files (<span id="inbox-count">0</span>)`) {
-		t.Error("unlocked dashboard lacks the inbox count")
-	}
-	if p := page(other, "/"); strings.Contains(p, "inbox-count") || !strings.Contains(p, "Received files</span>") {
-		t.Error("locked dashboard shows the inbox count")
-	}
-	if p := page(other, "/inbox"); strings.Contains(p, "data-count") {
-		t.Error("locked inbox page shows the count")
 	}
 }

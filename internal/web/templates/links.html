@@ -1,6 +1,6 @@
 {{define "title"}}{{t "Active links"}} · Dropr{{end}}
 {{define "main"}}{{with .View}}
-<main id="main" class="site-main" data-page="links" data-count="{{.Count}}">
+<main id="main" class="site-main" data-page="links" data-owner-id="{{$.User.ID}}" data-count="{{.Count}}">
   <div class="page-head">
     <h1>{{t "Active links"}}</h1>
     <p class="muted">{{if eq .Count 0}}{{t "No active links."}}{{else if eq .Count 1}}{{t "1 active link."}}{{else}}{{t "%d active links." .Count}}{{end}}</p>
@@ -22,6 +22,7 @@
 
   <section class="card" aria-labelledby="requests-heading">
     <h2 id="requests-heading">{{t "Request links"}}</h2>
+    <p id="requests-note" class="muted">{{t "A request link can be copied, and its files opened, only in the browser that created it."}}</p>
     <div class="table-wrap">
       <table id="requests-table" class="data-table" hidden>
         <thead><tr><th scope="col">{{t "Created"}}</th><th scope="col">{{t "Expires"}}</th><th scope="col">{{t "Files received"}}</th>

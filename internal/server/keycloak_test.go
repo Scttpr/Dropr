@@ -280,6 +280,5 @@ func TestKeycloakAdminRevocationKillsSession(t *testing.T) {
 }
 
 // signedInMarker appears on every page served to a signed-in user (the
-// sign-out form of the layout); "/" itself redirects to /setup until the
-// user has registered passkeys.
+// sign-out form of the layout).
 const signedInMarker = `action="/auth/logout"`

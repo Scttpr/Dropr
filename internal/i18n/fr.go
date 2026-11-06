@@ -2,8 +2,7 @@ package i18n
 
 // fr is the French catalog of the server-rendered pages. Typography: a
 // no-break space (U+00A0) before ":" and a narrow one (U+202F) before
-// "?", "!" and inside « »; "passkey" is « clé d'accès », as in the
-// French interfaces of Apple, Google and Microsoft.
+// "?", "!" and inside « ».
 var fr = map[string]string{
 	// Layout and navigation.
 	"Skip to content":  "Aller au contenu",
@@ -90,7 +89,8 @@ var fr = map[string]string{
 	"Share another file": "Partager un autre fichier",
 	"Dropr encrypts files in your browser before they are uploaded, so sharing and receiving files needs JavaScript. Please enable it for this site.": "Dropr chiffre les fichiers dans votre navigateur avant leur envoi\u00a0: le partage et la réception de fichiers nécessitent JavaScript. Veuillez l'activer pour ce site.",
 	"Receive a file": "Recevoir un fichier",
-	"Create a link that lets someone send you files, even without an account. Only you can open them.": "Créez un lien qui permet de vous envoyer des fichiers, même sans compte. Vous seul pourrez les ouvrir.",
+	"Create a link that lets someone send you files, even without an account. Only you can open them, in this browser.": "Créez un lien qui permet de vous envoyer des fichiers, même sans compte. Vous seul pourrez les ouvrir, dans ce navigateur.",
+	"Files sent through this link open only in this browser. Clearing this site's data makes them unreadable.":          "Les fichiers envoyés par ce lien ne pourront être ouverts que dans ce navigateur. Effacer les données de ce site les rendra illisibles.",
 	"Maximum number of files":                             "Nombre maximal de fichiers",
 	"Single use (the link closes after the first upload)": "Usage unique (le lien se ferme après le premier envoi)",
 	"Ask someone to send me a file":                       "Demander à quelqu'un de m'envoyer un fichier",
@@ -101,25 +101,26 @@ var fr = map[string]string{
 
 	// Inbox.
 	"These files were sent by people outside your organization through your request links. Only open files you expect.": "Ces fichiers ont été envoyés par des personnes extérieures à votre organisation via vos liens de dépôt. N'ouvrez que les fichiers que vous attendez.",
-	"Files":                  "Fichiers",
-	"Unlock your inbox":      "Déverrouiller vos fichiers reçus",
+	"Files": "Fichiers",
+	"Each file opens only in the browser that created its request link.": "Chaque fichier ne peut être ouvert que dans le navigateur qui a créé son lien de dépôt.",
 	"Name":                   "Nom",
 	"Size":                   "Taille",
 	"Received":               "Reçu le",
 	"Actions":                "Actions",
 	"No files received yet.": "Aucun fichier reçu pour l'instant.",
-	"Received files are decrypted in your browser with your passkey, which needs JavaScript. Please enable it for this site.": "Les fichiers reçus sont déchiffrés dans votre navigateur avec votre clé d'accès, ce qui nécessite JavaScript. Veuillez l'activer pour ce site.",
+	"Received files are decrypted in your browser, which needs JavaScript. Please enable it for this site.": "Les fichiers reçus sont déchiffrés dans votre navigateur, ce qui nécessite JavaScript. Veuillez l'activer pour ce site.",
 
 	// Links.
-	"No active links.":         "Aucun lien actif.",
-	"1 active link.":           "1 lien actif.",
-	"%d active links.":         "%d liens actifs.",
-	"Share links":              "Liens de partage",
-	"Created":                  "Créé le",
-	"Expires":                  "Expiration",
-	"Downloads":                "Téléchargements",
-	"No active share links.":   "Aucun lien de partage actif.",
-	"Request links":            "Liens de dépôt",
+	"No active links.":       "Aucun lien actif.",
+	"1 active link.":         "1 lien actif.",
+	"%d active links.":       "%d liens actifs.",
+	"Share links":            "Liens de partage",
+	"Created":                "Créé le",
+	"Expires":                "Expiration",
+	"Downloads":              "Téléchargements",
+	"No active share links.": "Aucun lien de partage actif.",
+	"Request links":          "Liens de dépôt",
+	"A request link can be copied, and its files opened, only in the browser that created it.": "Un lien de dépôt ne peut être copié, et ses fichiers ouverts, que dans le navigateur qui l'a créé.",
 	"Files received":           "Fichiers reçus",
 	"No active request links.": "Aucun lien de dépôt actif.",
 	"Managing links needs JavaScript. Please enable it for this site.": "La gestion des liens nécessite JavaScript. Veuillez l'activer pour ce site.",
@@ -143,39 +144,4 @@ var fr = map[string]string{
 	"or choose them (up to %s, %d files)": "ou choisissez-les (jusqu'à %s, %d fichiers)",
 	"✓ Sent. You can close this page.":    "✓ Envoyé. Vous pouvez fermer cette page.",
 	"Files are encrypted in your browser before they are sent, which needs JavaScript. Please enable it for this site.": "Les fichiers sont chiffrés dans votre navigateur avant leur envoi, ce qui nécessite JavaScript. Veuillez l'activer pour ce site.",
-
-	// Passkey setup.
-	"Set up passkeys":             "Configurer vos clés d'accès",
-	"Protect your received files": "Protégez les fichiers que vous recevez",
-	"A passkey is like a key that only you have, kept on your phone or computer. It keeps the files people send you private.": "Une clé d'accès est comme une clé que vous seul possédez, conservée sur votre téléphone ou votre ordinateur. Elle garde privés les fichiers qu'on vous envoie.",
-	"You'll make two. The second one is a spare key, in case you lose the first.":                                             "Vous allez en créer deux. La seconde est une clé de secours, au cas où vous perdriez la première.",
-	"Your progress":                   "Votre progression",
-	"Your first passkey":              "Votre première clé d'accès",
-	"Your spare passkey":              "Votre clé d'accès de secours",
-	"Step 1 of 2: your first passkey": "Étape 1 sur 2\u00a0: votre première clé d'accès",
-	"Step 2 of 2: your spare passkey": "Étape 2 sur 2\u00a0: votre clé d'accès de secours",
-	"For your safety, first confirm with the passkey you already made. Then you'll create the spare one. You'll be asked twice. That's normal.": "Pour votre sécurité, confirmez d'abord avec la clé d'accès que vous avez déjà créée. Vous créerez ensuite celle de secours. Cela vous sera demandé deux fois, c'est normal.",
-	"Where do you want to keep this passkey?": "Où voulez-vous conserver cette clé d'accès\u202f?",
-	"This computer": "Cet ordinateur",
-	"Recommended":   "Recommandé",
-	"You'll unlock it with your fingerprint, your face, or the PIN of this computer.": "Vous la déverrouillerez avec votre empreinte digitale, votre visage ou le code PIN de cet ordinateur.",
-	"Your phone": "Votre téléphone",
-	"You'll scan a QR code with your phone's camera.": "Vous scannerez un QR code avec l'appareil photo de votre téléphone.",
-	"Before you start:": "Avant de commencer\u00a0:",
-	"Turn on Bluetooth on your phone and on this computer.":                                                     "Activez le Bluetooth sur votre téléphone et sur cet ordinateur.",
-	"Both need to be connected to the internet.":                                                                "Les deux doivent être connectés à Internet.",
-	"On Android, save the passkey in Google Password Manager. Microsoft Authenticator can't be used for Dropr.": "Sur Android, enregistrez la clé d'accès dans le Gestionnaire de mots de passe de Google. Microsoft Authenticator ne peut pas être utilisé pour Dropr.",
-	"On iPhone, save it in Passwords (iCloud Keychain).":                                                        "Sur iPhone, enregistrez-la dans Mots de passe (trousseau iCloud).",
-	"A security key": "Une clé de sécurité",
-	"A small key that you plug in or tap. Only if you have one.": "Une petite clé que vous branchez ou approchez. Seulement si vous en avez une.",
-	"Another way": "Autre méthode",
-	"Your browser shows all its options, such as a password manager.":                                                                   "Votre navigateur affiche toutes ses options, comme un gestionnaire de mots de passe.",
-	"When you click the button, your browser will show you its own options. Choose where to keep your passkey there.":                   "Quand vous cliquerez sur le bouton, votre navigateur vous proposera ses propres options. Choisissez-y où conserver votre clé d'accès.",
-	"On this browser, a security key (a small key that you plug in) works best. You can also open this page in Chrome, Edge or Safari.": "Sur ce navigateur, une clé de sécurité (une petite clé que vous branchez) fonctionne le mieux. Vous pouvez aussi ouvrir cette page dans Chrome, Edge ou Safari.",
-	"Using your phone? What you need": "Avec votre téléphone\u202f? Ce qu'il vous faut",
-	"Create my first passkey":         "Créer ma première clé d'accès",
-	"Create my spare passkey":         "Créer ma clé d'accès de secours",
-	"Try another way":                 "Essayer une autre méthode",
-	"Without a passkey, files sent to you can't be opened. That's why the spare one matters.": "Sans clé d'accès, les fichiers qu'on vous envoie ne peuvent pas être ouverts. C'est pourquoi la clé de secours est importante.",
-	"Setting up passkeys needs JavaScript. Please enable it for this site.":                   "La configuration des clés d'accès nécessite JavaScript. Veuillez l'activer pour ce site.",
 }

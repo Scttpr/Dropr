@@ -104,9 +104,9 @@ func TestThemeDefaultsToLight(t *testing.T) {
 
 func TestPrefsFormReturnsToThePage(t *testing.T) {
 	t.Parallel()
-	req := httptest.NewRequest(http.MethodGet, "/setup?next=%2Finbox", nil)
+	req := httptest.NewRequest(http.MethodGet, "/links?next=%2Finbox", nil)
 	body := render(t, req, PageLogin, PageData{}).Body.String()
-	if !strings.Contains(body, `<input type="hidden" name="next" value="/setup?next=%2Finbox">`) {
+	if !strings.Contains(body, `<input type="hidden" name="next" value="/links?next=%2Finbox">`) {
 		t.Fatal("next field missing")
 	}
 }

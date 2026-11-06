@@ -16,74 +16,39 @@ type Session struct {
 	CreatedAt       time.Time
 	LastSeenAt      time.Time
 	RevalidatedAt   time.Time
-	UnlockedAt      *time.Time
-	RotatedFrom     []byte
 }
 
-const sessionCols = `id_hash, user_id, refresh_token_enc, oidc_sid, created_at, last_seen_at, revalidated_at, unlocked_at, rotated_from`
+const sessionCols = `id_hash, user_id, refresh_token_enc, oidc_sid, created_at, last_seen_at, revalidated_at`
 
 func scanSession(r scanner) (*Session, error) {
 	var (
 		s                          Session
 		sid                        sql.NullString
 		created, seen, revalidated int64
-		unlocked                   sql.NullInt64
 	)
-	if err := r.Scan(&s.IDHash, &s.UserID, &s.RefreshTokenEnc, &sid, &created, &seen, &revalidated, &unlocked, &s.RotatedFrom); err != nil {
+	if err := r.Scan(&s.IDHash, &s.UserID, &s.RefreshTokenEnc, &sid, &created, &seen, &revalidated); err != nil {
 		return nil, notFound(err)
 	}
 	s.OIDCSID = sid.String
 	s.CreatedAt = fromUnix(created)
 	s.LastSeenAt = fromUnix(seen)
 	s.RevalidatedAt = fromUnix(revalidated)
-	s.UnlockedAt = fromNullUnix(unlocked)
 	return &s, nil
 }
 
 func nullString(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
 
-type execer interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-func insertSession(ctx context.Context, e execer, s *Session) error {
-	_, err := e.ExecContext(ctx, `INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.IDHash, s.UserID, s.RefreshTokenEnc, nullString(s.OIDCSID), unix(s.CreatedAt), unix(s.LastSeenAt),
-		unix(s.RevalidatedAt), nullUnix(s.UnlockedAt), s.RotatedFrom)
-	return err
-}
-
 // CreateSession inserts a new session.
 func (s *Store) CreateSession(ctx context.Context, sess *Session) error {
-	return insertSession(ctx, s.db.W, sess)
+	_, err := s.db.W.ExecContext(ctx, `INSERT INTO sessions (`+sessionCols+`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		sess.IDHash, sess.UserID, sess.RefreshTokenEnc, nullString(sess.OIDCSID), unix(sess.CreatedAt), unix(sess.LastSeenAt),
+		unix(sess.RevalidatedAt))
+	return err
 }
 
 // SessionByHash returns the session with the given ID hash.
 func (s *Store) SessionByHash(ctx context.Context, idHash []byte) (*Session, error) {
 	return scanSession(s.db.R.QueryRowContext(ctx, `SELECT `+sessionCols+` FROM sessions WHERE id_hash = ?`, idHash))
-}
-
-// RotateSession atomically replaces the session oldHash with the row build
-// returns (which carries the new ID hash). build receives the session as
-// currently stored, read inside the write transaction, so fields changed by a
-// concurrent writer (such as a refreshed refresh token) are never lost. It
-// returns ErrNotFound if the old session is gone, so a concurrently revoked
-// session cannot be resurrected by rotation.
-func (s *Store) RotateSession(ctx context.Context, oldHash []byte, build func(cur *Session) (*Session, error)) error {
-	return s.db.Tx(ctx, func(tx *sql.Tx) error {
-		cur, err := scanSession(tx.QueryRowContext(ctx, `SELECT `+sessionCols+` FROM sessions WHERE id_hash = ?`, oldHash))
-		if err != nil {
-			return err
-		}
-		next, err := build(cur)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE id_hash = ?`, oldHash); err != nil {
-			return err
-		}
-		return insertSession(ctx, tx, next)
-	})
 }
 
 // TouchSession records activity.
