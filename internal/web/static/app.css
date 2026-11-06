@@ -1,54 +1,44 @@
 /* Dropr — stylesheet. No inline styles anywhere (strict CSP). */
 
+/*
+ * Theme: <html data-theme> is "light" (default), "dark" or "system", set by
+ * the server from the visitor's choice (no flash) and switched in place by
+ * prefs.js. It only sets color-scheme; every color token is a light-dark()
+ * pair, so there is one token list and no duplicated dark block.
+ */
+:root { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-theme="system"] { color-scheme: light dark; }
+
 :root {
-  color-scheme: light dark;
-  --bg: #f5f6f8;
-  --surface: #ffffff;
-  --surface-2: #f0f2f6;
-  --text: #15171c;
-  --muted: #596070;
-  --border: #dadee6;
-  --accent: #2f5bea;
-  --accent-soft: #e8eeff;
-  --accent-text: #ffffff;
-  --accent-hover: #2449c7;
-  --danger: #b42318;
-  --danger-soft: #fef0ee;
-  --success: #067647;
-  --success-soft: #ecfdf3;
-  --warning: #93370d;
-  --warning-soft: #fffaeb;
-  --focus: #1d4ed8;
+  --bg: light-dark(#f5f6f8, #0e1014);
+  --surface: light-dark(#ffffff, #161920);
+  --surface-2: light-dark(#f0f2f6, #1e222b);
+  --text: light-dark(#15171c, #e8eaee);
+  --muted: light-dark(#596070, #a0a7b4);
+  --border: light-dark(#dadee6, #2c313c);
+  --accent: light-dark(#2f5bea, #7393ff);
+  --accent-soft: light-dark(#e8eeff, #1d2540);
+  --accent-text: light-dark(#ffffff, #0b0d12);
+  --accent-hover: light-dark(#2449c7, #93abff);
+  --danger: light-dark(#b42318, #ff8a80);
+  --danger-soft: light-dark(#fef0ee, #3a1714);
+  --success: light-dark(#067647, #6ce9a6);
+  --success-soft: light-dark(#ecfdf3, #0f2a1d);
+  --warning: light-dark(#93370d, #fec84b);
+  --warning-soft: light-dark(#fffaeb, #2e2410);
+  --focus: light-dark(#1d4ed8, #9db4ff);
   --radius: 14px;
   --radius-sm: 8px;
-  --shadow: 0 1px 2px rgb(16 24 40 / 5%), 0 6px 16px rgb(16 24 40 / 6%);
+  --shadow: 0 1px 2px light-dark(rgb(16 24 40 / 5%), rgb(0 0 0 / 45%)), 0 6px 16px light-dark(rgb(16 24 40 / 6%), transparent);
+  --shadow-pop: 0 4px 8px light-dark(rgb(16 24 40 / 6%), rgb(0 0 0 / 40%)), 0 16px 32px light-dark(rgb(16 24 40 / 12%), rgb(0 0 0 / 50%));
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --ease: 160ms ease;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e1014;
-    --surface: #161920;
-    --surface-2: #1e222b;
-    --text: #e8eaee;
-    --muted: #a0a7b4;
-    --border: #2c313c;
-    --accent: #7393ff;
-    --accent-soft: #1d2540;
-    --accent-text: #0b0d12;
-    --accent-hover: #93abff;
-    --danger: #ff8a80;
-    --danger-soft: #3a1714;
-    --success: #6ce9a6;
-    --success-soft: #0f2a1d;
-    --warning: #fec84b;
-    --warning-soft: #2e2410;
-    --focus: #9db4ff;
-    --shadow: 0 1px 2px rgb(0 0 0 / 45%);
-  }
-}
+/* Theme switch cross-fade (prefs.js, where view transitions exist). */
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 200ms; }
 
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -107,7 +97,8 @@ code, pre { font-family: var(--mono); }
 .brand:hover { color: var(--text); }
 .brand-mark { width: 1.4rem; height: 1.4rem; fill: var(--accent); }
 
-.site-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
+.site-nav { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
+.site-tools { display: flex; align-items: center; gap: 0.5rem 0.75rem; margin-inline-start: auto; }
 .nav-links { display: flex; gap: 0.25rem; margin: 0; padding: 0; list-style: none; }
 .nav-links a {
   display: inline-block;
@@ -419,6 +410,105 @@ fieldset:disabled .choice { opacity: 0.7; }
   white-space: nowrap; border: 0;
 }
 
+
+/* ---- Display settings (language, theme) ------------------------------- */
+
+.icon { flex: none; width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.prefs-toggle {
+  anchor-name: --prefs;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.25rem;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: border-color var(--ease), color var(--ease);
+}
+.prefs-toggle:hover, .prefs-toggle:has(+ .prefs:popover-open) { border-color: var(--accent); color: var(--text); }
+
+/* Without anchor positioning: pinned under the header, right-aligned. */
+.prefs {
+  position: fixed;
+  inset: 3.75rem clamp(1rem, 4vw, 2rem) auto auto;
+  width: min(21rem, calc(100vw - 2rem));
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  translate: 0 -0.25rem;
+  transition: opacity 150ms ease, translate 150ms ease, overlay 150ms allow-discrete, display 150ms allow-discrete;
+}
+.prefs:popover-open { opacity: 1; translate: 0 0; }
+@starting-style {
+  .prefs:popover-open { opacity: 0; translate: 0 -0.25rem; }
+}
+@supports (anchor-name: --a) {
+  .prefs {
+    position-anchor: --prefs;
+    inset: auto;
+    top: anchor(bottom);
+    right: anchor(right);
+    margin-top: 0.5rem;
+    position-try-fallbacks: flip-inline;
+  }
+}
+
+.prefs-form { display: flex; flex-direction: column; gap: 1rem; }
+.segmented { margin: 0; padding: 0; border: 0; min-width: 0; }
+.segmented legend {
+  margin-bottom: 0.4rem;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.segmented-options {
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  min-width: 0;
+  min-height: 2.25rem;
+  padding: 0.25rem 0.5rem;
+  white-space: nowrap;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--ease), color var(--ease), box-shadow var(--ease);
+}
+.segmented button:hover { color: var(--text); }
+.segmented button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+
 /* ---- Responsive ------------------------------------------------------- */
 
 @media (max-width: 40rem) {
@@ -441,4 +531,6 @@ fieldset:disabled .choice { opacity: 0.7; }
   .button-primary, .file-input::file-selector-button { border: 2px solid ButtonText; }
   .drop-zone[data-dragover] { outline: 3px solid Highlight; }
   progress { border: 1px solid CanvasText; }
+  .segmented button[aria-pressed="true"] { outline: 2px solid Highlight; }
+  .prefs { border: 2px solid CanvasText; }
 }
