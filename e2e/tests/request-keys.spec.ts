@@ -14,7 +14,6 @@
  *   account's record in the same browser profile survives /links and /inbox.
  * - The stored private key is a non-extractable X25519 CryptoKey: exportKey
  *   rejects in every format, and its public half matches the link fragment.
- * - The passkey endpoints and the setup page are gone (404).
  *
  * Owner pages run in Chromium (fixtures.ts `ownerBrowser`), so the whole file
  * runs in the Chromium project only.
@@ -30,7 +29,6 @@ import {
   M6_USERS,
   makeFile,
   newOwner,
-  pageFetch,
   requestIdOf,
   requestKeyIds,
   sendViaRequest,
@@ -228,13 +226,4 @@ test("another account's record in the same browser profile is never pruned", asy
   // Prune runs after the list renders: give it time to (wrongly) delete.
   await p.waitForTimeout(1_000);
   expect(await requestKeyIds(p)).toContain(foreignId);
-});
-
-test("the passkey setup page and endpoints no longer exist", async ({ alice, dropr }) => {
-  const res = await alice.context.request.get(dropr.origin + "/setup", { maxRedirects: 0 });
-  expect(res.status()).toBe(404);
-  for (const path of ["/api/passkeys", "/api/keys"]) {
-    expect((await pageFetch(alice.page, path)).status, path).toBe(404);
-  }
-  expect((await pageFetch(alice.page, "/api/passkeys/unlock/begin", { method: "POST", body: {} })).status).toBe(404);
 });

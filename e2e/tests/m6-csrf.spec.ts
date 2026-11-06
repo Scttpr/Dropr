@@ -9,7 +9,7 @@
  *   Origin check protects the owner).
  * Auto-submitting forms and fetch() calls to state-changing endpoints must be
  * refused with 403 before any handler runs, in every browser. The header
- * policy itself is also probed directly over HTTP.
+ * policy itself is covered by the Go tests (internal/httpx TestCSRF).
  */
 
 import { createServer, type Server } from "node:http";
@@ -118,34 +118,4 @@ test("a same-site page cannot use the owner's session (SameSite=Strict cookie is
   // The owner's own page still works (same-origin).
   await p.goto(dropr.origin + "/links");
   await expect(p.locator(`tr[data-request-id="${linkId(requestLink)}"]`)).toBeVisible();
-});
-
-test("Sec-Fetch-Site / Origin policy over raw HTTP", async ({ dropr, request, browserName }) => {
-  test.skip(browserName !== "chromium", "browser-independent");
-  const target = `${dropr.origin}/api/r/${linkId(requestLink)}/files`;
-  const body = { size: 1016, parts: 1, meta: "A".repeat(80), wrapped_key: "A".repeat(107) };
-  const cases: [Record<string, string>, (s: number) => boolean, string][] = [
-    [{ "sec-fetch-site": "cross-site" }, (s) => s === 403, "cross-site"],
-    [{ "sec-fetch-site": "same-site" }, (s) => s === 403, "same-site"],
-    [{ "sec-fetch-site": "Same-Origin" }, (s) => s === 403, "case matters"],
-    [{ "sec-fetch-site": "same-origin, same-origin" }, (s) => s === 403, "list value"],
-    [{ origin: "http://evil.example" }, (s) => s === 403, "foreign Origin"],
-    [{ origin: "null" }, (s) => s === 403, "null Origin"],
-    [{ origin: dropr.origin + "/" }, (s) => s === 403, "Origin with path"],
-    [{ origin: dropr.origin.replace("localhost", "127.0.0.1") }, (s) => s === 403, "Origin by IP"],
-    [{}, (s) => s === 403, "no Sec-Fetch-Site, no Origin"],
-    [{ "sec-fetch-site": "cross-site", origin: dropr.origin }, (s) => s === 403, "Sec-Fetch-Site wins over Origin"],
-    [{ "sec-fetch-site": "same-origin" }, (s) => s !== 403, "same-origin"],
-    [{ "sec-fetch-site": "none" }, (s) => s !== 403, "user-initiated (none)"],
-    [{ origin: dropr.origin }, (s) => s !== 403, "matching Origin"],
-  ];
-  for (const [headers, ok, label] of cases) {
-    const r = await request.post(target, { headers, data: body });
-    expect(ok(r.status()), `${label}: got ${r.status()}`).toBe(true);
-  }
-  // GET is never blocked; DELETE is a state change like POST.
-  expect((await request.get(`${dropr.origin}/healthz`, { headers: { "sec-fetch-site": "cross-site" } })).status()).toBe(200);
-  expect((await request.delete(`${dropr.origin}/api/shares/AAAAAAAAAAAAAAAAAAAAAA`, { headers: { "sec-fetch-site": "cross-site" } })).status()).toBe(403);
-  // The logout form is protected too (a cross-site logout is refused).
-  expect((await request.post(`${dropr.origin}/auth/logout`, { headers: { "sec-fetch-site": "cross-site" }, maxRedirects: 0 })).status()).toBe(403);
 });

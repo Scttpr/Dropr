@@ -18,6 +18,7 @@ import {
   chromiumBrowser,
   createRequest,
   expect,
+  expectNoPageModule,
   linkId,
   login,
   newOwner,
@@ -40,7 +41,7 @@ test("a user without the role gets the 403 page and no account", async ({ browse
   await login(page, dropr.origin, M6_USERS.mallory);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("You don't have access to Dropr");
   await expect(page.locator("main")).toContainText("your account has not been given access");
-  await expect(page.locator("script")).toHaveCount(0);
+  await expectNoPageModule(page);
   const res = await page.goto(dropr.origin + "/");
   expect(res?.status()).toBe(200);
   await expect(page.getByRole("link", { name: /Sign in/ })).toBeVisible(); // still anonymous
