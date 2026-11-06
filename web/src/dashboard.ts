@@ -18,7 +18,8 @@ import {
 import { EXPIRY_CHOICES, type ExpiresIn, api } from "./lib/api.ts";
 import { Notice, byId, dataInt, maybeId, pageRoot, revealJsOnly, warnBeforeUnload } from "./lib/dom.ts";
 import { attachDropZone } from "./lib/dropzone.ts";
-import { expiryChoiceText, formatBytes } from "./lib/format.ts";
+import { expiryChoiceText, formatBytes, formatInteger } from "./lib/format.ts";
+import { t } from "./lib/i18n.ts";
 import { showLink } from "./lib/linkview.ts";
 import { ensureUnlocked } from "./lib/passkey.ts";
 import { isAbortError } from "./lib/retry.ts";
@@ -85,13 +86,13 @@ function initShare(main: HTMLElement): void {
     if (file.size > maxSize) {
       const limit = formatBytes(maxSize);
       // Just over the limit both round to the same figure; show the exact size instead.
-      const have = formatBytes(file.size) === limit ? `${file.size.toLocaleString("en-US")} bytes` : formatBytes(file.size);
-      notice.error(`This file is too large (${have}). The limit is ${limit}.`);
+      const have = formatBytes(file.size) === limit ? t.exactBytes(formatInteger(file.size)) : formatBytes(file.size);
+      notice.error(t.fileTooLarge(have, limit));
       return;
     }
     const maxDownloads = optionalPositiveInt(maxDl);
     if (maxDownloads === null) {
-      notice.error("The download limit must be a whole number of at least 1, or empty for no limit.");
+      notice.error(t.downloadLimitInvalid);
       maxDl?.focus();
       return;
     }
@@ -120,19 +121,19 @@ function initShare(main: HTMLElement): void {
         contentKey: keys.content,
         uploadId: created.upload_id,
         uploadToken: created.upload_token,
-        onProgress: (p) => panel.update(p, "Uploading"),
+        onProgress: (p) => panel.update(p, t.uploading),
       });
       await runUploadWithPanel(uploader, panel, file.name);
       finished = true;
       const url = `${location.origin}/s/${created.share_id}#${encodeShareFragment(fk)}`;
       fk.fill(0);
-      panel.finish("Upload complete. Your link is ready.");
+      panel.finish(t.uploadReady);
       bumpCount("link-count");
       showLink(
         { container: "share-result", input: "share-link", copy: "share-copy", expiry: "share-expiry", qr: "share-qr" },
         url,
         expiryChoiceText(expiresIn),
-        "QR code of the share link",
+        t.shareQrLabel,
       );
     } catch (e) {
       if (!isAbortError(e)) notice.error(e);
@@ -174,7 +175,7 @@ function initRequest(main: HTMLElement): void {
     const parsed = optionalPositiveInt(maxFilesInput);
     const maxFiles = parsed === undefined ? 10 : parsed;
     if (maxFiles === null) {
-      notice.error("The number of files must be a whole number of at least 1.");
+      notice.error(t.maxFilesInvalid);
       maxFilesInput?.focus();
       return;
     }
@@ -182,9 +183,9 @@ function initRequest(main: HTMLElement): void {
     const singleUse = maybeId("request-single-use", HTMLInputElement)?.checked ?? false;
     if (submit) submit.disabled = true;
     try {
-      notice.status("Unlocking with your passkey…");
+      notice.status(t.unlocking);
       const key = await ensureUnlocked();
-      notice.status("Creating the request link…");
+      notice.status(t.creatingRequest);
       const { request_id } = await api.createRequest({
         expires_in: expiresIn,
         max_files: maxFiles,
@@ -193,13 +194,13 @@ function initRequest(main: HTMLElement): void {
       });
       // The public key comes from the authenticated, unwrapped JWK (FORMAT.md §8.8).
       const url = `${location.origin}/r/${request_id}#${encodeRequestFragment(key.publicKey)}`;
-      notice.status("Your request link is ready.");
+      notice.status(t.requestReady);
       bumpCount("link-count");
       showLink(
         { container: "request-result", input: "request-link", copy: "request-copy", expiry: "request-expiry", qr: "request-qr" },
         url,
         expiryChoiceText(expiresIn),
-        "QR code of the request link",
+        t.requestQrLabel,
       );
     } catch (e) {
       notice.status("");

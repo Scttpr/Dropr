@@ -42,6 +42,7 @@
 
 import { CIPHER_PART_SIZE, ciphertextSize, encryptPart, partCount, partPlainRange } from "../crypto/index.ts";
 import { Api, ApiError } from "./api.ts";
+import { t } from "./i18n.ts";
 import { type Progress, RateMeter } from "./progress.ts";
 import { abortError, backoffDelay, isAbortError, sleep } from "./retry.ts";
 
@@ -91,7 +92,7 @@ export class UploadInterruptedError extends Error {
     super(
       cause instanceof ApiError && cause.status !== 0
         ? cause.message
-        : "The connection was lost. The upload will continue where it stopped when you retry.",
+        : t.connectionLost,
     );
     this.name = "UploadInterruptedError";
     this.cause = cause;

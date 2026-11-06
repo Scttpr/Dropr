@@ -10,7 +10,8 @@
  */
 
 import { byId, maybeId } from "./dom.ts";
-import { formatBytes, formatEta, formatRate, percent } from "./format.ts";
+import { formatBytes, formatEta, formatPercent, formatRate, percent } from "./format.ts";
+import { t } from "./i18n.ts";
 import type { Progress } from "./progress.ts";
 import { isAbortError } from "./retry.ts";
 import { UploadInterruptedError, type Uploader } from "./uploader.ts";
@@ -55,18 +56,18 @@ export class ProgressPanel {
     }
     if (this.retryBtn) this.retryBtn.hidden = true;
     this.lastAnnounced = -100;
-    this.say(`${verb} ${name}…`);
+    this.say(t.progressStart(verb, name));
   }
 
   update(p: Progress, verb: string): void {
     const pc = percent(p.done, p.total);
     this.bar.value = pc;
-    this.bar.setAttribute("aria-valuetext", `${pc}%`);
+    this.bar.setAttribute("aria-valuetext", formatPercent(pc));
     const now = Date.now();
     if (pc - this.lastAnnounced >= 10 || now - this.lastAnnouncedAt >= 15_000 || pc === 100) {
       this.lastAnnounced = pc;
       this.lastAnnouncedAt = now;
-      const parts = [`${verb}: ${pc}%`, `${formatBytes(p.done)} of ${formatBytes(p.total)}`];
+      const parts = [t.progressPercent(verb, pc), t.progressBytes(formatBytes(p.done), formatBytes(p.total))];
       if (p.rate > 0 && pc < 100) parts.push(formatRate(p.rate));
       const eta = pc < 100 ? formatEta(p.eta) : "";
       if (eta !== "") parts.push(eta);
@@ -96,7 +97,7 @@ export class ProgressPanel {
  * Resolves when finalized; rejects on cancel (AbortError) or permanent error.
  */
 export function runUploadWithPanel(uploader: Uploader, panel: ProgressPanel, name: string): Promise<void> {
-  panel.start(name, "Encrypting and uploading");
+  panel.start(name, t.encryptingUploading);
   return new Promise<void>((resolve, reject) => {
     const onCancel = (): void => uploader.cancel();
     panel.cancelBtn?.addEventListener("click", onCancel);
@@ -109,7 +110,7 @@ export function runUploadWithPanel(uploader: Uploader, panel: ProgressPanel, nam
       if (uploader.status === "running") return;
       if (panel.retryBtn) panel.retryBtn.hidden = true;
       window.removeEventListener("online", attempt);
-      panel.say(`Uploading ${name}…`);
+      panel.say(t.progressStart(t.uploading, name));
       uploader.run().then(
         () => {
           cleanup();
@@ -126,7 +127,7 @@ export function runUploadWithPanel(uploader: Uploader, panel: ProgressPanel, nam
             return;
           }
           cleanup();
-          if (isAbortError(e)) panel.say("Upload cancelled.");
+          if (isAbortError(e)) panel.say(t.uploadCancelled);
           reject(e);
         },
       );

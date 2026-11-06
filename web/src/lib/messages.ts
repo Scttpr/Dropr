@@ -8,11 +8,12 @@
 import { DecryptionError, FormatError } from "../crypto/index.ts";
 import { ApiError } from "./api.ts";
 import { DownloadError } from "./downloader.ts";
+import { t } from "./i18n.ts";
 import { PasskeyError, PrfUnsupportedError } from "./passkey.ts";
 import { isAbortError } from "./retry.ts";
 import { UploadInterruptedError } from "./uploader.ts";
 
-export const DAMAGED = "The file could not be decrypted: it has been damaged or altered, or the link is wrong.";
+export const DAMAGED = t.damaged;
 
 export function errorMessage(e: unknown): string {
   if (
@@ -25,8 +26,8 @@ export function errorMessage(e: unknown): string {
     return e.message;
   }
   if (e instanceof DecryptionError) return DAMAGED;
-  if (e instanceof FormatError) return "The file or link is malformed.";
-  if (isAbortError(e)) return "Cancelled.";
-  if (e instanceof Error && e.name === "QuotaExceededError") return "Your disk or browser storage is full.";
-  return "Something went wrong. Please reload the page and try again.";
+  if (e instanceof FormatError) return t.malformed;
+  if (isAbortError(e)) return t.cancelled;
+  if (e instanceof Error && e.name === "QuotaExceededError") return t.storageFull;
+  return t.unexpected;
 }

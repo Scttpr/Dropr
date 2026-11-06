@@ -28,6 +28,7 @@
 import type { ExtractableOwnerKey } from "./crypto/index.ts";
 import { ApiError } from "./lib/api.ts";
 import { Notice, byId, dataInt, focusTo, maybeId, pageRoot, revealJsOnly } from "./lib/dom.ts";
+import { locale, t } from "./lib/i18n.ts";
 import {
   BROWSER_NO_PRF_MESSAGE,
   NO_WEBAUTHN_MESSAGE,
@@ -42,6 +43,11 @@ import { type AuthenticatorChoice, choiceHints, isAuthenticatorChoice } from "./
 const REQUIRED = 2;
 const LAST_KEY = "dropr:setup-last-choice";
 const ALL: readonly AuthenticatorChoice[] = ["device", "phone", "security-key", "auto"];
+
+/** What to do while the browser prompt is open. */
+function duringText(c: AuthenticatorChoice, env: PasskeyEnvironment | null): string {
+  return t.during(c, env !== null && env.device !== "computer");
+}
 
 function safeNext(raw: string | undefined): string {
   // Same-origin path only (no "//host", no scheme).
@@ -66,58 +72,6 @@ function saveLast(c: AuthenticatorChoice | null): void {
     // Storage unavailable: recommendations are just less precise.
   }
 }
-
-/** Short name of a place, for sentences ("…like your phone or a security key"). */
-function placeName(c: AuthenticatorChoice, env: PasskeyEnvironment | null): string {
-  const device = env?.device ?? "computer";
-  switch (c) {
-    case "device":
-      return `this ${device}`;
-    case "phone":
-      return device === "computer" ? "your phone" : "another phone or tablet";
-    case "security-key":
-      return "a security key";
-    case "auto":
-      return "another way";
-  }
-}
-
-/** What to do while the browser prompt is open. */
-function duringText(c: AuthenticatorChoice, env: PasskeyEnvironment | null): string {
-  switch (c) {
-    case "device":
-      return "Follow the steps on your screen. You may be asked for your fingerprint, your face or your PIN.";
-    case "phone":
-      return env !== null && env.device !== "computer"
-        ? "Scan the QR code with the other device's camera, then follow the steps on it."
-        : "Scan the QR code with your phone's camera, then follow the steps on your phone.";
-    case "security-key":
-      return "Plug in or tap your security key, then touch it if it blinks.";
-    case "auto":
-      return "Follow the steps your browser shows.";
-  }
-}
-
-/** Said right before the second prompt (create() gave no PRF output). */
-function againText(c: AuthenticatorChoice): string {
-  switch (c) {
-    case "device":
-      return "Almost done. Please confirm one more time, the same way. That's normal.";
-    case "phone":
-      return "Almost done. Your phone will ask you one more time to confirm. That's normal.";
-    case "security-key":
-      return "Almost done. Touch your security key one more time. That's normal.";
-    case "auto":
-      return "Almost done. You'll be asked to confirm one more time. That's normal.";
-  }
-}
-
-const PHONE_FAILED =
-  "Your phone couldn't save the passkey. Please check the list under “Your phone”: Bluetooth on, on both devices; " +
-  "internet on both; and on Android, Google Password Manager (Microsoft Authenticator can't be used). " +
-  "Then try again, or try another way.";
-
-const REAUTH_STATUS = "For your safety, please confirm with your first passkey before making the spare one.";
 
 function init(main: HTMLElement): void {
   revealJsOnly();
@@ -161,17 +115,18 @@ function init(main: HTMLElement): void {
     if (help !== null && plan?.show !== false) help.hidden = c !== "phone";
   };
 
-  /** Adapt labels to the device ("this phone", "another phone or tablet"). */
+  /** Adapt labels to the device ("This phone", "Another phone or tablet"). The page is rendered for a computer. */
   const applyDevice = (e: PasskeyEnvironment): void => {
-    for (const s of document.querySelectorAll<HTMLElement>("[data-device]")) s.textContent = e.device;
-    if (e.device !== "computer") {
-      const t = maybeId("setup-where-phone-title");
-      if (t !== null) t.textContent = "Another phone or tablet";
-      const d = maybeId("setup-where-phone-desc");
-      if (d !== null) d.textContent = "You'll scan a QR code with the other device's camera.";
-      const bt = maybeId("setup-phone-help-bluetooth");
-      if (bt !== null) bt.textContent = "Turn on Bluetooth on both devices.";
-    }
+    if (e.device === "computer") return;
+    const set = (id: string, text: string): void => {
+      const el = maybeId(id);
+      if (el !== null) el.textContent = text;
+    };
+    set("setup-where-device-title", t.deviceTitle(e.device));
+    set("setup-where-device-desc", t.deviceDesc(e.device));
+    set("setup-where-phone-title", t.otherDeviceTitle);
+    set("setup-where-phone-desc", t.otherDeviceDesc);
+    set("setup-phone-help-bluetooth", t.bluetoothBoth);
   };
 
   /** Show the options of the current plan, recommended first. */
@@ -227,14 +182,14 @@ function init(main: HTMLElement): void {
     }
     if (stepTitle !== null) {
       stepTitle.hidden = count >= REQUIRED;
-      stepTitle.textContent = count === 0 ? "Step 1 of 2: your first passkey" : "Step 2 of 2: your spare passkey";
+      stepTitle.textContent = count === 0 ? t.step1Title : t.step2Title;
     }
     const confirming = count >= 1 && needConfirm;
     if (reauthNote !== null) reauthNote.hidden = !confirming || count >= REQUIRED;
-    if (failed) button.textContent = "Try again";
-    else if (count === 0) button.textContent = "Create my first passkey";
-    else if (confirming) button.textContent = "Confirm with my first passkey";
-    else button.textContent = "Create my spare passkey";
+    if (failed) button.textContent = t.tryAgain;
+    else if (count === 0) button.textContent = t.createFirst;
+    else if (confirming) button.textContent = t.confirmFirst;
+    else button.textContent = t.createSpare;
     applyPlan();
   };
 
@@ -246,14 +201,15 @@ function init(main: HTMLElement): void {
     focusTo(done);
   };
 
-  /** "Now make a spare one … like your phone or a security key." */
+  /** "Now make a spare one … for example your phone or a security key." */
   const spareAdvice = (): string => {
-    const base = "Now make a spare one on a different device than the one you just used";
-    if (env === null) return `${base}.`;
+    if (env === null) return t.spareAdvice("");
     const p = planChoices(env, 2, last);
     const ideas = p.offered.filter((c) => c !== "auto" && c !== last).slice(0, 2);
-    if (!p.show || ideas.length === 0) return `${base}.`;
-    return `${base}, for example ${ideas.map((c) => placeName(c, env)).join(" or ")}.`;
+    if (!p.show || ideas.length === 0) return t.spareAdvice("");
+    const device = env.device;
+    const or = new Intl.ListFormat(locale.tag, { type: "disjunction" });
+    return t.spareAdvice(or.format(ideas.map((c) => t.placeName(c, device))));
   };
 
   /** Offer "Try another way" when there is another option to pick. */
@@ -313,25 +269,25 @@ function init(main: HTMLElement): void {
     try {
       if (count >= 1 && needConfirm) {
         confirmingFirst = true;
-        notice.status("First, confirm with the passkey you already made…");
+        notice.status(t.confirmingFirst);
         const hints = last !== null ? choiceHints(last) : undefined;
         key = await unlockExtractable({}, hints);
         confirmingFirst = false;
         needConfirm = false;
         render();
-        notice.status(`Thank you. Now create your spare passkey. ${duringText(c, env)}`);
+        notice.status(t.thanksNowSpare(duringText(c, env)));
       } else {
         notice.status(duringText(c, env));
       }
       try {
-        key = await registerPasskey(key, {}, c, { onConfirmPrompt: () => notice.status(againText(c)) });
+        key = await registerPasskey(key, {}, c, { onConfirmPrompt: () => notice.status(t.again(c)) });
       } catch (e) {
         // The first registration authorizes the second for 5 minutes only:
         // explain, then let the user confirm with the first passkey.
         if (count >= 1 && e instanceof ApiError && e.code === "reauth_required") {
           needConfirm = true;
           render();
-          notice.status(REAUTH_STATUS);
+          notice.status(t.reauthStatus);
           focusTo(button);
           return;
         }
@@ -347,19 +303,19 @@ function init(main: HTMLElement): void {
         if (where !== null) where.hidden = true;
         button.hidden = true;
         notice.status("");
-        showDone("All done! Both of your passkeys are ready.", "Taking you to Dropr…");
+        showDone(t.allDone, t.takingYou);
         setTimeout(() => location.assign(next), 1500);
         return;
       }
       saveLast(c);
       render();
       notice.status("");
-      showDone("Your first passkey is ready.", spareAdvice());
+      showDone(t.firstReady, spareAdvice());
     } catch (e) {
       notice.status("");
       failed = true;
       render();
-      if (c === "phone" && !confirmingFirst && e instanceof PasskeyError && e.reason === "NotAllowedError") notice.error(PHONE_FAILED);
+      if (c === "phone" && !confirmingFirst && e instanceof PasskeyError && e.reason === "NotAllowedError") notice.error(t.phoneFailed);
       else notice.error(e);
       // Another place for the new passkey doesn't help confirm the first one.
       if (!confirmingFirst) offerOther();

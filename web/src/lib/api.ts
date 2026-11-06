@@ -18,6 +18,7 @@
  * @module
  */
 
+import { type Locale, locale, t } from "./i18n.ts";
 import { isAbortError } from "./retry.ts";
 
 export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
@@ -44,39 +45,43 @@ export class ApiError extends Error {
 }
 
 /** Plain-language fallback for a status when the server sent no usable message. */
-export function messageForStatus(status: number, code = ""): string {
+export function messageForStatus(status: number, code = "", { t }: Locale = locale): string {
   switch (code) {
     case "expired":
-      return "This link has expired.";
+      return t.statusExpired;
     case "exhausted":
-      return "This link has reached its download limit.";
+      return t.statusExhausted;
     case "revoked":
-      return "This link has been revoked by its owner.";
+      return t.statusClosed;
     case "locked":
-      return "Unlock your inbox with your passkey first.";
+      return t.statusLocked;
     case "quota_exceeded":
-      return "There is not enough storage space left for this file.";
+      return t.statusQuota;
     case "too_large":
-      return "This file is too large.";
+      return t.statusTooLarge;
   }
-  if (status === 0) return "Could not reach the server. Check your connection and try again.";
-  if (status === 400 || status === 422) return "The request was not accepted. Please reload the page and try again.";
-  if (status === 401) return "Your session has expired. Please sign in again.";
-  if (status === 403) return "You are not allowed to do this.";
-  if (status === 404) return "This link does not exist or has been revoked.";
-  if (status === 408) return "The server took too long to respond. Please try again.";
-  if (status === 409) return "This was changed in the meantime. Please reload the page.";
-  if (status === 410) return "This link has expired or is no longer available.";
-  if (status === 413) return "This file is too large.";
-  if (status === 429) return "Too many attempts. Please wait a moment and try again.";
-  if (status >= 500) return "The server had a problem. Please try again in a moment.";
-  return `Unexpected response from the server (${status}).`;
+  if (status === 0) return t.statusNetwork;
+  if (status === 400 || status === 422) return t.statusBadRequest;
+  if (status === 401) return t.statusUnauthenticated;
+  if (status === 403) return t.statusForbidden;
+  if (status === 404) return t.statusNotFound;
+  if (status === 408) return t.statusTimeout;
+  if (status === 409) return t.statusConflict;
+  if (status === 410) return t.statusGone;
+  if (status === 413) return t.statusTooLarge;
+  if (status === 429) return t.statusRateLimited;
+  if (status >= 500) return t.statusServer;
+  return t.statusUnexpected(String(status));
 }
 
 const MAX_SERVER_MESSAGE = 300;
 
-/** Build an ApiError from a non-2xx response (reads the body). */
-export async function errorFromResponse(res: Response): Promise<ApiError> {
+/**
+ * Build an ApiError from a non-2xx response (reads the body). The server
+ * writes English messages; other languages translate them by error code
+ * (falling back to the status message, never to English).
+ */
+export async function errorFromResponse(res: Response, loc: Locale = locale): Promise<ApiError> {
   let code = "";
   let message = "";
   try {
@@ -89,7 +94,8 @@ export async function errorFromResponse(res: Response): Promise<ApiError> {
   } catch {
     // not JSON: fall back to the status message
   }
-  if (message === "" || message.length > MAX_SERVER_MESSAGE) message = messageForStatus(res.status, code);
+  if (loc.lang !== "en") message = (Object.hasOwn(loc.t.apiCodes, code) ? loc.t.apiCodes[code] : undefined) ?? "";
+  if (message === "" || message.length > MAX_SERVER_MESSAGE) message = messageForStatus(res.status, code, loc);
   return new ApiError(res.status, code === "" ? `http_${res.status}` : code, message);
 }
 
@@ -192,7 +198,7 @@ function isObject(x: unknown): x is Record<string, unknown> {
 }
 
 function bad(what: string): ApiError {
-  return new ApiError(0, "bad_response", `Unexpected response from the server (${what}).`);
+  return new ApiError(0, "bad_response", t.statusUnexpected(what));
 }
 
 function obj(x: unknown, what: string): Record<string, unknown> {
@@ -267,7 +273,7 @@ export function parseInboxEntry(x: unknown): InboxEntry {
 export function mapThrown(e: unknown, user: AbortSignal | undefined, timer: AbortSignal | undefined): unknown {
   if (user?.aborted) return e;
   if (timer?.aborted || (e instanceof Error && e.name === "TimeoutError")) {
-    return new ApiError(0, "timeout", "The server took too long to respond. Please try again.");
+    return new ApiError(0, "timeout", t.statusTimeout);
   }
   if (e instanceof ApiError || isAbortError(e)) return e;
   return new ApiError(0, "network", messageForStatus(0));
