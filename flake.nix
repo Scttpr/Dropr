@@ -194,6 +194,7 @@
             skopeo
             cosign
             syft
+            gh
           ];
           env = {
             CGO_ENABLED = "0";
