@@ -85,8 +85,12 @@ sd_version=$(systemctl --version | awk 'NR==1 {print $2}')
   || die "systemd >= 257 is required (found ${sd_version})"
 command -v systemd-creds >/dev/null || die "systemd-creds is required"
 
-for f in dropr.service dropr-backup.service dropr-backup.timer journald@dropr.conf \
-         dropr-admin run-with-credentials dropr.toml apparmor/usr.local.bin.dropr; do
+units="dropr.service dropr-backup.service dropr-backup.timer dropr-offsite.service
+       dropr-check.service dropr-check.timer dropr-alert@.service"
+libs="run-with-credentials offsite check alert"
+sbins="dropr-admin dropr-credential dropr-offsite"
+# shellcheck disable=SC2086 # word lists
+for f in $units $libs $sbins journald@dropr.conf dropr.toml apparmor/usr.local.bin.dropr; do
   [ -f "$SRC_DIR/$f" ] || die "missing $SRC_DIR/$f (run from a Dropr checkout)"
 done
 
@@ -183,6 +187,17 @@ if [ ! -s "$CRED_DIR/oidc_key.cred" ] && $gen_oidc_key; then
   install -m 0644 "$workdir/cert.pem" "$CONF_DIR/oidc_cert.pem"
   oidc_cert_new=true
 fi
+if [ ! -s "$CRED_DIR/alert_env.cred" ]; then
+  cat > "$workdir/alert_env" <<'EOF'
+# Dropr alert settings: sudo dropr-credential edit alert_env
+# Test: sudo systemctl start dropr-alert@test.service
+#ALERT_WEBHOOK=https://ntfy.sh/<a-long-random-topic>
+#ALERT_WEBHOOK_FORMAT=text          # or json for Slack/Mattermost ({"text": ...})
+#ALERT_EMAIL=ops@example.com        # needs a sendmail, e.g. apt install msmtp-mta
+#ALERT_REPEAT_HOURS=6
+EOF
+  seal alert_env "$workdir/alert_env"
+fi
 chown root:root "$CRED_DIR"/* 2>/dev/null || true
 chmod 0600 "$CRED_DIR"/* 2>/dev/null || true
 
@@ -196,12 +211,10 @@ else
 fi
 
 # --- Units and helpers ----------------------------------------------------------
-install -m 0644 "$SRC_DIR/dropr.service"        /etc/systemd/system/dropr.service
-install -m 0644 "$SRC_DIR/dropr-backup.service" /etc/systemd/system/dropr-backup.service
-install -m 0644 "$SRC_DIR/dropr-backup.timer"   /etc/systemd/system/dropr-backup.timer
-install -m 0644 "$SRC_DIR/journald@dropr.conf"  /etc/systemd/journald@dropr.conf
-install -m 0755 "$SRC_DIR/run-with-credentials" "$PREFIX/lib/dropr/run-with-credentials"
-install -m 0755 "$SRC_DIR/dropr-admin"          "$PREFIX/sbin/dropr-admin"
+for f in $units; do install -m 0644 "$SRC_DIR/$f" "/etc/systemd/system/$f"; done
+for f in $libs;  do install -m 0755 "$SRC_DIR/$f" "$PREFIX/lib/dropr/$f"; done
+for f in $sbins; do install -m 0755 "$SRC_DIR/$f" "$PREFIX/sbin/$f"; done
+install -m 0644 "$SRC_DIR/journald@dropr.conf" /etc/systemd/journald@dropr.conf
 systemctl daemon-reload
 
 # --- AppArmor (before any restart: profiles attach when the binary starts) ------
@@ -228,8 +241,9 @@ mv -f "$PREFIX/bin/dropr.new" "$PREFIX/bin/dropr"
 
 # After the binary is in place, or verify reports ExecStart as missing.
 if command -v systemd-analyze >/dev/null; then
-  systemd-analyze verify /etc/systemd/system/dropr.service /etc/systemd/system/dropr-backup.service \
-    2>&1 | grep -v -e 'oidc_key' -e 'refresh_key' >&2 || true
+  # shellcheck disable=SC2086 # word list
+  (cd /etc/systemd/system && systemd-analyze verify $units) \
+    2>&1 | grep -v -e '_key' -e '_env' -e 'dropr-alert@.service' >&2 || true
 fi
 
 systemctl enable --quiet dropr-backup.timer
@@ -255,7 +269,8 @@ elif ! $ready; then
 EOF
   exit 0
 else
-  systemctl enable --quiet dropr.service
+  systemctl enable --quiet dropr.service dropr-check.timer
+  systemctl start dropr-check.timer
   if $was_active; then
     log "Restarting dropr"
     systemctl restart dropr.service

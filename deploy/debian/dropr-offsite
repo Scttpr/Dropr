@@ -1,0 +1,27 @@
+#!/bin/sh
+# Admin entry point for the off-site backups: `sudo dropr-offsite snapshots`.
+# Runs /usr/local/lib/dropr/offsite with the identity, credentials and
+# sandbox of dropr-offsite.service. Set it up first:
+#   sudo dropr-credential edit restic_env && sudo dropr-offsite init
+#
+# Installed as /usr/local/sbin/dropr-offsite by install.sh.
+set -eu
+
+if [ "$(id -u)" -ne 0 ]; then
+  exec sudo -- "$0" "$@"
+fi
+[ -e /etc/dropr/credentials/restic_env.cred ] || {
+  echo "not configured: sudo dropr-credential edit restic_env (docs/deploy-debian.md \"Off-site backups\")" >&2
+  exit 1
+}
+
+if [ -t 0 ] && [ -t 1 ]; then mode=--pty; else mode=--pipe; fi
+
+exec systemd-run --quiet "$mode" --wait --collect --unit=dropr-offsite-admin \
+  --property=User=dropr --property=Group=dropr \
+  --property=CacheDirectory=dropr-offsite --property=CacheDirectoryMode=0700 \
+  --property=StateDirectory=dropr-offsite --property=StateDirectoryMode=0700 \
+  --property=UMask=0077 --property=NoNewPrivileges=yes \
+  --property=ProtectSystem=strict --property=ProtectHome=yes --property=PrivateTmp=yes \
+  --property=LoadCredentialEncrypted=restic_env:/etc/dropr/credentials/restic_env.cred \
+  /usr/local/lib/dropr/offsite "$@"

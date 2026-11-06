@@ -1,0 +1,54 @@
+# Off-site, encrypted copy of the Dropr backups (restic). Started by
+# dropr-backup.service after each successful backup; skipped until the
+# restic_env credential exists. Set up: docs/deploy-debian.md "Off-site backups".
+
+[Unit]
+Description=Dropr off-site backup (restic)
+Documentation=https://github.com/scttpr/dropr/blob/main/docs/deploy-debian.md#off-site-backups
+ConditionPathExists=/etc/dropr/credentials/restic_env.cred
+Wants=network-online.target
+After=network-online.target dropr-backup.service
+OnFailure=dropr-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/dropr/offsite backup
+TimeoutStartSec=6h
+
+User=dropr
+Group=dropr
+LoadCredentialEncrypted=restic_env:/etc/dropr/credentials/restic_env.cred
+CacheDirectory=dropr-offsite
+CacheDirectoryMode=0700
+StateDirectory=dropr-offsite
+StateDirectoryMode=0700
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=disconnected
+PrivateDevices=true
+ProtectProc=invisible
+InaccessiblePaths=-/etc/dropr/credentials
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=strict
+ProtectClock=true
+ProtectHostname=private
+PrivateIPC=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=link-local multicast
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM

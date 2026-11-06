@@ -1,0 +1,65 @@
+#!/bin/sh
+# Off-site, encrypted copies of the Dropr backups with restic. Runs inside
+# dropr-offsite.service (after each successful dropr-backup) or through the
+# admin wrapper: `sudo dropr-offsite snapshots`.
+#
+#   backup        copy the newest database backup, then the blobs; prune; check
+#   init          create the repository
+#   snapshots     list snapshots
+#   check         read and verify all data in the repository (slow)
+#   restore-test  restore the latest database snapshot and verify it
+#   restic ARGS   run restic directly (e.g. a disaster-recovery restore into
+#                 /var/cache/dropr-offsite, the one writable directory)
+#
+# The restic_env credential holds the repository settings as KEY=value lines:
+# RESTIC_REPOSITORY and RESTIC_PASSWORD, plus the backend's variables (for S3:
+# AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY). Keep a copy of RESTIC_PASSWORD
+# off this host: without it the backups cannot be read.
+#
+# Installed as /usr/local/lib/dropr/offsite by install.sh.
+set -eu
+
+: "${CREDENTIALS_DIRECTORY:?run inside dropr-offsite.service (use dropr-offsite)}"
+: "${CACHE_DIRECTORY:?run inside dropr-offsite.service (use dropr-offsite)}"
+command -v restic >/dev/null || { echo "restic is not installed (apt install restic)" >&2; exit 1; }
+
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    ''|'#'*) ;;
+    [A-Z_]*=*) export "${line?}" ;;
+    *) echo "restic_env: ignoring a line that is not KEY=value" >&2 ;;
+  esac
+done < "$CREDENTIALS_DIRECTORY/restic_env"
+: "${RESTIC_REPOSITORY:?restic_env must set RESTIC_REPOSITORY}"
+: "${RESTIC_PASSWORD:?restic_env must set RESTIC_PASSWORD}"
+export RESTIC_CACHE_DIR="$CACHE_DIRECTORY/restic"
+r() { restic --no-scan --host dropr "$@"; }
+
+case "${1:-backup}" in
+  backup)
+    newest=$(find /var/backups/dropr -maxdepth 1 -type f -name 'dropr-*.db' -printf '%T@ %p\n' \
+      | sort -n | tail -n 1 | cut -d' ' -f2-)
+    [ -n "$newest" ] || { echo "no database backup in /var/backups/dropr" >&2; exit 1; }
+    # Database first, then blobs (operations.md "Backups").
+    r backup --tag dropr --tag db "$newest"
+    r backup --tag dropr --tag blobs /var/lib/dropr/blobs
+    restic forget --prune --host dropr --tag dropr --group-by host,tags \
+      --keep-daily 14 --keep-weekly 8 --keep-monthly 12
+    restic check
+    date -u +%s > "${STATE_DIRECTORY:?}/last-success"
+    ;;
+  init) restic init ;;
+  snapshots) restic snapshots --host dropr --tag dropr ;;
+  check) restic check --read-data ;;
+  restore-test)
+    target=$CACHE_DIRECTORY/restore-test
+    rm -rf "$target"
+    restic restore latest --host dropr --tag db --target "$target" --verify
+    found=$(find "$target" -type f -name 'dropr-*.db' -size +0)
+    rm -rf "$target"
+    [ -n "$found" ] || { echo "the latest db snapshot has no database file" >&2; exit 1; }
+    echo "OK: restored and verified $(basename "$found")"
+    ;;
+  restic) shift; exec restic "$@" ;;
+  *) sed -n '6,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+esac

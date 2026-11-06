@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run smoke.sh in a QEMU VM booted from the official Debian cloud image: the
-# faithful test (own kernel, unprivileged sandbox exactly as on a VPS). Runs as
-# your user; qemu and cloud-localds come from nixpkgs when they are missing.
+# Test the Debian 13 deployment in a QEMU VM booted from the official cloud
+# image: harden-host.sh, then smoke.sh (install.sh end to end). Runs as your
+# user; qemu and cloud-localds come from nixpkgs when they are missing.
 #
 #   nix build .#dropr                    # or BIN=path/to/static/dropr
-#   deploy/debian/test/vm.sh up          # download, boot, run smoke.sh
+#   deploy/debian/test/vm.sh up          # download, boot, harden, run smoke.sh
 #   deploy/debian/test/vm.sh smoke       # again: an upgrade run
 #   deploy/debian/test/vm.sh browse      # dev Keycloak + Chromium: use Dropr
 #   deploy/debian/test/vm.sh ssh
@@ -110,6 +110,9 @@ smoke() {
   [ -f "$BIN" ] || die "no binary at $BIN (nix build .#dropr, or set BIN)"
   push
   vm 'sudo tee /root/dropr >/dev/null && sudo chmod 0755 /root/dropr' < "$(realpath "$BIN")"
+  # SSH from the host reaches the guest from QEMU's 10.0.2.2.
+  ssh "${ssh_opts[@]}" -t debian@127.0.0.1 sudo /src/deploy/debian/harden-host.sh \
+    --admin-user debian --admin-cidr 10.0.2.2/32 --yes
   ssh "${ssh_opts[@]}" -t debian@127.0.0.1 sudo /src/deploy/debian/test/smoke.sh /root/dropr
 }
 

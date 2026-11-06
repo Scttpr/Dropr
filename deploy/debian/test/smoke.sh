@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Smoke test of deploy/debian/install.sh on a throwaway Debian or Ubuntu box
-# made by container.sh or vm.sh (hostname dropr-smoke). Never run it on a real
-# server: it edits /etc/hosts, trusts a local CA, adds nginx sites and points
-# Dropr at a stub identity provider.
+# Smoke test of deploy/debian/install.sh on a throwaway Debian 13 VM made by
+# vm.sh (hostname dropr-smoke), after harden-host.sh. Never run it on a real
+# server: it edits /etc/hosts, trusts a local CA, adds nginx sites, points
+# Dropr at a stub identity provider and sets up a local restic repository.
 #
 #   sudo deploy/debian/test/smoke.sh /path/to/dropr
 #
@@ -32,7 +32,7 @@ inst() { "$SRC/install.sh" --binary "$bin" 2>&1 | tee "$WORK/install-$1.log"; }
 
 [ "$(id -u)" -eq 0 ] || die "run as root"
 [ "$(hostname)" = dropr-smoke ] \
-  || die "refusing to run on '$(hostname)': this rewrites system config; use container.sh or vm.sh"
+  || die "refusing to run on '$(hostname)': this rewrites system config; use vm.sh"
 [ -f "$bin" ] || die "no such file: $bin"
 mkdir -p "$WORK"
 
@@ -166,9 +166,6 @@ EOF
   if inst start; then ok "installer exits 0"; else bad "installer failed"; fi
   check "reports healthy" grep -q "Healthy" "$WORK/install-start.log"
 fi
-if [ "$(systemd-detect-virt -c || true)" != none ]; then
-  echo "note: in a container systemd may not provide LoadCredential; failures below are expected there (use vm.sh)"
-fi
 
 # --- Upgrade over the running service ----------------------------------------------
 step "Upgrade over the running service"
@@ -205,6 +202,51 @@ if [ -z "$denials" ]; then ok "no AppArmor denials for dropr"; else
 fi
 check "logs land in the dropr journal namespace" test -n "$(journalctl --namespace=dropr -q -n 1 -o cat)"
 echo "        $(systemd-analyze security dropr.service --no-pager 2>/dev/null | tail -n 1)"
+
+# --- Operations ----------------------------------------------------------------------
+step "Operations (self-check, alerts, off-site backups)"
+check "dropr-check.timer active" systemctl is-active dropr-check.timer
+if systemctl start dropr-check.service; then ok "self-check passes"; else
+  bad "self-check failed:"; journalctl -u dropr-check -n 12 -o cat --no-pager | sed 's/^/        /'
+fi
+check "alert unit runs (dropr-alert@test)" systemctl start dropr-alert@test.service
+check "dropr-credential decrypts alert_env" dropr-credential show alert_env
+command -v restic >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq restic >/dev/null
+if [ ! -e /etc/dropr/credentials/restic_env.cred ]; then
+  # A repository in the unit's cache directory stands in for S3 or rest-server.
+  printf 'RESTIC_REPOSITORY=/var/cache/dropr-offsite/smoke-repo\nRESTIC_PASSWORD=%s\n' "$(openssl rand -hex 16)" \
+    | dropr-credential set restic_env - >/dev/null
+  dropr-offsite init >/dev/null
+fi
+rm -f /var/lib/dropr-offsite/last-success
+systemctl start dropr-backup.service   # OnSuccess= starts dropr-offsite.service
+for _ in $(seq 1 60); do
+  [ -e /var/lib/dropr-offsite/last-success ] || systemctl is-failed --quiet dropr-offsite || { sleep 2; continue; }
+  break
+done
+if [ -e /var/lib/dropr-offsite/last-success ]; then ok "off-site backup follows dropr-backup"; else
+  bad "off-site backup did not complete:"; journalctl -u dropr-offsite -n 12 -o cat --no-pager | sed 's/^/        /'
+fi
+check "off-site restore test" dropr-offsite restore-test
+
+# --- Host hardening ---------------------------------------------------------------------
+if [ -e /etc/sysctl.d/90-dropr-hardening.conf ]; then
+  step "Host hardening (harden-host.sh)"
+  sshd_cfg=$(sshd -T 2>/dev/null || true)
+  check "sshd refuses passwords" grep -qx 'passwordauthentication no' <<<"$sshd_cfg"
+  check "sshd refuses root logins" grep -qx 'permitrootlogin no' <<<"$sshd_cfg"
+  check "firewall input policy is drop" sh -c 'nft list chain inet filter input | grep -q "policy drop"'
+  check "nftables enabled at boot" systemctl is-enabled nftables
+  check "sysctl hardening applied" test "$(sysctl -n kernel.kptr_restrict)" = 2
+  check "unattended upgrades enabled" grep -q 'Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades
+  nts=""
+  for _ in $(seq 1 30); do
+    nts=$(chronyc -N -c authdata 2>/dev/null | grep -c ',NTS,' || true)
+    [ "${nts:-0}" -ge 2 ] && break
+    sleep 2
+  done
+  if [ "${nts:-0}" -ge 2 ]; then ok "chrony has $nts NTS sources"; else bad "chrony NTS sources: ${nts:-0} (chronyc -N authdata)"; fi
+fi
 
 # --- Summary -------------------------------------------------------------------------
 printf '\n\033[1m%d passed, %d failed\033[0m (installer logs in %s)\n' "$pass" "$fail" "$WORK"

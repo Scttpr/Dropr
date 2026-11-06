@@ -20,6 +20,7 @@ Wants=network-online.target
 After=network-online.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
+OnFailure=dropr-alert@%n.service
 
 [Service]
 Type=simple

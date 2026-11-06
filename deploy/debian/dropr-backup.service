@@ -13,6 +13,8 @@
 Description=Dropr database backup
 Documentation=https://github.com/scttpr/dropr/blob/main/docs/operations.md#backups
 After=dropr.service
+OnSuccess=dropr-offsite.service
+OnFailure=dropr-alert@%n.service
 
 [Service]
 Type=oneshot

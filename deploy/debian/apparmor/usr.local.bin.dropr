@@ -1,9 +1,9 @@
 # AppArmor profile for Dropr (Debian 13, AppArmor 4). Installed by
 # deploy/debian/install.sh as /etc/apparmor.d/usr.local.bin.dropr and
 # attached by path, so it confines every `dropr` process: the service, the
-# backup unit and dropr-admin. A second wall behind the systemd sandbox: even
-# with a code execution bug, dropr cannot read the credential store, write
-# outside its data, or run any program.
+# backup unit, the self-check and dropr-admin. A second wall behind the
+# systemd sandbox: even with a code execution bug, dropr cannot read the
+# credential store, write outside its data, or run any program.
 #
 # Denials: journalctl -k -g apparmor. To debug, switch to complain mode:
 #   aa-complain /etc/apparmor.d/usr.local.bin.dropr   (apparmor-utils)
@@ -40,12 +40,13 @@ profile dropr /usr/local/bin/dropr {
   /etc/dropr/dropr.toml r,
   /run/dropr-admin/dropr.toml r,
   /run/dropr-backup/dropr.toml r,
+  /run/dropr-check/dropr.toml r,
   /etc/mime.types r,
 
   # Decrypted credentials, as systemd exposes them to each unit. The sealed
   # originals are never readable.
-  /run/credentials/{dropr,dropr-admin,dropr-backup}.service/ r,
-  /run/credentials/{dropr,dropr-admin,dropr-backup}.service/* r,
+  /run/credentials/{dropr,dropr-admin,dropr-backup,dropr-check}.service/ r,
+  /run/credentials/{dropr,dropr-admin,dropr-backup,dropr-check}.service/* r,
   deny /etc/dropr/credentials/** rwklx,
   deny /var/lib/systemd/credential.secret rwklx,
 
