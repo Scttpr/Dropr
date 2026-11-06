@@ -1,0 +1,184 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+# Actions are pinned by commit SHA (version in the trailing comment).
+# Refresh with: gh api repos/<owner>/<repo>/commits/<tag> --jq .sha
+
+jobs:
+  flake-check:
+    name: nix flake check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - name: Enable KVM for the NixOS VM test
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - run: nix flake check -L
+      - name: Reproducibility (web assets build twice, identical)
+        run: |
+          nix build .#web-assets
+          nix build --rebuild .#web-assets
+
+  checks:
+    name: make check, fuzz smoke, web tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - name: Web dependencies
+        run: nix develop -c bash -c 'cd web && npm ci'
+      - name: Web typecheck, tests, build
+        run: nix develop -c bash -c 'cd web && npm run typecheck && npm test && npm run build'
+      - name: Build, lint, race tests, govulncheck
+        run: nix develop -c make check
+      - name: Fuzz smoke
+        run: nix develop -c make fuzz FUZZTIME=10s
+
+  audit:
+    name: govulncheck and npm audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - run: nix develop -c govulncheck ./...
+      - run: nix develop -c bash -c 'cd web && npm audit --audit-level=high'
+
+  keycloak-integration:
+    name: Go integration tests against Keycloak
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - name: Start Keycloak (image pinned in deploy/compose.dev.yaml)
+        run: |
+          image=$(grep -oE 'quay.io/keycloak/keycloak:[^ ]+' deploy/compose.dev.yaml | head -1)
+          docker run -d --name keycloak -p 127.0.0.1:8180:8180 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+            -v "$PWD/deploy/keycloak/dropr-realm.json:/opt/keycloak/data/import/dropr-realm.json:ro" \
+            "$image" start-dev --import-realm --http-port=8180
+          for i in $(seq 1 90); do
+            curl -fsS http://localhost:8180/realms/dropr/.well-known/openid-configuration >/dev/null && exit 0
+            sleep 2
+          done
+          docker logs keycloak; exit 1
+      - run: nix develop -c make test-keycloak
+
+  e2e:
+    name: Playwright E2E (placeholder until e2e/ exists)
+    if: hashFiles('e2e/package.json') != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - name: Start Keycloak
+        run: |
+          image=$(grep -oE 'quay.io/keycloak/keycloak:[^ ]+' deploy/compose.dev.yaml | head -1)
+          docker run -d --name keycloak -p 127.0.0.1:8180:8180 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+            -v "$PWD/deploy/keycloak/dropr-realm.json:/opt/keycloak/data/import/dropr-realm.json:ro" \
+            "$image" start-dev --import-realm --http-port=8180
+          for i in $(seq 1 90); do
+            curl -fsS http://localhost:8180/realms/dropr/.well-known/openid-configuration >/dev/null && exit 0
+            sleep 2
+          done
+          docker logs keycloak; exit 1
+      # Browsers come from nixpkgs (PLAYWRIGHT_BROWSERS_PATH in the dev shell);
+      # the npm @playwright/test version must equal $PLAYWRIGHT_VERSION.
+      - run: nix develop -c bash -c 'cd e2e && npm ci && npx playwright test'
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          if-no-files-found: ignore
+
+  release:
+    name: release (image, asset hashes, signature, SBOM)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [flake-check, checks, audit, keycloak-integration]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write     # create the GitHub release
+      packages: write     # push the image to ghcr.io
+      id-token: write     # keyless cosign signing
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - name: Verify the tag signature
+        run: |
+          # Needs the maintainers' signing keys in the runner keyring; adapt to
+          # your key distribution (for SSH-signed tags: gpg.ssh.allowedSignersFile).
+          git tag -v "$GITHUB_REF_NAME" || echo "::warning::tag signature not verified in CI"
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Build and hash the web assets
+        run: |
+          nix build -o web-assets .#web-assets
+          { (cd web-assets && sha256sum *); (cd internal/web/static && sha256sum app.css favicon.svg); } \
+            | sort -k2 > "dropr-assets-${GITHUB_REF_NAME}.sha256"
+          cat "dropr-assets-${GITHUB_REF_NAME}.sha256"
+
+      - name: Build the image and push by digest
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          nix build -o image .#image
+          nix shell nixpkgs#skopeo -c skopeo copy --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" \
+            "docker-archive:$(readlink -f image)" "docker://${IMAGE}:${GITHUB_REF_NAME}"
+          digest=$(nix shell nixpkgs#skopeo -c skopeo inspect --creds "${{ github.actor }}:${GHCR_TOKEN}" \
+            --format '{{.Digest}}' "docker://${IMAGE}:${GITHUB_REF_NAME}")
+          echo "DIGEST=${digest}" >> "$GITHUB_ENV"
+          echo "Image: ${IMAGE}@${digest}"
+
+      - name: Sign the image (keyless)
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: SBOM (SPDX)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.IMAGE }}@${{ env.DIGEST }}
+          format: spdx-json
+          output-file: dropr-${{ github.ref_name }}.spdx.json
+          upload-artifact: false
+
+      - name: Attest the SBOM
+        run: |
+          cosign attest --yes --type spdxjson \
+            --predicate "dropr-${GITHUB_REF_NAME}.spdx.json" "${IMAGE}@${DIGEST}"
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf 'Image: `%s@%s`\n\nVerify: see SECURITY.md.\n' "${IMAGE}" "${DIGEST}" > notes.md
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            "dropr-assets-${GITHUB_REF_NAME}.sha256" "dropr-${GITHUB_REF_NAME}.spdx.json"
