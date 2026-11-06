@@ -3,7 +3,7 @@
  *
  * - mallory (no Dropr.User role) signs in successfully at the IdP and gets
  *   the 403 "You don't have access" page; no account and no session exist.
- * - bob has the role, sets up passkeys and a request link; his role is then
+ * - bob has the role, signs in and creates a request link; his role is then
  *   removed through the Keycloak admin API mid-session. Revalidation is due
  *   when `sessions.revalidated_at` is older than revalidate_every (minimum
  *   1 m by config); instead of waiting, the test ages that column in SQLite.
@@ -57,7 +57,7 @@ test.describe("role removed mid-session", () => {
   let requestLink = "";
 
   test("bob loses the role: the next revalidation ends his session", async ({ browser, browserName, dropr }) => {
-    test.skip(browserName !== "chromium", "owner flow (Chromium virtual authenticator); IdP-side behaviour is browser-independent");
+    test.skip(browserName !== "chromium", "owner flow runs in Chromium; IdP-side behaviour is browser-independent");
     const { b, close } = await chromiumBrowser(browser, browserName);
     const bob = await newOwner(b, dropr, "bob");
     try {

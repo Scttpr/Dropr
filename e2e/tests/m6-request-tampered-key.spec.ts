@@ -3,12 +3,12 @@
  *
  * Expected behaviour (documented, by design): the uploader cannot detect
  * the substitution — any 32-byte X25519 key is a valid HPKE recipient, and
- * the server never vouches for the key (ARCHITECTURE.md §2: the owner's key
- * comes from the link, the server does not hold an authenticated copy for
- * uploaders). The upload succeeds, but the file key is sealed to the wrong
- * key, so the owner cannot open it: the inbox must show that one entry as
- * "Unreadable file" (Delete only) while the other entries still decrypt and
- * download, and the page must not crash. A malformed fragment is refused on
+ * the server never vouches for the key (ARCHITECTURE.md §2: the link's key
+ * comes from the link fragment, the server never sees it). The upload
+ * succeeds, but the file key is sealed to the wrong key, so the owner cannot
+ * open it, even in the browser that holds the link's key: the inbox must show
+ * that one entry as "Unreadable file" (Delete only, not `foreign`) while the
+ * other entries still decrypt and download, and the page must not crash. A malformed fragment is refused on
  * the uploader page.
  */
 
@@ -49,9 +49,10 @@ test("the owner sees the substituted-key file as unreadable, the other one still
   const errors: string[] = [];
   p.on("pageerror", (e) => errors.push(e.message));
   await p.goto(dropr.origin + "/inbox");
-  await p.locator("#inbox-unlock").click();
   const rows = p.locator("#inbox-list tr");
   await expect(rows).toHaveCount(2);
+  // The link's key is in this browser: no row is "foreign", one is unreadable.
+  await expect(p.locator("#inbox-list tr.foreign")).toHaveCount(0);
   const unreadable = p.locator("#inbox-list td.name.unreadable");
   await expect(unreadable).toHaveCount(1);
   await expect(unreadable).toHaveText("Unreadable file");

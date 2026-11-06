@@ -8,8 +8,9 @@
  *   database directly (e.g. move `expires_at` into the past). There is no
  *   test backdoor in the production code: time travel is done on the DB.
  * - Every spec file that calls `test.use({ droprConfig: … })` gets its own
- *   worker, hence its own fresh server, owner and authenticators.
- * - `alice` is the worker's owner after sign-in and two passkeys.
+ *   worker, hence its own fresh server and owner context.
+ * - `alice` is the worker's owner after sign-in (no setup step: sign-in lands
+ *   on the dashboard). Her request link keys live in `alice.context`.
  */
 
 import { type Browser, type BrowserContext, type Page, chromium } from "@playwright/test";
@@ -20,9 +21,21 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { type Dropr, KEYCLOAK, Owner, type TestFile, USERS, expect, logConsole, test as base } from "./fixtures.ts";
+import { type Dropr, KEYCLOAK, Owner, type TestFile, USERS, expect, logConsole, newOwnerContext, test as base } from "./fixtures.ts";
 
-export { anonymousPage, downloadVia, expect, makeFile, sha256File, type TestFile, USERS } from "./fixtures.ts";
+export {
+  anonymousPage,
+  downloadVia,
+  expect,
+  injectRequestKey,
+  makeFile,
+  requestIdOf,
+  requestKeyIds,
+  setRequestKeyCreatedAt,
+  sha256File,
+  type TestFile,
+  USERS,
+} from "./fixtures.ts";
 export { Owner };
 
 export const ROOT = resolve(import.meta.dirname, "..");
@@ -223,36 +236,14 @@ export async function login(page: Page, origin: string, user: User): Promise<voi
   await page.locator("#kc-login").click();
 }
 
-/** Sign in and register two passkeys (as in the smoke test). */
+/** Sign in; lands on the dashboard (there is no setup step). */
 export async function setupOwner(owner: Owner, user: User): Promise<void> {
-  const p = owner.page;
-  // Before /setup loads, so the page offers (and recommends) "This computer".
-  const first = await owner.addAuthenticator();
-  await login(p, owner.dropr.origin, user);
-  await p.waitForURL(owner.dropr.origin + "/setup");
-  await expect(p.locator(".who")).toHaveText(user.name);
-  const register = p.locator("#setup-register");
-  await expect(register).toHaveText("Create my first passkey");
-  await p.locator("#setup-where-device").check();
-  await register.click();
-  await expect(register).toHaveText("Create my spare passkey");
-  const second = await owner.addAuthenticator("usb");
-  await owner.only(second);
-  await p.locator("#setup-where-security-key").check();
-  await register.click();
-  await p.waitForURL(owner.dropr.origin + "/");
-  await owner.only(first);
+  await owner.login(user);
 }
 
-/** A second owner (own Chromium context and authenticators). */
+/** Another owner browser context (own cookies and IndexedDB, i.e. another browser profile). */
 export async function newOwner(browser: Browser, dropr: Dropr, label: string): Promise<Owner> {
-  const context = await browser.newContext({ acceptDownloads: true });
-  await context.grantPermissions(["clipboard-write"], { origin: dropr.origin });
-  const page = await context.newPage();
-  logConsole(page, label);
-  const cdp = await context.newCDPSession(page);
-  await cdp.send("WebAuthn.enable", { enableUI: false });
-  return new Owner(dropr, context, page, cdp);
+  return newOwnerContext(browser, dropr, label);
 }
 
 export interface ShareOptions {
@@ -272,7 +263,10 @@ export async function shareFile(owner: Owner, file: TestFile, o: ShareOptions = 
   return p.locator("#share-link").inputValue();
 }
 
-/** Create a request link from the dashboard (unlocks the session). */
+/**
+ * Create a request link from the dashboard. Its private key is stored in the
+ * owner's context, so files sent through it open only from `owner.context`.
+ */
 export async function createRequest(owner: Owner, maxFiles = 10): Promise<string> {
   const p = owner.page;
   await p.goto(owner.dropr.origin + "/");
@@ -283,7 +277,7 @@ export async function createRequest(owner: Owner, maxFiles = 10): Promise<string
   return p.locator("#request-link").inputValue();
 }
 
-/** Upload files through a request link in a fresh anonymous context. */
+/** Upload files through a request link in a fresh anonymous context (no access to the owner's keys). */
 export async function sendViaRequest(browser: Browser, link: string, files: string[], label = "sender"): Promise<void> {
   const context = await browser.newContext();
   const page = await context.newPage();

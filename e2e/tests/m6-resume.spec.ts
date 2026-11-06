@@ -62,8 +62,7 @@ test("an upload interrupted on one part resumes with Retry and sends only the mi
 
 test("the owner downloads the resumed file intact", async ({ alice, dropr }) => {
   const p = alice.page;
-  await p.goto(dropr.origin + "/inbox");
-  await p.locator("#inbox-unlock").click();
+  await p.goto(dropr.origin + "/inbox"); // same context as the link: its key is here
   const row = p.locator("#inbox-list tr").filter({ has: p.locator("td.name", { hasText: file.name }) });
   await expect(row).toHaveCount(1);
   await p.evaluate(() => Object.defineProperty(window, "showSaveFilePicker", { value: undefined, configurable: true }));
