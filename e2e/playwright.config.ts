@@ -22,6 +22,9 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     acceptDownloads: true,
+    // Pages follow Accept-Language; English keeps text assertions stable
+    // (tests/i18n.spec.ts opts into French).
+    locale: "en-US",
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
