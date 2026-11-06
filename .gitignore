@@ -1,0 +1,15 @@
+/result*
+/bin/
+/data/
+web/node_modules/
+e2e/node_modules/
+e2e/test-results/
+e2e/playwright-report/
+*.test
+coverage.out
+.direnv/
+/.dev-data/
+# Web build output (make web; the Nix build takes it from .#web-assets).
+/internal/web/static/*.js
+/internal/web/static/manifest.json
+.claude/

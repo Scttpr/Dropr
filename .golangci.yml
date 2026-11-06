@@ -1,0 +1,96 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - gosec
+    - revive
+    - bodyclose
+    - noctx
+    - errorlint
+    - sqlclosecheck
+    - rowserrcheck
+    - contextcheck
+    - gocritic
+    - misspell
+    - unparam
+    - usestdlibvars
+    - copyloopvar
+    - intrange
+    - perfsprint
+    - nilerr
+    - durationcheck
+    - makezero
+    - nakedret
+    - wastedassign
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    gosec:
+      excludes:
+        - G104 # duplicated by errcheck
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+        - name: indent-error-flow
+        - name: errorf
+        - name: error-strings
+        - name: error-naming
+        - name: receiver-naming
+        - name: unexported-return
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: unreachable-code
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unused-parameter
+          disabled: true
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        - hugeParam
+    misspell:
+      locale: US
+  exclusions:
+    generated: strict
+    presets:
+      - std-error-handling
+    rules:
+      # Test code: crypto/math shortcuts and fixed table names are fine.
+      - path: _test\.go
+        linters:
+          - gosec
+          - noctx
+          - unparam
+          - perfsprint
+          - bodyclose
+      # The fake OIDC provider deliberately produces insecure tokens.
+      - path: internal/auth/oidc/oidctest/
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/scttpr/dropr
