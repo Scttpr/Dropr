@@ -95,7 +95,7 @@ describe("i18n", () => {
 
   it("translates every API error code the server can send", () => {
     const codes = new Set<string>();
-    for (const file of ["internal/server/api.go", "internal/auth/passkey/passkey.go", "internal/httpx/problem.go", "internal/httpx/streams.go"]) {
+    for (const file of ["internal/server/api.go", "internal/httpx/problem.go", "internal/httpx/streams.go"]) {
       const src = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
       for (const m of src.matchAll(/Errorf\(\s*http\.Status\w+,\s*"([a-z_]+)"/g)) codes.add(m[1] as string);
     }

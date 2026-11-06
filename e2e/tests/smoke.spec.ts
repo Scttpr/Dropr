@@ -1,14 +1,16 @@
 /**
- * End-to-end smoke test: sign in through Keycloak, register two passkeys,
- * share files (single- and multi-part) and download them anonymously, then
- * create a request link, upload anonymously and decrypt in the owner's inbox.
- * Every transferred file is compared by SHA-256 with the original.
+ * End-to-end smoke test: sign in through Keycloak (straight to the
+ * dashboard), share files (single- and multi-part) and download them
+ * anonymously, then create a request link, upload anonymously and decrypt in
+ * the owner's inbox, in the same browser context that created the link (it
+ * holds the link's private key). Every transferred file is compared by
+ * SHA-256 with the original.
  *
- * The owner always runs in Chromium (virtual authenticators are CDP-only);
- * the anonymous recipient runs in the project's browser.
+ * The owner always runs in Chromium; the anonymous recipient and sender run
+ * in the project's browser.
  */
 
-import { type TestFile, USERS, anonymousPage, downloadVia, expect, makeFile, test } from "../fixtures.ts";
+import { type TestFile, USERS, anonymousPage, downloadVia, expect, makeFile, requestIdOf, requestKeyIds, test } from "../fixtures.ts";
 
 const MiB = 1024 * 1024;
 
@@ -18,44 +20,12 @@ let small: TestFile;
 let large: TestFile;
 const shareLinks = new Map<string, string>();
 
-test("owner signs in and registers two passkeys", async ({ owner, filesDir }) => {
+test("owner signs in and lands on the dashboard", async ({ owner, filesDir }) => {
   small = await makeFile(filesDir, "Rapport été 2026 (final).txt", 12_345);
   large = await makeFile(filesDir, "big-archive.bin", 70 * MiB); // 3 upload parts
 
   const p = owner.page;
-  // The first authenticator exists before /setup loads, so the page detects
-  // that this device can hold a passkey and recommends it.
-  const first = await owner.addAuthenticator();
-  await owner.login(USERS.alice);
-  await expect(p.locator("main")).toHaveAttribute("data-passkey-count", "0");
-
-  const register = p.locator("#setup-register");
-  await expect(register).toBeVisible();
-  await expect(register).toHaveText("Create my first passkey");
-  await expect(p.locator("#setup-step-title")).toHaveText("Step 1 of 2: your first passkey");
-  await expect(p.locator("#setup-where-device")).toBeChecked();
-  await expect(p.locator("#setup-choice-device .choice-badge")).toBeVisible();
-  await register.click();
-  // One prompt only when create() returns the PRF output; otherwise a
-  // confirming get() runs on the same (virtual) authenticator.
-  await expect(p.locator("#setup-done")).toBeFocused();
-  await expect(p.locator("#setup-done-title")).toHaveText("Your first passkey is ready.");
-  await expect(register).toHaveText("Create my spare passkey");
-  await expect(p.locator("#setup-step-title")).toHaveText("Step 2 of 2: your spare passkey");
-  await expect(p.locator("#setup-step-1")).toHaveAttribute("data-state", "done");
-  // This device already holds the first passkey: no longer offered.
-  await expect(p.locator("#setup-choice-device")).toBeHidden();
-  expect(await owner.credentials(first)).toBe(1);
-
-  // The second passkey must live on another authenticator (the server
-  // excludes the first credential).
-  const second = await owner.addAuthenticator("usb");
-  await owner.only(second);
-  await p.locator("#setup-where-security-key").check();
-  await register.click();
-  await expect(p.locator("#setup-done-title")).toHaveText("All done! Both of your passkeys are ready.");
-  await p.waitForURL(owner.dropr.origin + "/");
-  expect(await owner.credentials(second)).toBe(1);
+  await owner.login(USERS.alice); // no setup step: straight to the dashboard
   await expect(p.getByText("Drop a file here to share")).toBeVisible();
   await expect(p.getByRole("button", { name: "Ask someone to send me a file" })).toBeVisible();
 });
@@ -133,10 +103,18 @@ test("owner creates a request link", async ({ owner }) => {
   await p.goto(owner.dropr.origin + "/");
   await expect(p.locator("#request-form")).toBeVisible();
   await p.locator("#request-max-files").fill("5");
-  await p.locator("#request-create").click(); // prompts for the passkey ("Unlock")
+  await p.locator("#request-create").click();
   await expect(p.locator("#request-result")).toBeVisible();
-  requestLink = await p.locator("#request-link").inputValue();
-  expect(requestLink).toMatch(new RegExp(`^${owner.dropr.origin}/r/[A-Za-z0-9_-]{22}#[A-Za-z0-9_-]+$`));
+  const link = p.locator("#request-link");
+  await expect(link).toBeFocused();
+  requestLink = await link.inputValue();
+  // The fragment is the link's own 32-byte X25519 public key.
+  expect(requestLink).toMatch(new RegExp(`^${owner.dropr.origin}/r/[A-Za-z0-9_-]{22}#[A-Za-z0-9_-]{43}$`));
+  await expect(p.locator("#request-hint")).toHaveText(
+    "Files sent through this link open only in this browser. Clearing this site's data makes them unreadable.",
+  );
+  // The private key is stored in this context's IndexedDB under the request ID.
+  expect(await requestKeyIds(p)).toContain(requestIdOf(requestLink));
 });
 
 test("anonymous sender uploads through the request link", async ({ browser, browserName }) => {
@@ -157,13 +135,15 @@ test("owner decrypts the inbox and downloads the received files", async ({ owner
   const p = owner.page;
   await p.goto(owner.dropr.origin + "/");
   await expect(p.getByRole("link", { name: "Received files (2)" })).toBeVisible();
+  // Same context as the one that created the link: the key is here, the
+  // list loads on its own.
   await p.goto(owner.dropr.origin + "/inbox");
-  await p.locator("#inbox-unlock").click();
   const rows = p.locator("#inbox-list tr");
   await expect(rows).toHaveCount(2);
   // The owner's browser downloads through the File System Access picker by
   // default; shadow it so the service worker path is used and observable.
   await p.evaluate(() => Object.defineProperty(window, "showSaveFilePicker", { value: undefined, configurable: true }));
+  await expect(p.locator("#inbox-list tr.foreign")).toHaveCount(0);
   for (const file of [small, large]) {
     const row = rows.filter({ has: p.locator("td.name", { hasText: file.name }) });
     await expect(row).toHaveCount(1);

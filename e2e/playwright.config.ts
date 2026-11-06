@@ -5,9 +5,10 @@ import { defineConfig, devices } from "@playwright/test";
  * in the dev shell); never run `playwright install`. Each worker starts its
  * own Dropr instance (fixtures.ts) against the dev Keycloak on :8180.
  *
- * Owner flows need a WebAuthn virtual authenticator, which only Chromium
- * offers (CDP), so the owner side always runs in Chromium; the anonymous
- * recipient side runs in each project's browser.
+ * The owner side always runs in Chromium (fixtures.ts: `ownerBrowser`); the
+ * anonymous recipient and sender side runs in each project's browser. Request
+ * link keys live in the owner's browser context (IndexedDB), so a test that
+ * receives files must open the inbox in the context that created the link.
  */
 export default defineConfig({
   testDir: "./tests",

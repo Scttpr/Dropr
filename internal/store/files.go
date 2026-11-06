@@ -478,10 +478,17 @@ func scanInbox(r scanner) (*InboxFile, error) {
 	return &f, nil
 }
 
-// InboxByOwner lists the owner's completely received files, newest first.
-func (s *Store) InboxByOwner(ctx context.Context, ownerID string) ([]*InboxFile, error) {
-	rows, err := s.db.R.QueryContext(ctx, `SELECT `+inboxCols+` FROM inbox i JOIN blobs b ON b.id = i.blob_id
-		WHERE i.owner_id = ? AND b.complete = 1 ORDER BY i.created_at DESC, i.id`, ownerID)
+// liveInbox selects the visible inbox files: completely received, through a
+// request link that has not expired. An expired link takes its files with it
+// at once, before the cleanup job deletes them. The query binds the time
+// after its other parameters.
+const liveInbox = ` FROM inbox i JOIN blobs b ON b.id = i.blob_id JOIN requests r ON r.id = i.request_id
+	WHERE b.complete = 1 AND r.expires_at > ?`
+
+// InboxByOwner lists the owner's visible received files, newest first.
+func (s *Store) InboxByOwner(ctx context.Context, ownerID string, now time.Time) ([]*InboxFile, error) {
+	rows, err := s.db.R.QueryContext(ctx, `SELECT `+inboxCols+liveInbox+` AND i.owner_id = ?
+		ORDER BY i.created_at DESC, i.id`, unix(now), ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -497,11 +504,10 @@ func (s *Store) InboxByOwner(ctx context.Context, ownerID string) ([]*InboxFile,
 	return out, rows.Err()
 }
 
-// CountInbox returns the number of completely received files of an owner.
-func (s *Store) CountInbox(ctx context.Context, ownerID string) (int, error) {
+// CountInbox returns the number of visible received files of an owner.
+func (s *Store) CountInbox(ctx context.Context, ownerID string, now time.Time) (int, error) {
 	var n int
-	err := s.db.R.QueryRowContext(ctx, `SELECT count(*) FROM inbox i JOIN blobs b ON b.id = i.blob_id
-		WHERE i.owner_id = ? AND b.complete = 1`, ownerID).Scan(&n)
+	err := s.db.R.QueryRowContext(ctx, `SELECT count(*)`+liveInbox+` AND i.owner_id = ?`, unix(now), ownerID).Scan(&n)
 	return n, err
 }
 
@@ -514,10 +520,10 @@ func (s *Store) CountActiveLinks(ctx context.Context, ownerID string, now time.T
 	return n, err
 }
 
-// InboxFileByID returns one of the owner's completely received files.
-func (s *Store) InboxFileByID(ctx context.Context, ownerID, id string) (*InboxFile, error) {
-	return scanInbox(s.db.R.QueryRowContext(ctx, `SELECT `+inboxCols+` FROM inbox i JOIN blobs b ON b.id = i.blob_id
-		WHERE i.id = ? AND i.owner_id = ? AND b.complete = 1`, id, ownerID))
+// InboxFileByID returns one of the owner's visible received files.
+func (s *Store) InboxFileByID(ctx context.Context, ownerID, id string, now time.Time) (*InboxFile, error) {
+	return scanInbox(s.db.R.QueryRowContext(ctx, `SELECT `+inboxCols+liveInbox+` AND i.id = ? AND i.owner_id = ?`,
+		unix(now), id, ownerID))
 }
 
 // DeleteInboxFile deletes one of the owner's received files and returns the
@@ -569,18 +575,21 @@ func (s *Store) CreateShareToken(ctx context.Context, shareID string, tokenHash 
 	return sh, err
 }
 
-// CreateInboxToken issues a download token for one of the owner's received
-// files.
+// CreateInboxToken issues a download token for one of the owner's visible
+// received files. The token never outlives the file's request link.
 func (s *Store) CreateInboxToken(ctx context.Context, ownerID, inboxID string, tokenHash []byte, now time.Time) error {
 	return s.db.Tx(ctx, func(tx *sql.Tx) error {
-		var blobID string
-		err := tx.QueryRowContext(ctx, `SELECT i.blob_id FROM inbox i JOIN blobs b ON b.id = i.blob_id
-			WHERE i.id = ? AND i.owner_id = ? AND b.complete = 1`, inboxID, ownerID).Scan(&blobID)
+		var (
+			blobID string
+			reqExp int64
+		)
+		err := tx.QueryRowContext(ctx, `SELECT i.blob_id, r.expires_at`+liveInbox+` AND i.id = ? AND i.owner_id = ?`,
+			unix(now), inboxID, ownerID).Scan(&blobID, &reqExp)
 		if err != nil {
 			return notFound(err)
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO dl_tokens (token_hash, blob_id, share_id, expires_at, counted, created_at)
-			VALUES (?, ?, NULL, ?, 0, ?)`, tokenHash, blobID, unix(now.Add(TokenIdle)), unix(now))
+			VALUES (?, ?, NULL, ?, 0, ?)`, tokenHash, blobID, min(unix(now.Add(TokenIdle)), reqExp), unix(now))
 		return err
 	})
 }
@@ -607,7 +616,8 @@ func TokenByteBudget(size int64) int64 { return 2*size + min(size, 1<<20) }
 // token was never used, the share's download_count is incremented exactly
 // once (refused with ErrExhausted if it already reached max_downloads);
 // later uses of the same token, such as Range requests resuming a download,
-// never count again. Every use slides the token's expiry. plan (if non-nil)
+// never count again. Every use slides the token's expiry, never past its
+// share's or request link's expiry (ErrExpired after it). plan (if non-nil)
 // returns how many bytes this use will serve given the blob size; they are
 // reserved against TokenByteBudget (ErrTokenSpent once it would be
 // exceeded) and returned in DownloadTarget.Reserved, so the caller can give
@@ -619,15 +629,16 @@ func (s *Store) UseDownloadToken(ctx context.Context, tokenHash []byte, count bo
 			shareID           sql.NullString
 			expires, created  int64
 			counted, complete bool
-			shareExp          sql.NullInt64
+			shareExp, reqExp  sql.NullInt64
 			maxDL, downloads  sql.NullInt64
 			served            int64
 		)
 		err := tx.QueryRowContext(ctx, `SELECT t.blob_id, t.share_id, t.expires_at, t.created_at, t.counted, t.served_bytes,
-				b.owner_id, b.size, b.parts, b.complete, s.expires_at, s.max_downloads, s.download_count
+				b.owner_id, b.size, b.parts, b.complete, s.expires_at, s.max_downloads, s.download_count, r.expires_at
 			FROM dl_tokens t JOIN blobs b ON b.id = t.blob_id LEFT JOIN shares s ON s.id = t.share_id
+				LEFT JOIN inbox i ON i.blob_id = t.blob_id LEFT JOIN requests r ON r.id = i.request_id
 			WHERE t.token_hash = ?`, tokenHash).Scan(&t.BlobID, &shareID, &expires, &created, &counted, &served,
-			&t.OwnerID, &t.Size, &t.Parts, &complete, &shareExp, &maxDL, &downloads)
+			&t.OwnerID, &t.Size, &t.Parts, &complete, &shareExp, &maxDL, &downloads, &reqExp)
 		if err != nil {
 			return notFound(err)
 		}
@@ -658,6 +669,15 @@ func (s *Store) UseDownloadToken(ctx context.Context, tokenHash []byte, count bo
 					return err
 				}
 			}
+		} else {
+			// An inbox token dies with the file's request link.
+			if !reqExp.Valid {
+				return ErrNotFound
+			}
+			if reqExp.Int64 <= n {
+				return ErrExpired
+			}
+			limit = min(limit, reqExp.Int64)
 		}
 		if plan != nil {
 			t.Reserved = max(plan(t.Size), 0)

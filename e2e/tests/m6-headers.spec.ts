@@ -25,7 +25,7 @@ const PERMISSIONS =
   "encrypted-media=(), fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), hid=(), " +
   "identity-credentials-get=(), idle-detection=(), local-fonts=(), magnetometer=(), microphone=(), " +
   "midi=(), otp-credentials=(), payment=(), picture-in-picture=(), " +
-  "publickey-credentials-create=(self), publickey-credentials-get=(self), screen-wake-lock=(), " +
+  "publickey-credentials-create=(), publickey-credentials-get=(), screen-wake-lock=(), " +
   "serial=(), storage-access=(), usb=(), web-share=(), window-management=(), xr-spatial-tracking=()";
 
 const COMMON: Record<string, string> = {

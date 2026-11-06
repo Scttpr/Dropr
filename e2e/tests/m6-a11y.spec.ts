@@ -2,7 +2,7 @@
  * Accessibility smoke: axe-core (dev-only, pinned @axe-core/playwright) on
  * every page in each state a user meets, failing on serious or critical
  * violations (WCAG 2.x A/AA rules). Anonymous pages run in each project's
- * browser; owner pages in Chromium (virtual authenticator).
+ * browser; owner pages in Chromium (see fixtures.ts `ownerBrowser`).
  */
 
 import AxeBuilder from "@axe-core/playwright";
@@ -16,6 +16,7 @@ import {
   linkId,
   login,
   makeFile,
+  newOwner,
   sendViaRequest,
   shareFile,
   sqlRun,
@@ -43,33 +44,12 @@ let shareUrl = "";
 let requestUrl = "";
 let expiredUrl = "";
 
-test("owner pages: login, setup, dashboard (idle, result, error), inbox, links", async ({ owner, dropr, filesDir, browserName }) => {
-  test.skip(browserName !== "chromium", "owner pages (Chromium virtual authenticator)");
+test("owner pages: login, dashboard (idle, result, error), inbox, links", async ({ owner, dropr, filesDir, browserName }) => {
+  test.skip(browserName !== "chromium", "owner pages run in Chromium");
   const p = owner.page;
   await p.goto(dropr.origin + "/");
   await axe(p, "login");
-  // Before /setup loads, so the page shows its "where to save it" cards.
-  const a = await owner.addAuthenticator();
-  await login(p, dropr.origin, M6_USERS.alice);
-  await p.waitForURL(dropr.origin + "/setup");
-  await expect(p.locator("#setup-where")).toBeVisible();
-  await axe(p, "setup (0 passkeys)");
-  if (await p.locator("#setup-choice-phone").isVisible()) {
-    await p.locator("#setup-where-phone").check();
-    await expect(p.locator("#setup-phone-help")).toBeVisible();
-  }
-  await axe(p, "setup (0 passkeys, phone checklist)");
-  await p.locator("#setup-where-device").check();
-  await p.locator("#setup-register").click();
-  await expect(p.locator("#setup-register")).toHaveText("Create my spare passkey");
-  await expect(p.locator("#setup-done")).toBeVisible();
-  await axe(p, "setup (1 passkey)");
-  const b = await owner.addAuthenticator("usb");
-  await owner.only(b);
-  await p.locator("#setup-where-security-key").check();
-  await p.locator("#setup-register").click();
-  await p.waitForURL(dropr.origin + "/");
-  await owner.only(a);
+  await owner.login(M6_USERS.alice); // lands on the dashboard
   await axe(p, "dashboard");
 
   const f = await makeFile(filesDir, "a11y.txt", 2000);
@@ -90,8 +70,6 @@ test("owner pages: login, setup, dashboard (idle, result, error), inbox, links",
   await expect(p.locator("#shares-table")).toBeVisible();
   await axe(p, "links", KNOWN["links"]);
   await p.goto(dropr.origin + "/inbox");
-  await axe(p, "inbox (locked)");
-  await p.locator("#inbox-unlock").click();
   await expect(p.locator("#inbox-empty")).toBeVisible();
   await axe(p, "inbox (empty)");
 });
@@ -111,16 +89,30 @@ test("owner inbox with received files", async ({ owner, dropr, filesDir, browser
   await sendViaRequest(browser, requestUrl, [g.path]);
   const p = owner.page;
   await p.goto(dropr.origin + "/inbox");
-  await p.locator("#inbox-unlock").click();
   await expect(p.locator("#inbox-list tr")).toHaveCount(1);
   await axe(p, "inbox with rows");
 });
 
+test("owner pages from another browser profile (foreign inbox row, 'Other browser' link)", async ({ dropr, browser, browserName }) => {
+  test.skip(browserName !== "chromium", "owner pages");
+  const other = await newOwner(browser, dropr, "a11y-other");
+  try {
+    await other.login(M6_USERS.alice);
+    await other.page.goto(dropr.origin + "/inbox");
+    await expect(other.page.locator("#inbox-list tr.foreign")).toHaveCount(1);
+    await axe(other.page, "inbox with a foreign row");
+    await other.page.goto(dropr.origin + "/links");
+    await expect(other.page.locator("#requests-list").getByText("Other browser")).toHaveCount(1);
+    await axe(other.page, "links from another browser");
+  } finally {
+    await other.context.close();
+  }
+});
+
 test("anonymous pages in every browser", async ({ browser, browserName, dropr, filesDir, owner }) => {
   if (shareUrl === "") {
-    // Non-Chromium projects run in a fresh worker: set the owner up here.
-    const { setupOwner } = await import("../m6.ts");
-    await setupOwner(owner, M6_USERS.alice);
+    // Non-Chromium projects run in a fresh worker: sign the owner in here.
+    await owner.login(M6_USERS.alice);
     const f = await makeFile(filesDir, "a11y.txt", 2000);
     shareUrl = await shareFile(owner, f);
     expiredUrl = await shareFile(owner, f);

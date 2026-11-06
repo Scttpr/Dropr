@@ -212,7 +212,7 @@ async function contextOpen(ctx: AeadContext, seq: number, aad: Uint8Array, ct: U
  *
  * @param pkR - recipient's 32-byte X25519 public key. Must come from an
  *   authenticated source (for Dropr: the request-link fragment, which the
- *   owner's browser derived from its own unlocked private key).
+ *   owner's browser took from the link's own key pair).
  * @param info - application context; binds the ciphertext to its purpose.
  * @param aad - additional authenticated data.
  * @param pt - plaintext.

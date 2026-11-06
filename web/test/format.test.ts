@@ -9,9 +9,8 @@ import {
   ciphertextSize,
   deriveFileKeys,
   generateFileKey,
-  generateOwnerKeyPair,
+  generateRequestKeyPair,
   sealMeta,
-  toOwnerKeyPair,
   wrapFileKeyForRequest,
 } from "../src/crypto/index.ts";
 import type { InboxEntry } from "../src/lib/api.ts";
@@ -98,30 +97,36 @@ describe("decrypt-names", () => {
     await assert.rejects(openShare(fk, meta, ciphertextSize(6)));
   });
 
-  it("decrypts inbox entries independently; a bad one does not hide the others", async () => {
-    const owner = await generateOwnerKeyPair();
-    const kp = await toOwnerKeyPair(owner);
+  it("decrypts inbox entries with their link's key; bad or foreign ones do not hide the others", async () => {
+    const R1 = "AAAAAAAAAAAAAAAAAAAAAA";
+    const R2 = "BBBBBBBBBBBBBBBBBBBBBA";
+    const R3 = "CCCCCCCCCCCCCCCCCCCCCA"; // created in another browser
+    const links = new Map([
+      [R1, await generateRequestKeyPair()],
+      [R2, await generateRequestKeyPair()],
+    ]);
+    const elsewhere = await generateRequestKeyPair();
     const entry = async (id: string, requestId: string, name: string): Promise<InboxEntry> => {
       const fk = generateFileKey();
       const keys = await deriveFileKeys(fk);
+      const publicKey = (links.get(requestId) ?? elsewhere).publicKey;
       return {
         id,
         request_id: requestId,
         size: ciphertextSize(3),
         created_at: 1,
         meta: b64urlEncode(await sealMeta(keys.metadata, { name, type: "", size: 3 })),
-        wrapped_key: b64urlEncode(await wrapFileKeyForRequest(owner.publicKey, requestId, fk)),
+        wrapped_key: b64urlEncode(await wrapFileKeyForRequest(publicKey, requestId, fk)),
       };
     };
-    const R1 = "AAAAAAAAAAAAAAAAAAAAAA";
-    const R2 = "BBBBBBBBBBBBBBBBBBBBBA";
     const good = await entry("e1", R1, "one.pdf");
     const moved = { ...(await entry("e2", R1, "two.pdf")), request_id: R2 }; // server moved it to another request
-    const third = await entry("e3", R2, "three.pdf");
-    const res = await decryptInbox(kp, [good, moved, third], 2);
+    const foreign = await entry("e3", R3, "three.pdf");
+    const fourth = await entry("e4", R2, "four.pdf");
+    const res = await decryptInbox((id) => links.get(id), [good, moved, foreign, fourth], 2);
     assert.deepEqual(
-      res.map((r) => (r.ok ? r.file.meta.name : "ERR")),
-      ["one.pdf", "ERR", "three.pdf"],
+      res.map((r) => (r.kind === "file" ? r.file.meta.name : r.kind)),
+      ["one.pdf", "unreadable", "foreign", "four.pdf"],
     );
   });
 });

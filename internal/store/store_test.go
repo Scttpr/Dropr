@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -76,46 +75,21 @@ func TestSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := st.SessionByHash(ctx, s.IDHash)
-	if err != nil || got.OIDCSID != "sid-1" || !got.CreatedAt.Equal(t0) || got.UnlockedAt != nil {
+	if err != nil || got.OIDCSID != "sid-1" || !got.CreatedAt.Equal(t0) {
 		t.Fatalf("%+v %v", got, err)
 	}
 
-	next := *got
-	next.IDHash = ids.Hash(ids.NewSecret())
-	next.RotatedFrom = s.IDHash
-	now := t0.Add(time.Minute)
-	next.UnlockedAt = &now
-	if err := st.RotateSession(ctx, s.IDHash, func(*store.Session) (*store.Session, error) { return &next, nil }); err != nil {
+	if err := st.UpdateSessionRevalidation(ctx, s.IDHash, nil, t0.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SessionByHash(ctx, s.IDHash); !errors.Is(err, store.ErrNotFound) {
-		t.Error("old session survived rotation")
-	}
-	// Rotating a session that is gone must fail and not insert.
-	again := next
-	again.IDHash = ids.Hash(ids.NewSecret())
-	if err := st.RotateSession(ctx, s.IDHash, func(*store.Session) (*store.Session, error) { return &again, nil }); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("rotation of dead session: %v", err)
-	}
-	if _, err := st.SessionByHash(ctx, again.IDHash); !errors.Is(err, store.ErrNotFound) {
-		t.Error("dead session resurrected")
-	}
-	got, _ = st.SessionByHash(ctx, next.IDHash)
-	if got.UnlockedAt == nil || !bytes.Equal(got.RotatedFrom, s.IDHash) {
-		t.Errorf("%+v", got)
-	}
-
-	if err := st.UpdateSessionRevalidation(ctx, next.IDHash, nil, t0.Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	got, _ = st.SessionByHash(ctx, next.IDHash)
+	got, _ = st.SessionByHash(ctx, s.IDHash)
 	if string(got.RefreshTokenEnc) != "enc" || !got.RevalidatedAt.Equal(t0.Add(time.Hour)) {
 		t.Errorf("nil token must keep the stored one: %+v", got)
 	}
-	if err := st.UpdateSessionRevalidation(ctx, next.IDHash, []byte("new"), t0); err != nil {
+	if err := st.UpdateSessionRevalidation(ctx, s.IDHash, []byte("new"), t0); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = st.SessionByHash(ctx, next.IDHash)
+	got, _ = st.SessionByHash(ctx, s.IDHash)
 	if string(got.RefreshTokenEnc) != "new" {
 		t.Error("token not replaced")
 	}
@@ -152,7 +126,7 @@ func TestSessions(t *testing.T) {
 	}
 }
 
-func TestResetKeysAndPurge(t *testing.T) {
+func TestPurge(t *testing.T) {
 	t.Parallel()
 	st := storetest.New(t)
 	ctx := t.Context()
@@ -164,8 +138,6 @@ func TestResetKeysAndPurge(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mustExec(`INSERT INTO user_keys VALUES (?, ?)`, u.ID, make([]byte, 32))
-	mustExec(`INSERT INTO passkeys (id, user_id, credential, wrapped_privkey, created_at) VALUES (?, ?, x'00', x'00', 0)`, make([]byte, 16), u.ID)
 	rid, bid, iid := ids.New(), ids.New(), ids.New()
 	mustExec(`INSERT INTO requests (id, owner_id, expires_at, max_files, max_bytes, created_at) VALUES (?, ?, 0, 1, 1, 0)`, rid, u.ID)
 	mustExec(`INSERT INTO blobs (id, owner_id, parts, size, created_at) VALUES (?, ?, 1, 1, 0)`, bid, u.ID)
@@ -173,21 +145,15 @@ func TestResetKeysAndPurge(t *testing.T) {
 	if err := st.CreateSession(ctx, newSession(u.ID)); err != nil {
 		t.Fatal(err)
 	}
-	if blobs, err := st.ResetUserKeys(ctx, u.ID); err != nil || len(blobs) != 1 || blobs[0] != bid {
+	if blobs, err := st.DeleteUser(ctx, u.ID); err != nil || len(blobs) != 1 || blobs[0] != bid {
 		t.Fatal(blobs, err)
 	}
-	for _, tbl := range []string{"user_keys", "passkeys", "requests", "inbox", "blobs", "sessions"} {
+	for _, tbl := range []string{"users", "requests", "inbox", "blobs", "sessions"} {
 		var n int
 		_ = st.DB().R.QueryRowContext(ctx, "SELECT count(*) FROM "+tbl).Scan(&n) //nolint:gosec // fixed names
 		if n != 0 {
 			t.Errorf("%s not wiped", tbl)
 		}
-	}
-	if _, err := st.ResetUserKeys(ctx, "missing"); !errors.Is(err, store.ErrNotFound) {
-		t.Error(err)
-	}
-	if _, err := st.DeleteUser(ctx, u.ID); err != nil {
-		t.Fatal(err)
 	}
 	if _, err := st.DeleteUser(ctx, u.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Error(err)

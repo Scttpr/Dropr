@@ -1,10 +1,11 @@
 /**
  * Test fixtures: a Dropr server per worker (fresh data directory, free port,
- * dev mode against the dev Keycloak) and a signed-in owner in Chromium with
- * CDP virtual authenticators (ctap2, resident keys, UV, PRF).
+ * dev mode against the dev Keycloak) and an owner browser context in
+ * Chromium. Request link keys live in that context's IndexedDB, so the
+ * owner's request links can only be opened from `owner.context`.
  */
 
-import { type Browser, type BrowserContext, type CDPSession, type ConsoleMessage, type Locator, type Page, test as base, chromium, expect } from "@playwright/test";
+import { type Browser, type BrowserContext, type ConsoleMessage, type Locator, type Page, test as base, chromium, expect } from "@playwright/test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { closeSync, createReadStream, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
@@ -72,7 +73,7 @@ export interface Dropr {
 async function startDropr(): Promise<{ dropr: Dropr; stop: () => Promise<void> }> {
   const port = await freePort();
   // "localhost", not 127.0.0.1: browsers treat http://localhost as a secure
-  // context (WebAuthn, service workers, __Host- cookies).
+  // context (WebCrypto, IndexedDB keys, service workers, __Host- cookies).
   const origin = `http://localhost:${port}`;
   const dir = mkdtempSync(join(tmpdir(), "dropr-e2e-"));
   writeFileSync(join(dir, "refresh_key"), randomBytes(32).toString("base64") + "\n", { mode: 0o600 });
@@ -180,53 +181,120 @@ export function logConsole(page: Page, label: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Owner (Chromium + virtual authenticators)
+// Request link keys (IndexedDB "dropr", store "request-keys", ARCHITECTURE.md §3)
+// ---------------------------------------------------------------------------
+
+/**
+ * IDs of the request link keys stored in the page's origin. Does not create
+ * the database if it does not exist yet (returns []).
+ */
+export async function requestKeyIds(page: Page): Promise<string[]> {
+  return page.evaluate(async () => {
+    const dbs = await indexedDB.databases();
+    if (!dbs.some((d) => d.name === "dropr")) return [];
+    const db = await new Promise<IDBDatabase>((ok, fail) => {
+      const r = indexedDB.open("dropr");
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => fail(r.error);
+    });
+    try {
+      if (!db.objectStoreNames.contains("request-keys")) return [];
+      const keys = await new Promise<IDBValidKey[]>((ok, fail) => {
+        const r = db.transaction("request-keys").objectStore("request-keys").getAllKeys();
+        r.onsuccess = () => ok(r.result);
+        r.onerror = () => fail(r.error);
+      });
+      return keys.map(String);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+/**
+ * Rewrite the `createdAt` (Unix seconds) of a stored record, e.g. to age it
+ * past the 60 s prune grace period. Throws if there is no such record.
+ */
+export async function setRequestKeyCreatedAt(page: Page, id: string, createdAt: number): Promise<void> {
+  await page.evaluate(
+    async ({ id, createdAt }) => {
+      const db = await new Promise<IDBDatabase>((ok, fail) => {
+        const r = indexedDB.open("dropr");
+        r.onsuccess = () => ok(r.result);
+        r.onerror = () => fail(r.error);
+      });
+      try {
+        const tx = db.transaction("request-keys", "readwrite");
+        const store = tx.objectStore("request-keys");
+        const rec = await new Promise<Record<string, unknown> | undefined>((ok, fail) => {
+          const r = store.get(id);
+          r.onsuccess = () => ok(r.result as Record<string, unknown> | undefined);
+          r.onerror = () => fail(r.error);
+        });
+        if (rec === undefined) throw new Error(`no request key record ${id}`);
+        store.put({ ...rec, createdAt });
+        await new Promise<void>((ok, fail) => {
+          tx.oncomplete = () => ok();
+          tx.onerror = () => fail(tx.error);
+        });
+      } finally {
+        db.close();
+      }
+    },
+    { id, createdAt },
+  );
+}
+
+/**
+ * Store a well-formed record (fresh non-extractable X25519 key) as if another
+ * account had created request link `id` in this browser profile. Opens the
+ * database at version 1 and creates the store if no page did so yet.
+ */
+export async function injectRequestKey(page: Page, rec: { id: string; ownerId: string; createdAt: number }): Promise<void> {
+  await page.evaluate(async ({ id, ownerId, createdAt }) => {
+    const kp = (await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"])) as CryptoKeyPair;
+    const publicKey = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+    const db = await new Promise<IDBDatabase>((ok, fail) => {
+      const r = indexedDB.open("dropr", 1);
+      r.onupgradeneeded = () => {
+        if (!r.result.objectStoreNames.contains("request-keys")) r.result.createObjectStore("request-keys", { keyPath: "id" });
+      };
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => fail(r.error);
+    });
+    try {
+      const tx = db.transaction("request-keys", "readwrite");
+      tx.objectStore("request-keys").put({ id, privateKey: kp.privateKey, publicKey, ownerId, createdAt });
+      await new Promise<void>((ok, fail) => {
+        tx.oncomplete = () => ok();
+        tx.onerror = () => fail(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+  }, rec);
+}
+
+/** Request ID of a request link URL. */
+export function requestIdOf(link: string): string {
+  const m = /\/r\/([A-Za-z0-9_-]{22})(?:#|$)/.exec(link);
+  if (m === null) throw new Error(`not a request link: ${link}`);
+  return m[1]!;
+}
+
+// ---------------------------------------------------------------------------
+// Owner (one browser context = one browser profile)
 // ---------------------------------------------------------------------------
 
 export class Owner {
-  readonly authenticators: string[] = [];
   constructor(
     readonly dropr: Dropr,
     readonly context: BrowserContext,
     readonly page: Page,
-    readonly cdp: CDPSession,
   ) {}
 
-  /**
-   * Add an authenticator with PRF that answers prompts automatically:
-   * "internal" is a platform authenticator (Chrome allows one per
-   * environment), "usb" a security key.
-   */
-  async addAuthenticator(transport: "internal" | "usb" = "internal"): Promise<string> {
-    const { authenticatorId } = await this.cdp.send("WebAuthn.addVirtualAuthenticator", {
-      options: {
-        protocol: "ctap2",
-        ctap2Version: "ctap2_1",
-        transport,
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        hasPrf: true,
-        automaticPresenceSimulation: true,
-      },
-    });
-    this.authenticators.push(authenticatorId);
-    return authenticatorId;
-  }
-
-  /** Make only `id` respond to WebAuthn prompts. */
-  async only(id: string): Promise<void> {
-    for (const a of this.authenticators) {
-      await this.cdp.send("WebAuthn.setAutomaticPresenceSimulation", { authenticatorId: a, enabled: a === id });
-    }
-  }
-
-  async credentials(id: string): Promise<number> {
-    const { credentials } = await this.cdp.send("WebAuthn.getCredentials", { authenticatorId: id });
-    return credentials.length;
-  }
-
-  async login(user: (typeof USERS)[keyof typeof USERS]): Promise<void> {
+  /** Sign in through Keycloak; there is no setup step, so this lands on the dashboard. */
+  async login(user: { readonly username: string; readonly password: string; readonly name: string }): Promise<void> {
     const p = this.page;
     await p.goto(this.dropr.origin + "/");
     await p.getByRole("link", { name: LOGIN_LABEL }).click();
@@ -234,9 +302,18 @@ export class Owner {
     await p.locator("#username").fill(user.username);
     await p.locator("#password").fill(user.password);
     await p.locator("#kc-login").click();
-    await p.waitForURL(this.dropr.origin + "/setup");
+    await p.waitForURL(this.dropr.origin + "/");
     await expect(p.locator(".who")).toHaveText(user.name);
   }
+}
+
+/** A new owner browser context (a separate "browser profile": its own cookies and IndexedDB). */
+export async function newOwnerContext(browser: Browser, dropr: Dropr, label: string): Promise<Owner> {
+  const context = await browser.newContext({ acceptDownloads: true });
+  await context.grantPermissions(["clipboard-write"], { origin: dropr.origin });
+  const page = await context.newPage();
+  logConsole(page, label);
+  return new Owner(dropr, context, page);
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +340,8 @@ export const test = base.extend<object, WorkerFixtures>({
     },
     { scope: "worker" },
   ],
+  // Owner pages run in Chromium (the clipboard-write permission grant is
+  // Chromium-only); the anonymous side runs in each project's browser.
   ownerBrowser: [
     async ({ browserName, browser }, use) => {
       if (browserName === "chromium") return use(browser);
@@ -277,14 +356,9 @@ export const test = base.extend<object, WorkerFixtures>({
   ],
   owner: [
     async ({ ownerBrowser, dropr }, use) => {
-      const context = await ownerBrowser.newContext({ acceptDownloads: true });
-      await context.grantPermissions(["clipboard-write"], { origin: dropr.origin });
-      const page = await context.newPage();
-      logConsole(page, "owner");
-      const cdp = await context.newCDPSession(page);
-      await cdp.send("WebAuthn.enable", { enableUI: false });
-      await use(new Owner(dropr, context, page, cdp));
-      await context.close();
+      const owner = await newOwnerContext(ownerBrowser, dropr, "owner");
+      await use(owner);
+      await owner.context.close();
     },
     { scope: "worker" },
   ],

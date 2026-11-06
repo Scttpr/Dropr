@@ -22,24 +22,13 @@ var (
 )
 
 // ownerPage loads the session of an owner-only page. It redirects to /login
-// without a session and to /setup until passkey setup is complete (unless
-// allowIncomplete). It returns nil when it has answered.
-func (s *Server) ownerPage(w http.ResponseWriter, r *http.Request, allowIncomplete bool) (*session.Session, int) {
+// without a session and then returns nil.
+func ownerPage(w http.ResponseWriter, r *http.Request) *session.Session {
 	sess := session.FromContext(r.Context())
 	if sess == nil {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return nil, 0
 	}
-	n, complete, err := s.passkeys.SetupComplete(r.Context(), sess.UserID())
-	if err != nil {
-		s.serverError(w, r, "count passkeys", err)
-		return nil, 0
-	}
-	if !complete && !allowIncomplete {
-		http.Redirect(w, r, "/setup", http.StatusSeeOther)
-		return nil, 0
-	}
-	return sess, n
+	return sess
 }
 
 func (s *Server) serverError(w http.ResponseWriter, r *http.Request, what string, err error) {
@@ -48,19 +37,15 @@ func (s *Server) serverError(w http.ResponseWriter, r *http.Request, what string
 		i18n.N("The server had a problem. Please try again in a moment."), nil)
 }
 
-// handleHome serves the login page to visitors and the dashboard to users
-// who completed passkey setup.
+// handleHome serves the login page to visitors and the dashboard to users.
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
-	if session.FromContext(r.Context()) == nil {
+	ctx := r.Context()
+	sess := session.FromContext(ctx)
+	if sess == nil {
 		s.pages.Render(w, r, http.StatusOK, web.PageLogin, web.PageData{})
 		return
 	}
-	sess, _ := s.ownerPage(w, r, false)
-	if sess == nil {
-		return
-	}
-	ctx := r.Context()
-	inbox, err := s.inboxCount(r, sess)
+	inbox, err := s.store.CountInbox(ctx, sess.UserID(), s.now())
 	if err != nil {
 		s.serverError(w, r, "count inbox", err)
 		return
@@ -79,25 +64,12 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
-	sess, n := s.ownerPage(w, r, true)
-	if sess == nil {
-		return
-	}
-	if n >= 2 {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-	s.pages.Render(w, r, http.StatusOK, web.PageSetup, web.PageData{Title: "Set up passkeys", User: sess.User,
-		View: &web.SetupView{PasskeyCount: n, Next: "/"}})
-}
-
 func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
-	sess, _ := s.ownerPage(w, r, false)
+	sess := ownerPage(w, r)
 	if sess == nil {
 		return
 	}
-	n, err := s.inboxCount(r, sess)
+	n, err := s.store.CountInbox(r.Context(), sess.UserID(), s.now())
 	if err != nil {
 		s.serverError(w, r, "count inbox", err)
 		return
@@ -107,7 +79,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
-	sess, _ := s.ownerPage(w, r, false)
+	sess := ownerPage(w, r)
 	if sess == nil {
 		return
 	}
@@ -211,14 +183,4 @@ func (s *Server) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDLFallback(w http.ResponseWriter, r *http.Request) {
 	s.pages.Error(w, r, http.StatusNotFound, i18n.N("Download did not start"), i18n.N("The download could not start. Go back and try again."), nil)
-}
-
-// inboxCount returns the number of received files, or -1 (hidden) unless the
-// session holds a passkey unlock: someone with only the owner's identity
-// provider credentials does not learn how many files arrived (audit I-6).
-func (s *Server) inboxCount(r *http.Request, sess *session.Session) (int, error) {
-	if !s.sessions.IsUnlocked(sess) {
-		return -1, nil
-	}
-	return s.store.CountInbox(r.Context(), sess.UserID())
 }

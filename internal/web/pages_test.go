@@ -49,28 +49,24 @@ var pageCases = map[string]struct {
 }{
 	PageDashboard: {
 		view:  &DashboardView{MaxFileSize: 5 << 30, DefaultExpiry: "1d", MaxRequestBytes: 5<<30 + 1234, InboxCount: 3, LinkCount: 2},
-		attrs: []string{`data-max-file-size="5368709120"`, `data-default-expiry="1d"`, `data-max-request-bytes="5368710354"`},
+		attrs: []string{`data-owner-id="UUUUUUUUUUUUUUUUUUUUUU"`, `data-max-file-size="5368709120"`, `data-default-expiry="1d"`, `data-max-request-bytes="5368710354"`},
 		ids: []string{"share-form", "drop-zone", "file-input", "upload-panel", "upload-progress", "upload-status",
 			"share-result", "share-link", "share-copy", "share-error", "request-form", "request-error",
-			"request-result", "request-link", "request-copy", "expires-in", "max-downloads", "share-qr", "request-qr"},
+			"request-result", "request-link", "request-copy", "request-hint", "expires-in", "max-downloads", "share-qr", "request-qr"},
 		text: []string{"Drop a file here to share", "Ask someone to send me a file", `Received files (<span id="inbox-count">3</span>)`, `Active links (<span id="link-count">2</span>)`,
 			`<option value="1d" selected>`, `action="/auth/logout"`},
 	},
-	PageSetup: {
-		view:  &SetupView{PasskeyCount: 1, Next: "/"},
-		attrs: []string{`data-passkey-count="1"`, `data-next="/"`},
-		ids:   []string{"setup-register", "setup-status", "setup-error", "setup-step-1", "setup-step-2"},
-		text:  []string{"Protect your received files", "Step 2 of 2: your spare passkey", "Create my spare passkey", `id="setup-where-auto" name="setup-where" value="auto" checked`},
-	},
 	PageInbox: {
-		view: &InboxView{Count: 2},
-		ids: []string{"inbox-unlock", "inbox-status", "inbox-error", "inbox-table", "inbox-list", "inbox-empty",
+		view:  &InboxView{Count: 2},
+		attrs: []string{`data-owner-id="UUUUUUUUUUUUUUUUUUUUUU"`, `data-count="2"`},
+		ids: []string{"inbox-warning", "inbox-device-note", "inbox-status", "inbox-error", "inbox-table", "inbox-list", "inbox-empty",
 			"download-panel", "download-progress", "download-status"},
 	},
 	PageLinks: {
-		view: &LinksView{Count: 1},
+		view:  &LinksView{Count: 1},
+		attrs: []string{`data-owner-id="UUUUUUUUUUUUUUUUUUUUUU"`, `data-count="1"`},
 		ids: []string{"links-status", "links-error", "shares-table", "shares-list", "shares-empty",
-			"requests-table", "requests-list", "requests-empty"},
+			"requests-note", "requests-table", "requests-list", "requests-empty"},
 	},
 	PageShare: {
 		view:  &ShareView{ID: "AAAAAAAAAAAAAAAAAAAAAA", PlainSize: 1536, ExpiresAt: future},
@@ -92,7 +88,7 @@ func TestPagesFollowDOMContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := &store.User{DisplayName: "Alice"}
+	user := &store.User{ID: "UUUUUUUUUUUUUUUUUUUUUU", DisplayName: "Alice"}
 	for page, c := range pageCases {
 		w := httptest.NewRecorder()
 		r.Render(w, httptest.NewRequest(http.MethodGet, "/", nil), http.StatusOK, page, PageData{User: user, View: c.view})

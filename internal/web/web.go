@@ -43,7 +43,6 @@ const (
 	PageError     = "error"
 	PageForbidden = "forbidden"
 	PageLanding   = "landing"
-	PageSetup     = "setup"
 	PageInbox     = "inbox"
 	PageLinks     = "links"
 	PageShare     = "share"
@@ -51,14 +50,13 @@ const (
 )
 
 var pageNames = []string{PageLogin, PageDashboard, PageError, PageForbidden, PageLanding,
-	PageSetup, PageInbox, PageLinks, PageShare, PageRequest}
+	PageInbox, PageLinks, PageShare, PageRequest}
 
 // pageScripts maps a page to its browser module (docs/PAGES.md §1.1). The
 // script is only included when the page has a view model: dead-link and
 // error pages render through PageError and never load one.
 var pageScripts = map[string]string{
 	PageDashboard: "dashboard.js",
-	PageSetup:     "setup.js",
 	PageInbox:     "inbox.js",
 	PageLinks:     "links.js",
 	PageShare:     "share.js",
@@ -88,7 +86,7 @@ type PageData struct {
 	RefreshToRoot bool
 	// Page is the page name, set by Render (navigation state).
 	Page string
-	// View is the page-specific view model (*DashboardView, *SetupView, …).
+	// View is the page-specific view model (*DashboardView, *InboxView, …).
 	View any
 
 	// Set by Render from the request: interface language, color theme,

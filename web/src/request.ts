@@ -1,9 +1,9 @@
 /**
- * Request uploader page (`/r/{id}#<owner pubkey>`): anyone with the link can
+ * Request uploader page (`/r/{id}#<link public key>`): anyone with the link can
  * send files that only the owner can read.
  * DOM contract: docs/PAGES.md §Request.
  *
- * Per file: fresh FK → seal metadata → HPKE-wrap FK to the owner's public key
+ * Per file: fresh FK → seal metadata → HPKE-wrap FK to the link's public key
  * (from the fragment, never from the server) bound to the request id →
  * `POST /api/r/{id}/files` → upload parts → finalize. Files are sent one
  * after the other.
@@ -51,9 +51,9 @@ function init(main: HTMLElement): void {
   let filesLeft = dataInt(main, "maxFiles", Number.MAX_SAFE_INTEGER);
   let bytesLeft = maxBytes;
 
-  let ownerKey: Uint8Array;
+  let linkKey: Uint8Array;
   try {
-    ownerKey = decodeRequestFragment(location.hash);
+    linkKey = decodeRequestFragment(location.hash);
   } catch {
     zoneEl.hidden = true;
     notice.error(t.requestLinkDamaged, false);
@@ -106,7 +106,7 @@ function init(main: HTMLElement): void {
     try {
       const keys = await deriveFileKeys(fk);
       const meta = await sealMeta(keys.metadata, { name: file.name, type: file.type, size: file.size });
-      const wrapped = await wrapFileKeyForRequest(ownerKey, requestId, fk);
+      const wrapped = await wrapFileKeyForRequest(linkKey, requestId, fk);
       const size = ciphertextSize(file.size);
       const created = await api.createRequestFile(requestId, {
         size,

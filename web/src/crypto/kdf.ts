@@ -4,7 +4,7 @@
  * Two implementations of the same function, both on WebCrypto:
  *
  * - {@link hkdf} / {@link hkdfAesGcmKey} use the native `HKDF` algorithm. Used
- *   for all Dropr subkeys (CK, MK, KEK). `hkdfAesGcmKey` never materialises
+ *   for all Dropr subkeys (CK, MK). `hkdfAesGcmKey` never materialises
  *   the derived key as bytes: it is returned as a non-extractable CryptoKey.
  * - {@link hkdfExtract} / {@link hkdfExpand} are built from `HMAC-SHA256`,
  *   because HPKE needs Extract and Expand separately (WebCrypto only offers

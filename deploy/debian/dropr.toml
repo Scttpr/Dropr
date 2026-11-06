@@ -9,7 +9,7 @@
 # Keep the two secret paths as they are: systemd loads the files from
 # /etc/dropr/credentials/ (root-only) and exposes them to the service there.
 
-public_url    = "https://drop.example.com"   # chosen once: passkeys are bound to it
+public_url    = "https://drop.example.com"   # chosen once: request link keys are bound to it
 mode          = "production"
 data_dir      = "/var/lib/dropr"
 

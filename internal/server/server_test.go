@@ -49,10 +49,10 @@ type testOpts struct {
 
 func newTestEnvWith(t *testing.T, o testOpts) *testEnv {
 	t.Helper()
-	op := oidctest.New(t, oidctest.Options{ClientID: "dropr", ClientSecret: "dev-secret"})
+	op := oidctest.New(t, oidctest.Options{ClientID: "dropr", ClientSecret: "dev-secret", Now: o.now})
 	srv := httptest.NewUnstartedServer(nil)
 	t.Cleanup(srv.Close)
-	// WebAuthn needs a domain name as RP ID, so the origin uses "localhost";
+	// Dev mode allows http:// only for localhost, so the origin uses "localhost";
 	// the client dials the listener directly.
 	addr := srv.Listener.Addr().String()
 	_, port, _ := net.SplitHostPort(addr)
@@ -181,15 +181,23 @@ func TestLoginDashboardLogout(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `http-equiv="refresh" content="0;url=/"`) {
 		t.Fatalf("callback landing: %d %s", resp.StatusCode, body)
 	}
-	// Without two passkeys the dashboard sends the user to passkey setup.
+	// The first sign-in lands on the dashboard: there is no setup step.
 	resp, body = e.do(http.MethodGet, "/", nil)
-	if resp.StatusCode != http.StatusOK || resp.Request.URL.Path != "/setup" || !strings.Contains(body, `data-passkey-count="0"`) ||
-		!strings.Contains(body, "Alice Example") {
-		t.Fatalf("setup redirect: %s %s", resp.Request.URL, body)
+	if resp.StatusCode != http.StatusOK || resp.Request.URL.Path != "/" || !strings.Contains(body, `data-page="dashboard"`) ||
+		!strings.Contains(body, `Received files (<span id="inbox-count">0</span>)`) || !strings.Contains(body, "Alice Example") {
+		t.Fatalf("dashboard: %s %s", resp.Request.URL, body)
+	}
+	// The browser scopes its request link keys by the account ID.
+	if users, err := e.s.store.ListUsers(t.Context()); err != nil || len(users) != 1 ||
+		!strings.Contains(body, `data-owner-id="`+users[0].ID+`"`) {
+		t.Errorf("dashboard lacks the owner ID: %v", err)
 	}
 	resp, _ = e.do(http.MethodGet, "/login", nil)
-	if resp.Request.URL.Path != "/setup" {
+	if resp.Request.URL.Path != "/" {
 		t.Error("/login does not redirect signed-in users")
+	}
+	if resp, _ := e.do(http.MethodGet, "/setup", nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("/setup: %d", resp.StatusCode)
 	}
 
 	e.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

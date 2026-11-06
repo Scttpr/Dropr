@@ -1,7 +1,7 @@
 // Command dropr is the Dropr server and admin CLI.
 //
 //	dropr serve   --config dropr.toml
-//	dropr user list|revoke|reset-keys|purge|migrate ...
+//	dropr user list|revoke|purge|migrate ...
 //	dropr gc      --config dropr.toml
 //	dropr backup  --config dropr.toml --out FILE
 //	dropr healthcheck [--config dropr.toml | --url URL]
@@ -56,7 +56,6 @@ Commands:
   serve                     run the server
   user list                 list accounts
   user revoke <user>        end all sessions of a user now
-  user reset-keys <user>    wipe passkeys and key pair (inbox becomes unreadable)
   user purge <user>         delete a user and all their data
   user migrate              relink accounts after changing identity provider
   gc                        run the cleanup jobs once
@@ -173,7 +172,7 @@ func openStore(ctx context.Context, cfgPath string) (*config.Config, *db.DB, *st
 
 func cmdUser(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return usageError{"user: missing subcommand (list, revoke, reset-keys, purge, migrate)"}
+		return usageError{"user: missing subcommand (list, revoke, purge, migrate)"}
 	}
 	sub, args := args[0], args[1:]
 	fs, cfgPath := newFlags("user "+sub, stderr)
@@ -237,7 +236,7 @@ func cmdUser(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		_, _ = fmt.Fprintf(stdout, "Ended %d session(s) of %s (%s); their request links are paused until they sign in again.\n", n, u.ID, displayOf(u))
 		return nil
 
-	case "reset-keys", "purge":
+	case "purge":
 		ref, err := needUser()
 		if err != nil {
 			return err
@@ -255,35 +254,18 @@ func cmdUser(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if err != nil {
 			return userErr(ref, err)
 		}
-		var warn string
-		if sub == "purge" {
-			warn = fmt.Sprintf("This permanently deletes %s (%s) and ALL their files and links.", u.ID, displayOf(u))
-		} else {
-			warn = fmt.Sprintf("This wipes the passkeys and key pair of %s (%s). Their received files and request links "+
-				"are deleted (they can never be decrypted again) and their sessions end. Share links are kept.", u.ID, displayOf(u))
-		}
+		warn := fmt.Sprintf("This permanently deletes %s (%s) and ALL their files and links.", u.ID, displayOf(u))
 		if !*yes && !confirm(stdin, stdout, warn) {
 			return errors.New("aborted")
 		}
-		if sub == "purge" {
-			ids, err := st.DeleteUser(ctx, u.ID)
-			if err != nil {
-				return err
-			}
-			if err := removeBlobs(blobs, ids); err != nil {
-				return fmt.Errorf("purged %s, but some files remain (run `dropr gc`): %w", u.ID, err)
-			}
-			_, _ = fmt.Fprintf(stdout, "Purged %s and deleted %d file(s).\n", u.ID, len(ids))
-			return nil
-		}
-		ids, err := st.ResetUserKeys(ctx, u.ID)
+		ids, err := st.DeleteUser(ctx, u.ID)
 		if err != nil {
 			return err
 		}
 		if err := removeBlobs(blobs, ids); err != nil {
-			return fmt.Errorf("reset keys of %s, but some files remain (run `dropr gc`): %w", u.ID, err)
+			return fmt.Errorf("purged %s, but some files remain (run `dropr gc`): %w", u.ID, err)
 		}
-		_, _ = fmt.Fprintf(stdout, "Reset keys of %s and deleted %d received file(s). They will register new passkeys at next sign-in.\n", u.ID, len(ids))
+		_, _ = fmt.Fprintf(stdout, "Purged %s and deleted %d file(s).\n", u.ID, len(ids))
 		return nil
 
 	case "migrate":
@@ -344,15 +326,11 @@ func listUsers(ctx context.Context, st *store.Store, stdout io.Writer) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tNAME\tSUBJECT\tCREATED\tSESSIONS\tPASSKEYS\tKEYS\tISSUER")
+	_, _ = fmt.Fprintln(tw, "ID\tNAME\tSUBJECT\tCREATED\tSESSIONS\tISSUER")
 	for i := range users {
 		u := &users[i]
-		keys := "no"
-		if u.HasKeys {
-			keys = "yes"
-		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n", u.ID, sanitize(u.DisplayName), sanitize(u.Subject),
-			u.CreatedAt.Format(time.DateOnly), u.Sessions, u.Passkeys, keys, sanitize(u.Issuer))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\n", u.ID, sanitize(u.DisplayName), sanitize(u.Subject),
+			u.CreatedAt.Format(time.DateOnly), u.Sessions, sanitize(u.Issuer))
 	}
 	return tw.Flush()
 }

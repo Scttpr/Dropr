@@ -61,7 +61,7 @@ type createdUpload struct {
 }
 
 func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
-	sess := s.apiSession(w, r, false)
+	sess := apiSession(w, r)
 	if sess == nil {
 		return
 	}
@@ -104,7 +104,7 @@ type shareSummary struct {
 }
 
 func (s *Server) handleListShares(w http.ResponseWriter, r *http.Request) {
-	sess := s.apiSession(w, r, false)
+	sess := apiSession(w, r)
 	if sess == nil {
 		return
 	}
@@ -124,7 +124,7 @@ func (s *Server) handleListShares(w http.ResponseWriter, r *http.Request) {
 // handleDeleteShare revokes a share (complete or still uploading) and
 // deletes its blob.
 func (s *Server) handleDeleteShare(w http.ResponseWriter, r *http.Request) {
-	sess := s.apiSession(w, r, false)
+	sess := apiSession(w, r)
 	if sess == nil {
 		return
 	}
@@ -176,7 +176,7 @@ func (s *Server) handleShareDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
-	sess := s.apiSession(w, r, true)
+	sess := apiSession(w, r)
 	if sess == nil {
 		return
 	}
@@ -213,7 +213,7 @@ type requestSummary struct {
 }
 
 func (s *Server) handleListRequests(w http.ResponseWriter, r *http.Request) {
-	sess := s.apiSession(w, r, false)
+	sess := apiSession(w, r)
 	if sess == nil {
 		return
 	}
@@ -239,7 +239,7 @@ func (s *Server) handleListRequests(w http.ResponseWriter, r *http.Request) {
 // handleDeleteRequest revokes a request link and deletes every file it
 // received.
 func (s *Server) handleDeleteRequest(w http.ResponseWriter, r *http.Request) {
-	sess := s.apiSession(w, r, false)
+	sess := apiSession(w, r)
 	if sess == nil {
 		return
 	}
@@ -261,7 +261,7 @@ func (s *Server) handleDeleteRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSetRequestLabel(w http.ResponseWriter, r *http.Request) {
-	sess := s.apiSession(w, r, false)
+	sess := apiSession(w, r)
 	if sess == nil {
 		return
 	}
@@ -336,11 +336,11 @@ type inboxEntry struct {
 }
 
 func (s *Server) handleListInbox(w http.ResponseWriter, r *http.Request) {
-	sess := s.apiSession(w, r, true)
+	sess := apiSession(w, r)
 	if sess == nil {
 		return
 	}
-	files, err := s.store.InboxByOwner(r.Context(), sess.UserID())
+	files, err := s.store.InboxByOwner(r.Context(), sess.UserID(), s.now())
 	if err != nil {
 		s.apiError(w, r, "list inbox", err)
 		return
@@ -354,7 +354,7 @@ func (s *Server) handleListInbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInboxDownload(w http.ResponseWriter, r *http.Request) {
-	sess := s.apiSession(w, r, true)
+	sess := apiSession(w, r)
 	if sess == nil {
 		return
 	}
@@ -367,7 +367,7 @@ func (s *Server) handleInboxDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	f, err := s.store.InboxFileByID(ctx, sess.UserID(), id)
+	f, err := s.store.InboxFileByID(ctx, sess.UserID(), id, s.now())
 	if errors.Is(err, store.ErrNotFound) {
 		httpx.WriteError(w, errNotFound)
 		return
@@ -387,7 +387,7 @@ func (s *Server) handleInboxDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteInbox(w http.ResponseWriter, r *http.Request) {
-	sess := s.apiSession(w, r, false)
+	sess := apiSession(w, r)
 	if sess == nil {
 		return
 	}

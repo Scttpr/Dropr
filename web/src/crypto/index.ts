@@ -11,11 +11,11 @@
  *   `encryptPart` per part → link `…/s/<id>#` + `encodeShareFragment(fk)`.
  *   Recipient: `decodeShareFragment` → `deriveFileKeys` → `openMeta` →
  *   `createDecryptStream`.
- * - **Request (flow B)**: uploader `decodeRequestFragment` → `generateFileKey`
- *   → `wrapFileKeyForRequest` + as above. Owner: `deriveKek` →
- *   `unwrapPrivateKey` → `unwrapFileKeyFromRequest` → as above.
- * - **Passkeys**: `generateOwnerKeyPair` → `deriveKek` per passkey →
- *   `wrapPrivateKey`; adding a passkey uses `unwrapExtractable`.
+ * - **Request (flow B)**: owner `generateRequestKeyPair` → link `…/r/<id>#` +
+ *   `encodeRequestFragment(publicKey)` (optional label: `sealRequestLabel`).
+ *   Uploader: `decodeRequestFragment` → `generateFileKey` →
+ *   `wrapFileKeyForRequest` + as above. Owner, with the link's stored key
+ *   pair: `unwrapFileKeyFromRequest` → as above.
  *
  * Errors: {@link DecryptionError} (authentication failed, no detail) and
  * {@link FormatError} (malformed public input).
@@ -54,17 +54,8 @@ export {
 export type { ByteRange, DecryptStreamOptions } from "./stream.ts";
 export { HPKE_ENC_SIZE, HPKE_TAG_SIZE, X25519_KEY_SIZE, open as hpkeOpen, seal as hpkeSeal } from "./hpke.ts";
 export type { HpkeRecipient, HpkeSealed } from "./hpke.ts";
-export {
-  PRF_OUTPUT_SIZE,
-  deriveKek,
-  generateOwnerKeyPair,
-  prfSalt,
-  toOwnerKeyPair,
-  unwrapExtractable,
-  unwrapPrivateKey,
-  wrapPrivateKey,
-} from "./keywrap.ts";
-export type { ExtractableOwnerKey, OwnerKeyPair } from "./keywrap.ts";
+export { MAX_LABEL_BYTES, generateRequestKeyPair, openRequestLabel, sealRequestLabel } from "./requestkey.ts";
+export type { RequestKeyPair } from "./requestkey.ts";
 export {
   FALLBACK_NAME,
   FALLBACK_TYPE,

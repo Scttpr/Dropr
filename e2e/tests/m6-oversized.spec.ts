@@ -30,7 +30,7 @@ let requestLink = "";
 let pending: { upload_id: string; upload_token: string } | null = null;
 
 test("the dashboard refuses a file over the instance limit before uploading", async ({ alice, filesDir, dropr, browserName }) => {
-  test.skip(browserName !== "chromium", "owner-only (Chromium virtual authenticator)");
+  test.skip(browserName !== "chromium", "owner-only (owner pages run in Chromium)");
   const p = alice.page;
   const big = await makeFile(filesDir, "too-big.bin", MiB + 1);
   await p.goto(dropr.origin + "/");

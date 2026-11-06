@@ -131,7 +131,7 @@ func (e *testEnv) download(c *http.Client, token string, hdr map[string]string) 
 func TestShareFlow(t *testing.T) {
 	t.Parallel()
 	e := newTestEnv(t)
-	e.newOwner().setup()
+	e.newOwner()
 	anon := &http.Client{Transport: e.client.Transport}
 
 	size := blob.CipherSize(blob.PartPlainSize + 5000) // two parts
@@ -306,14 +306,8 @@ func (e *testEnv) createRequestFile(id string, size int64) (*http.Response, uplo
 func TestRequestFlow(t *testing.T) {
 	t.Parallel()
 	e := newTestEnv(t)
-	o := e.newOwner().setup()
+	o := e.newOwner()
 	reqBody := map[string]any{"expires_in": "7d", "max_files": 5, "max_bytes": 10 * smallSize, "single_use": false}
-
-	// Creating a request link needs an unlocked session.
-	locked := e.newClient()
-	if resp, b := e.apiWith(locked, http.MethodPost, "/api/requests", reqBody, nil); resp.StatusCode != http.StatusForbidden || errCode(b) != "locked" {
-		t.Fatalf("locked create: %d %s", resp.StatusCode, b)
-	}
 	id := o.createRequest(reqBody)
 	label := b64t.EncodeToString(randBytes(100))
 	if resp, b := e.api(http.MethodPut, "/api/requests/"+id+"/label", map[string]any{"label_meta": label}, nil); resp.StatusCode != http.StatusNoContent {
@@ -335,10 +329,7 @@ func TestRequestFlow(t *testing.T) {
 	}
 	e.uploadAll(u, data)
 
-	// Inbox: locked sessions see nothing; the owner lists and downloads.
-	if resp, b := e.apiWith(locked, http.MethodGet, "/api/inbox", nil, nil); resp.StatusCode != http.StatusForbidden || errCode(b) != "locked" {
-		t.Errorf("locked inbox: %d", resp.StatusCode)
-	}
+	// Inbox: the owner lists and downloads.
 	_, b := e.api(http.MethodGet, "/api/inbox", nil, nil)
 	var inbox struct {
 		Inbox []struct {
@@ -357,9 +348,6 @@ func TestRequestFlow(t *testing.T) {
 	if !strings.Contains(string(b), `"files_received":1`) || !strings.Contains(string(b), `"label_meta":"`+label+`"`) {
 		t.Errorf("requests: %s", b)
 	}
-	if resp, b := e.apiWith(locked, http.MethodPost, "/api/inbox/"+fileID+"/download", map[string]any{}, nil); resp.StatusCode != http.StatusForbidden {
-		t.Errorf("locked inbox download: %d %s", resp.StatusCode, b)
-	}
 	resp, b = e.api(http.MethodPost, "/api/inbox/"+fileID+"/download", map[string]any{}, nil)
 	var g struct{ Token string }
 	mustJSON(t, b, &g)
@@ -369,9 +357,6 @@ func TestRequestFlow(t *testing.T) {
 	anon := &http.Client{Transport: e.client.Transport}
 	if resp, _ := e.download(anon, g.Token, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("inbox token without session: %d", resp.StatusCode)
-	}
-	if resp, _ := e.download(locked, g.Token, nil); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("inbox token with a locked session: %d", resp.StatusCode)
 	}
 	if resp, got := e.download(e.client, g.Token, nil); resp.StatusCode != http.StatusOK || !bytes.Equal(got, data) {
 		t.Errorf("inbox download: %d", resp.StatusCode)
@@ -411,7 +396,7 @@ func TestRequestCapsUnderConcurrency(t *testing.T) {
 	t.Parallel()
 	clk := newClock()
 	e := newTestEnvWith(t, testOpts{now: clk.Now})
-	o := e.newOwner().setup()
+	o := e.newOwner()
 	byFiles := o.createRequest(map[string]any{"max_files": 3, "max_bytes": 100 * smallSize})
 	byBytes := o.createRequest(map[string]any{"max_files": 10, "max_bytes": 2 * smallSize})
 
@@ -466,7 +451,7 @@ func TestQuotaAndDiskSpace(t *testing.T) {
 			return avail, 2 << 40, nil
 		},
 	})
-	o := e.newOwner().setup()
+	o := e.newOwner()
 	e.createShare(e.client, smallSize, nil)
 	e.createShare(e.client, smallSize, nil)
 	resp, b := e.api(http.MethodPost, "/api/shares", map[string]any{"size": smallSize, "parts": 1, "meta": meta()}, nil)
@@ -516,7 +501,7 @@ func TestUploadValidation(t *testing.T) {
 		{"body limit", "POST", "/api/shares", []byte(`{"meta":"` + strings.Repeat("A", 17<<10) + `"}`), nil, 413, ""},
 		{"wrapped key length", "POST", "/api/r/AAAAAAAAAAAAAAAAAAAAAA/files", map[string]any{"size": smallSize, "parts": 1, "meta": meta(), "wrapped_key": b64t.EncodeToString(make([]byte, 79))}, nil, 400, "bad_request"},
 		{"unknown request link", "POST", "/api/r/AAAAAAAAAAAAAAAAAAAAAA/files", map[string]any{"size": smallSize, "parts": 1, "meta": meta(), "wrapped_key": b64t.EncodeToString(make([]byte, 80))}, nil, 404, "not_found"},
-		{"request needs unlock", "POST", "/api/requests", map[string]any{"max_files": 0, "max_bytes": 100}, nil, 403, "locked"},
+		{"request max_files 0", "POST", "/api/requests", map[string]any{"max_files": 0, "max_bytes": 100}, nil, 400, "bad_request"},
 		{"wrong token", "GET", "/upload/" + u.UploadID, nil, map[string]string{"Authorization": "Bearer " + strings.Repeat("A", 43)}, 401, "bad_token"},
 		{"malformed token", "GET", "/upload/" + u.UploadID, nil, map[string]string{"Authorization": "Bearer x"}, 401, "bad_token"},
 		{"unknown upload", "GET", "/upload/AAAAAAAAAAAAAAAAAAAAAA", nil, e.bearer(u), 404, "not_found"},
@@ -556,7 +541,7 @@ func TestUploadValidation(t *testing.T) {
 func TestOwnerIsolation(t *testing.T) {
 	t.Parallel()
 	e := newTestEnv(t)
-	a := e.newOwner().setup()
+	a := e.newOwner()
 	share := e.createShare(e.client, smallSize, nil)
 	e.uploadAll(share, randBytes(int(smallSize)))
 	reqID := a.createRequest(map[string]any{"max_files": 2, "max_bytes": 2 * smallSize})
@@ -565,28 +550,34 @@ func TestOwnerIsolation(t *testing.T) {
 	_, b := e.api(http.MethodGet, "/api/inbox", nil, nil)
 	var inbox struct{ Inbox []struct{ ID string } }
 	mustJSON(t, b, &inbox)
+	_, b = e.api(http.MethodPost, "/api/inbox/"+inbox.Inbox[0].ID+"/download", map[string]any{}, nil)
+	var g struct{ Token string }
+	mustJSON(t, b, &g)
 
-	// Bob: another account with his own passkeys, unlocked.
+	// Bob: another account.
 	e.op.Set(func(k *oidctest.Knobs) { k.Subject = "bob-456" })
-	bob := &owner{e: e, c: e.newClient(), auth: a.auth, pub: randBytes(32)}
-	bob.setup()
+	bob := e.newClient()
 	for _, c := range []struct{ method, path string }{
 		{http.MethodDelete, "/api/shares/" + share.ShareID},
 		{http.MethodDelete, "/api/requests/" + reqID},
 		{http.MethodDelete, "/api/inbox/" + inbox.Inbox[0].ID},
 		{http.MethodPost, "/api/inbox/" + inbox.Inbox[0].ID + "/download"},
 	} {
-		if resp, b := e.apiWith(bob.c, c.method, c.path, map[string]any{}, nil); resp.StatusCode != http.StatusNotFound {
+		if resp, b := e.apiWith(bob, c.method, c.path, map[string]any{}, nil); resp.StatusCode != http.StatusNotFound {
 			t.Errorf("bob %s %s: %d %s", c.method, c.path, resp.StatusCode, b)
 		}
 	}
-	if resp, _ := e.apiWith(bob.c, http.MethodPut, "/api/requests/"+reqID+"/label", map[string]any{"label_meta": b64t.EncodeToString(randBytes(60))}, nil); resp.StatusCode != http.StatusNotFound {
+	if resp, _ := e.apiWith(bob, http.MethodPut, "/api/requests/"+reqID+"/label", map[string]any{"label_meta": b64t.EncodeToString(randBytes(60))}, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("bob label: %d", resp.StatusCode)
 	}
 	for _, p := range []string{"/api/shares", "/api/requests", "/api/inbox"} {
-		if _, b := e.apiWith(bob.c, http.MethodGet, p, nil, nil); strings.Contains(string(b), `"id"`) {
+		if _, b := e.apiWith(bob, http.MethodGet, p, nil, nil); strings.Contains(string(b), `"id"`) {
 			t.Errorf("bob sees %s: %s", p, b)
 		}
+	}
+	// Alice's inbox token needs Alice's session.
+	if resp, _ := e.download(bob, g.Token, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("bob with alice's inbox token: %d", resp.StatusCode)
 	}
 	// Alice's things are intact.
 	if !exists(e.blobDir(share.UploadID)) || !exists(e.blobDir(f.UploadID)) {
@@ -598,7 +589,7 @@ func TestExpiryDeletesBlobs(t *testing.T) {
 	t.Parallel()
 	clk := newClock()
 	e := newTestEnvWith(t, testOpts{now: clk.Now})
-	o := e.newOwner().setup()
+	o := e.newOwner()
 	share := e.createShare(e.client, smallSize, map[string]any{"expires_in": "1h"})
 	e.uploadAll(share, randBytes(int(smallSize)))
 	reqID := o.createRequest(map[string]any{"expires_in": "1h", "max_files": 2, "max_bytes": 2 * smallSize})
@@ -632,6 +623,65 @@ func TestExpiryDeletesBlobs(t *testing.T) {
 	}
 }
 
+// An expired request link takes its files with it at once: they disappear
+// from the inbox and its counts, and can no longer be downloaded, even
+// before the cleanup job deletes them.
+func TestExpiredRequestHidesFilesBeforeCleanup(t *testing.T) {
+	t.Parallel()
+	clk := newClock()
+	e := newTestEnvWith(t, testOpts{now: clk.Now})
+	start := clk.Now()
+	o := e.newOwner()
+	reqID := o.createRequest(map[string]any{"expires_in": "1h", "max_files": 2, "max_bytes": 2 * smallSize})
+	_, f := e.createRequestFile(reqID, smallSize)
+	e.uploadAll(f, randBytes(int(smallSize)))
+	_, b := e.api(http.MethodGet, "/api/inbox", nil, nil)
+	var inbox struct{ Inbox []struct{ ID string } }
+	mustJSON(t, b, &inbox)
+	if len(inbox.Inbox) != 1 {
+		t.Fatalf("inbox: %s", b)
+	}
+	fileID := inbox.Inbox[0].ID
+	_, b = e.api(http.MethodPost, "/api/inbox/"+fileID+"/download", map[string]any{}, nil)
+	var g struct{ Token string }
+	mustJSON(t, b, &g)
+	if resp, _ := e.download(e.client, g.Token, map[string]string{"Range": "bytes=0-0"}); resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("inbox download while live: %d", resp.StatusCode)
+	}
+
+	// Stay active (30 min session idle timeout) and keep the token in use
+	// (1 h idle) while the link runs out.
+	for range 4 {
+		clk.Advance(16 * time.Minute)
+		if resp, _ := e.api(http.MethodGet, "/api/requests", nil, nil); resp.StatusCode != http.StatusOK {
+			t.Fatalf("session lost: %d", resp.StatusCode)
+		}
+		if clk.Now().Before(start.Add(time.Hour)) {
+			if resp, _ := e.download(e.client, g.Token, map[string]string{"Range": "bytes=0-0"}); resp.StatusCode != http.StatusPartialContent {
+				t.Fatalf("inbox download while live: %d", resp.StatusCode)
+			}
+		}
+	}
+	if _, b := e.api(http.MethodGet, "/api/inbox", nil, nil); !strings.Contains(string(b), `"inbox":[]`) {
+		t.Errorf("expired link's file listed: %s", b)
+	}
+	if resp, b := e.api(http.MethodPost, "/api/inbox/"+fileID+"/download", map[string]any{}, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("token for an expired link's file: %d %s", resp.StatusCode, b)
+	}
+	if resp, _ := e.download(e.client, g.Token, nil); resp.StatusCode != http.StatusGone {
+		t.Errorf("earlier token after the link expired: %d", resp.StatusCode)
+	}
+	if _, page := e.do(http.MethodGet, "/", nil); !strings.Contains(page, `Received files (<span id="inbox-count">0</span>)`) {
+		t.Error("dashboard counts the expired link's file")
+	}
+	if _, page := e.do(http.MethodGet, "/inbox", nil); !strings.Contains(page, `data-count="0"`) {
+		t.Error("inbox page counts the expired link's file")
+	}
+	if !exists(e.blobDir(f.UploadID)) {
+		t.Fatal("the file was swept: the test no longer covers the window before cleanup")
+	}
+}
+
 func TestStaleUploadsCollected(t *testing.T) {
 	t.Parallel()
 	clk := newClock()
@@ -661,14 +711,10 @@ func TestStaleUploadsCollected(t *testing.T) {
 func TestCSRFOnStateChangingEndpoints(t *testing.T) {
 	t.Parallel()
 	e := newTestEnv(t)
-	o := e.newOwner().setup()
+	e.newOwner()
 	u := e.createShare(e.client, smallSize, nil)
 	id := "AAAAAAAAAAAAAAAAAAAAAA"
-	_ = o
 	for _, c := range []struct{ method, path string }{
-		{"POST", "/api/passkeys/register/begin"}, {"POST", "/api/passkeys/register/finish"},
-		{"POST", "/api/passkeys/unlock/begin"}, {"POST", "/api/passkeys/unlock/finish"},
-		{"DELETE", "/api/passkeys/" + id},
 		{"POST", "/api/shares"}, {"DELETE", "/api/shares/" + u.ShareID}, {"POST", "/api/s/" + u.ShareID + "/download"},
 		{"POST", "/api/requests"}, {"DELETE", "/api/requests/" + id}, {"PUT", "/api/requests/" + id + "/label"},
 		{"POST", "/api/r/" + id + "/files"}, {"POST", "/api/inbox/" + id + "/download"}, {"DELETE", "/api/inbox/" + id},

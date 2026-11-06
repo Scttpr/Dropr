@@ -24,9 +24,10 @@ fail on any missing translation.
 * **The server never sees plaintext.** Files and their names are encrypted in
   the browser (AES-256-GCM STREAM, WebCrypto only). Share-link keys live in the
   URL fragment, which browsers never send to the server.
-* **Request links use HPKE** (RFC 9180, X25519). The owner's private key is
-  wrapped by a **passkey with the WebAuthn PRF extension** and exists unwrapped
-  only in browser memory. Stolen login credentials do not open the inbox.
+* **Request links use HPKE** (RFC 9180, X25519) with a key pair per link,
+  generated in the owner's browser. The private key is stored there,
+  non-extractable, and never reaches the server. Stolen login credentials do
+  not open the inbox.
 * **Login is OIDC only**, single pinned issuer, PKCE, `private_key_jwt`
   client authentication in production, and a required role claim re-checked
   every 15 minutes. Microsoft Entra ID is officially supported; Keycloak is
@@ -38,8 +39,9 @@ fail on any missing translation.
   dependencies, published asset hashes. See [SECURITY.md](SECURITY.md).
 * **Honest limits**: a server operator can still serve malicious JavaScript,
   and the server sees sizes and timing. Read the
-  [threat model](docs/THREAT_MODEL.md) before real use. Lost passkeys mean a
-  lost inbox, by design.
+  [threat model](docs/THREAT_MODEL.md) before real use. Files received through
+  a request link open only in the browser that created it: clearing its site
+  data loses them, by design.
 
 ## Quickstart (development)
 

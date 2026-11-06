@@ -2,18 +2,9 @@
 //
 // The cookie __Host-dropr_session holds a random 256-bit ID; the database
 // stores only its SHA-256. Sessions expire after 30 minutes of inactivity or
-// 8 hours after login, whichever comes first. The ID rotates at login and at
-// passkey unlock; the absolute lifetime is measured from the original login
-// and survives rotation.
-//
-// Unlock policy: a passkey unlock (MarkUnlocked) stays valid for the rest of
-// the session, i.e. at most the 8 h absolute lifetime and only while the
-// session stays active (30 min idle). Rationale: the unwrapped private key
-// lives only in browser memory and is lost on reload anyway, so the server
-// flag only gates access to wrapped keys and inbox metadata, both useless
-// without the passkey's PRF output. Config.UnlockMaxAge tightens this if
-// a deployment wants re-prompts. Revalidation failure kills the whole session,
-// unlock included.
+// 8 hours after login, whichever comes first. The ID rotates at login: the
+// session the browser presented, if any, is destroyed, so a pre-login ID
+// never survives authentication. Revalidation failure kills the session.
 package session
 
 import (
@@ -51,9 +42,6 @@ type Config struct {
 	AbsoluteTimeout time.Duration
 	// TouchEvery throttles last_seen_at writes.
 	TouchEvery time.Duration
-	// UnlockMaxAge bounds how long a passkey unlock lasts; zero means the
-	// session lifetime.
-	UnlockMaxAge time.Duration
 	// Now overrides the clock in tests.
 	Now func() time.Time
 }
@@ -64,7 +52,7 @@ type Manager struct {
 	rt     *seal.AEAD // refresh-token encryption
 	cfg    Config
 	logger *slog.Logger
-	// locks serializes revalidation and rotation per session (by ID hash).
+	// locks serializes revalidation per session (by ID hash).
 	locks keyed.Mutex
 }
 
@@ -82,9 +70,6 @@ func (s *Session) CreatedAt() time.Time { return s.rec.CreatedAt }
 
 // RevalidatedAt is the last successful OIDC revalidation (or login).
 func (s *Session) RevalidatedAt() time.Time { return s.rec.RevalidatedAt }
-
-// UnlockedAt is the last passkey unlock, if any.
-func (s *Session) UnlockedAt() *time.Time { return s.rec.UnlockedAt }
 
 // OIDCSID is the provider session ID ("sid" claim), if any.
 func (s *Session) OIDCSID() string { return s.rec.OIDCSID }
@@ -108,9 +93,6 @@ func NewManager(st *store.Store, refreshKey []byte, cfg Config, logger *slog.Log
 	}
 	if cfg.TouchEvery <= 0 {
 		cfg.TouchEvery = DefaultTouchEvery
-	}
-	if cfg.UnlockMaxAge <= 0 || cfg.UnlockMaxAge > cfg.AbsoluteTimeout {
-		cfg.UnlockMaxAge = cfg.AbsoluteTimeout
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -208,70 +190,10 @@ func (m *Manager) expired(rec *store.Session, now time.Time) bool {
 		rec.LastSeenAt.After(now.Add(time.Minute)) // clock went backwards or row tampered
 }
 
-// Rotate replaces the session ID, keeping every other attribute (including
-// the original creation time), re-binds the encrypted refresh token to the new
-// ID and sets the new cookie. mutate, if non-nil, edits the new record before
-// it is stored. The old ID stops working immediately.
-//
-// Rotation holds the per-session lock that revalidation also takes, and
-// builds the new row from the row as stored inside the write transaction,
-// never from the possibly stale in-memory copy: a refresh token rotated by a
-// concurrent revalidation is carried over, not lost (audit L-5).
-func (m *Manager) Rotate(ctx context.Context, w http.ResponseWriter, s *Session, mutate func(*store.Session)) (*Session, error) {
-	unlock := m.Lock(s)
-	defer unlock()
-	id := ids.NewSecret()
-	newHash := ids.Hash(id)
-	var next *store.Session
-	err := m.st.RotateSession(ctx, s.rec.IDHash, func(cur *store.Session) (*store.Session, error) {
-		n := *cur
-		n.IDHash = newHash
-		n.RotatedFrom = cur.IDHash
-		n.LastSeenAt = m.now()
-		n.RefreshTokenEnc = nil
-		if len(cur.RefreshTokenEnc) > 0 {
-			pt, err := m.rt.Open(cur.RefreshTokenEnc, cur.IDHash)
-			if err != nil {
-				return nil, err
-			}
-			n.RefreshTokenEnc = m.rt.Seal(pt, newHash)
-		}
-		if mutate != nil {
-			mutate(&n)
-		}
-		next = &n
-		return next, nil
-	})
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, ErrNoSession
-		}
-		return nil, fmt.Errorf("session: rotate: %w", err)
-	}
-	m.setCookie(w, id, next)
-	return &Session{rec: next, User: s.User}, nil
-}
-
 // Lock takes the per-session lock (keyed by the session ID hash) that
-// serializes revalidation and rotation, and returns its release function.
+// serializes revalidation, and returns its release function.
 func (m *Manager) Lock(s *Session) (unlock func()) {
 	return m.locks.Lock(string(s.rec.IDHash))
-}
-
-// MarkUnlocked records a successful passkey unlock and rotates the session ID
-// (PLAN.md §5.3).
-func (m *Manager) MarkUnlocked(ctx context.Context, w http.ResponseWriter, s *Session) (*Session, error) {
-	now := m.now()
-	return m.Rotate(ctx, w, s, func(n *store.Session) { n.UnlockedAt = &now })
-}
-
-// IsUnlocked reports whether the session holds a valid passkey unlock.
-func (m *Manager) IsUnlocked(s *Session) bool {
-	if s == nil || s.rec.UnlockedAt == nil {
-		return false
-	}
-	age := m.now().Sub(*s.rec.UnlockedAt)
-	return age >= -time.Minute && age < m.cfg.UnlockMaxAge
 }
 
 // Destroy deletes the session and clears the cookie.

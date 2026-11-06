@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/scttpr/dropr/internal/auth/oidc"
-	"github.com/scttpr/dropr/internal/auth/passkey"
 	"github.com/scttpr/dropr/internal/auth/session"
 	"github.com/scttpr/dropr/internal/blob"
 	"github.com/scttpr/dropr/internal/config"
@@ -55,7 +54,6 @@ type Server struct {
 	hasher   *httpx.IPHasher
 	resolver httpx.IPResolver
 	authRL   *httpx.RateLimiter
-	passkeys *passkey.Service
 	blobs    *blob.Store
 	now      func() time.Time
 	// Per-IP limits of the public (link and transfer) endpoints.
@@ -109,18 +107,6 @@ func New(ctx context.Context, d Deps) (*Server, error) {
 	s.streams = httpx.NewStreamLimiter(s.hasher, cfg.Limits.MaxTransfers, cfg.Limits.MaxTransfersPerIP)
 
 	if s.blobs, err = blob.New(BlobDir(cfg), blob.Options{Headroom: cfg.Limits.DiskHeadroomBytes, Usage: d.DiskUsage}); err != nil {
-		return nil, err
-	}
-	if s.passkeys, err = passkey.New(passkey.Options{
-		Public:   cfg.Public,
-		Origin:   cfg.Origin,
-		Store:    d.Store,
-		Sessions: s.sessions,
-		// Per session: a few ceremonies a minute is plenty for a human.
-		Limiter: httpx.NewRateLimiter(s.hasher, 60, 30, 100_000),
-		Logger:  d.Logger,
-		Now:     d.Now,
-	}); err != nil {
 		return nil, err
 	}
 
@@ -226,8 +212,7 @@ func (s *Server) routes() *http.ServeMux {
 	// Operations.
 	s.handle(mux, "GET /healthz", s.handleHealth)
 
-	// Pages that need a session redirect to /setup until two passkeys exist.
-	s.handle(mux, "GET /setup", s.handleSetup, withSession())
+	// Owner pages (redirect to /login without a session) and link pages.
 	s.handle(mux, "GET /inbox", s.handleInbox, withSession())
 	s.handle(mux, "GET /links", s.handleLinks, withSession())
 	s.handle(mux, "GET /s/{id}", s.handleSharePage, withLimiter(s.linkRL))
@@ -235,14 +220,6 @@ func (s *Server) routes() *http.ServeMux {
 	// The service worker's scope: reaching the server here means the worker
 	// was not active.
 	s.handle(mux, "GET /_dl/{path...}", s.handleDLFallback)
-
-	// Passkeys (session required; begin/finish are rate-limited per session).
-	s.handle(mux, "POST /api/passkeys/register/begin", s.passkeys.RegisterBegin, withSession())
-	s.handle(mux, "POST /api/passkeys/register/finish", s.passkeys.RegisterFinish, withSession())
-	s.handle(mux, "POST /api/passkeys/unlock/begin", s.passkeys.UnlockBegin, withSession())
-	s.handle(mux, "POST /api/passkeys/unlock/finish", s.passkeys.UnlockFinish, withSession())
-	s.handle(mux, "GET /api/passkeys", s.passkeys.List, withSession())
-	s.handle(mux, "DELETE /api/passkeys/{id}", s.passkeys.Delete, withSession())
 
 	// Shares (flow A).
 	s.handle(mux, "POST /api/shares", s.handleCreateShare, withSession())
@@ -268,7 +245,7 @@ func (s *Server) routes() *http.ServeMux {
 	s.handle(mux, "POST /upload/{upload_id}/finalize", s.handleFinalize, withLimiter(s.uploadRL))
 
 	// Downloads: the write deadline slides while the body flows (up to
-	// 100 GB). Inbox tokens also need the owner's unlocked session.
+	// 100 GB). Inbox tokens also need the owner's session.
 	s.handle(mux, "GET /dl/{token}", s.handleDownload, withLimiter(s.dlRL), withSession(),
 		withDeadlines(defaultReadDeadline, blob.WriteTimeout), withStreamCap())
 

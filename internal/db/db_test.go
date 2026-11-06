@@ -66,8 +66,8 @@ func TestOpenMigratesAndPragmas(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if n != 12 {
-		t.Errorf("expected 12 tables, got %d", n)
+	if n != 8 {
+		t.Errorf("expected 8 tables, got %d", n)
 	}
 }
 
@@ -212,5 +212,100 @@ func TestBackup(t *testing.T) {
 	var n int
 	if err := b.R.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("backup content: %d %v", n, err)
+	}
+}
+
+// Schema v4 drops the passkey tables and columns, and with them every request
+// link and received file, whose keys only the passkeys could unwrap.
+func TestMigrationRemovesPasskeys(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "v3.db")
+	raw, err := sql.Open("sqlite", dsn(path, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw.SetMaxOpenConns(1)
+	v3 := &DB{W: raw, path: path}
+	ms, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx, `CREATE TABLE schema_version (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL) STRICT`); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms[:3] {
+		if _, err := raw.ExecContext(ctx, m.sql); err != nil {
+			t.Fatal(m.name, err)
+		}
+		if _, err := raw.ExecContext(ctx, `INSERT INTO schema_version VALUES (?, ?, 0)`, m.version, m.name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	uid, sid := strings.Repeat("u", 22), make([]byte, 32)
+	shareBlob, inboxBlob, rid := strings.Repeat("a", 22), strings.Repeat("b", 22), strings.Repeat("r", 22)
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO users (id, issuer, subject, created_at, webauthn_handle) VALUES (?, 'i', 's', 0, ?)`, []any{uid, make([]byte, 32)}},
+		{`INSERT INTO sessions (id_hash, user_id, created_at, last_seen_at, revalidated_at, unlocked_at) VALUES (?, ?, 0, 0, 0, 0)`, []any{sid, uid}},
+		{`INSERT INTO passkeys (id, user_id, credential, wrapped_privkey, created_at) VALUES (?, ?, x'00', x'00', 0)`, []any{make([]byte, 16), uid}},
+		{`INSERT INTO user_keys VALUES (?, ?)`, []any{uid, make([]byte, 32)}},
+		{`INSERT INTO webauthn_ceremonies VALUES (?, 'unlock', x'00', 0)`, []any{sid}},
+		{`INSERT INTO passkey_grants (session_hash, purpose, expires_at) VALUES (?, 'add', 0)`, []any{sid}},
+		{`INSERT INTO blobs (id, owner_id, parts, size, complete, created_at) VALUES (?, ?, 1, 17, 1, 0)`, []any{shareBlob, uid}},
+		{`INSERT INTO shares (id, owner_id, blob_id, size, meta, expires_at, created_at) VALUES (?, ?, ?, 17, x'01', 0, 0)`, []any{strings.Repeat("s", 22), uid, shareBlob}},
+		{`INSERT INTO requests (id, owner_id, expires_at, max_files, max_bytes, created_at) VALUES (?, ?, 0, 1, 17, 0)`, []any{rid, uid}},
+		{`INSERT INTO blobs (id, owner_id, parts, size, complete, created_at) VALUES (?, ?, 1, 17, 1, 0)`, []any{inboxBlob, uid}},
+		{`INSERT INTO inbox (id, request_id, owner_id, blob_id, size, meta, wrapped_key, created_at) VALUES (?, ?, ?, ?, 17, x'01', ?, 0)`, []any{strings.Repeat("i", 22), rid, uid, inboxBlob, make([]byte, 80)}},
+		{`INSERT INTO dl_tokens (token_hash, blob_id, expires_at) VALUES (?, ?, 0)`, []any{make([]byte, 32), inboxBlob}},
+	} {
+		if _, err := raw.ExecContext(ctx, q.sql, q.args...); err != nil {
+			t.Fatal(q.sql, err)
+		}
+	}
+	if v, err := v3.SchemaVersion(ctx); err != nil || v != 3 {
+		t.Fatalf("version %d %v", v, err)
+	}
+	_ = raw.Close()
+
+	d, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = d.Close() }()
+	count := func(q string) int {
+		t.Helper()
+		var n int
+		if err := d.R.QueryRowContext(ctx, q).Scan(&n); err != nil {
+			t.Fatal(q, err)
+		}
+		return n
+	}
+	for _, tbl := range []string{"passkeys", "user_keys", "webauthn_ceremonies", "passkey_grants"} {
+		if count(`SELECT count(*) FROM sqlite_schema WHERE name = '`+tbl+`'`) != 0 {
+			t.Errorf("table %s not dropped", tbl)
+		}
+	}
+	for _, col := range []string{"users.webauthn_handle", "sessions.unlocked_at", "sessions.rotated_from"} {
+		tbl, name, _ := strings.Cut(col, ".")
+		if count(`SELECT count(*) FROM pragma_table_info('`+tbl+`') WHERE name = '`+name+`'`) != 0 {
+			t.Errorf("column %s not dropped", col)
+		}
+	}
+	for q, want := range map[string]int{
+		`SELECT count(*) FROM requests`:                             0,
+		`SELECT count(*) FROM inbox`:                                0,
+		`SELECT count(*) FROM dl_tokens`:                            0,
+		`SELECT count(*) FROM blobs WHERE id = '` + inboxBlob + `'`: 0,
+		`SELECT count(*) FROM blobs WHERE id = '` + shareBlob + `'`: 1,
+		`SELECT count(*) FROM shares`:                               1,
+		`SELECT count(*) FROM users`:                                1,
+		`SELECT count(*) FROM sessions`:                             1,
+	} {
+		if got := count(q); got != want {
+			t.Errorf("%s = %d, want %d", q, got, want)
+		}
 	}
 }

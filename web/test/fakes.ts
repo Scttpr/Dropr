@@ -1,10 +1,12 @@
 /**
  * In-process fakes for the browser modules: a fake `fetch` routed to
- * handlers (an in-memory Dropr server), fake Blobs and sinks.
+ * handlers (an in-memory Dropr server), fake Blobs and sinks, an in-memory
+ * key store.
  */
 
 import type { FetchFn } from "../src/lib/api.ts";
 import type { DownloadSink } from "../src/lib/downloader.ts";
+import type { KeyBackend, RequestKeyRecord } from "../src/lib/request-keys.ts";
 
 export interface FakeRequest {
   readonly method: string;
@@ -129,4 +131,32 @@ export function pseudoRandom(n: number, seed = 1): Uint8Array<ArrayBuffer> {
     out[i] = x & 0xff;
   }
   return out;
+}
+
+/** In-memory key store backend (Node has no IndexedDB). `fail` makes the next calls throw it. */
+export function memoryKeyBackend(): KeyBackend & { records: Map<string, unknown>; fail: unknown } {
+  const b = {
+    records: new Map<string, unknown>(),
+    fail: undefined as unknown,
+    check() {
+      if (b.fail !== undefined) throw b.fail;
+    },
+    async put(record: RequestKeyRecord) {
+      b.check();
+      b.records.set(record.id, record);
+    },
+    async get(id: string) {
+      b.check();
+      return b.records.get(id);
+    },
+    async getAll() {
+      b.check();
+      return [...b.records.values()];
+    },
+    async delete(ids: readonly string[]) {
+      b.check();
+      for (const id of ids) b.records.delete(id);
+    },
+  };
+  return b;
 }

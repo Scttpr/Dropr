@@ -24,7 +24,7 @@
   <a class="brand" href="/"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.5c-.4 0-.8.2-1.1.5C8.3 6 5 10.3 5 14a7 7 0 0 0 14 0c0-3.7-3.3-8-5.9-11-.3-.3-.7-.5-1.1-.5Z"/></svg><span>Dropr</span></a>
   {{- if .User}}
   <nav class="site-nav" aria-label="{{t "Main"}}">
-    {{- if and (ne .Page "setup") (ne .Page "forbidden")}}
+    {{- if ne .Page "forbidden"}}
     <ul class="nav-links">
       <li><a href="/"{{if eq .Page "dashboard"}} aria-current="page"{{end}}>{{t "Home"}}</a></li>
       <li><a href="/inbox"{{if eq .Page "inbox"}} aria-current="page"{{end}}>{{t "Received files"}}</a></li>

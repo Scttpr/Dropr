@@ -53,8 +53,6 @@ export function messageForStatus(status: number, code = "", { t }: Locale = loca
       return t.statusExhausted;
     case "revoked":
       return t.statusClosed;
-    case "locked":
-      return t.statusLocked;
     case "quota_exceeded":
       return t.statusQuota;
     case "too_large":
@@ -149,21 +147,6 @@ export interface InboxEntry {
   /** HPKE `enc ‖ ct`, base64url (80 bytes decoded). */
   readonly wrapped_key: string;
 }
-export interface PasskeySummary {
-  readonly id: string;
-  readonly created_at: number;
-  readonly last_used_at: number | null;
-}
-/** What a passkey assertion is for (ARCHITECTURE.md §3 "Passkeys"). */
-export type UnlockPurpose = { readonly kind: "unlock" } | { readonly kind: "add" } | { readonly kind: "delete"; readonly passkeyId: string };
-
-export interface UnlockResult {
-  /** base64url `iv ‖ GCM(...)`. */
-  readonly wrapped_privkey: string;
-  readonly credential_id: string;
-  /** Optional: the WebAuthn user handle (base64url), used if the authenticator omits it. */
-  readonly user_handle?: string;
-}
 export interface UploadStatus {
   readonly parts_present: readonly number[];
 }
@@ -180,7 +163,6 @@ export interface NewRequest {
   readonly max_files: number;
   readonly max_bytes: number;
   readonly single_use: boolean;
-  readonly label_meta?: string;
 }
 export interface NewRequestFile {
   readonly size: number;
@@ -387,50 +369,6 @@ export class Api {
     } catch {
       throw bad("not JSON");
     }
-  }
-
-  // --- Passkeys ------------------------------------------------------------
-
-  /**
-   * WebAuthn creation options as produced by go-webauthn (`{publicKey: {...}}`)
-   * plus `confirm.challenge`, the server challenge the new credential asserts
-   * over right after `create()` (required for the account's first passkey).
-   * Once the account has a passkey, the session needs an "add" grant
-   * ({@link unlockBegin} with purpose "add"), else 403 `reauth_required`.
-   */
-  registerBegin(o: CallOptions = {}): Promise<unknown> {
-    return this.json({ ...o, method: "POST", path: "/api/passkeys/register/begin", json: {} });
-  }
-  async registerFinish(
-    body: { credential: unknown; wrapped_privkey: string; pubkey: string; confirm?: unknown },
-    o: CallOptions = {},
-  ): Promise<void> {
-    await this.json({ ...o, method: "POST", path: "/api/passkeys/register/finish", json: body });
-  }
-  /**
-   * WebAuthn assertion options as produced by go-webauthn: `{publicKey: {...}}`.
-   * `purpose` "add" or "delete" (with the passkey ID) makes the assertion
-   * leave a single-use, 5-minute grant for that action on the session.
-   */
-  unlockBegin(o: CallOptions & { readonly purpose?: UnlockPurpose } = {}): Promise<unknown> {
-    const { purpose: p, ...call } = o;
-    const json = p === undefined ? {} : p.kind === "delete" ? { purpose: "delete", passkey_id: p.passkeyId } : { purpose: p.kind };
-    return this.json({ ...call, method: "POST", path: "/api/passkeys/unlock/begin", json });
-  }
-  async unlockFinish(body: { credential: unknown }, o: CallOptions = {}): Promise<UnlockResult> {
-    const r = obj(await this.json({ ...o, method: "POST", path: "/api/passkeys/unlock/finish", json: body }), "unlock");
-    const out: UnlockResult = { wrapped_privkey: str(r, "wrapped_privkey"), credential_id: str(r, "credential_id") };
-    return typeof r["user_handle"] === "string" ? { ...out, user_handle: r["user_handle"] } : out;
-  }
-  async listPasskeys(o: CallOptions = {}): Promise<PasskeySummary[]> {
-    const x = await this.json({ ...o, method: "GET", path: "/api/passkeys" });
-    return list(x, "passkeys").map((p) => {
-      const r = obj(p, "passkey");
-      return { id: str(r, "id"), created_at: int(r, "created_at"), last_used_at: intOrNull(r, "last_used_at") };
-    });
-  }
-  async deletePasskey(id: string, o: CallOptions = {}): Promise<void> {
-    await this.json({ ...o, method: "DELETE", path: `/api/passkeys/${seg(id)}` });
   }
 
   // --- Shares --------------------------------------------------------------

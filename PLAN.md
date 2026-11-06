@@ -21,20 +21,21 @@ Non-goals: local accounts, public sign-up, folders, previews, comments, editing,
 |---|---|
 | Identity | Generic OIDC is the **only** way to log in. No local accounts, no fallback admin login. |
 | Supported provider | Microsoft Entra ID is officially supported, with a setup guide and release testing. Other compliant providers (Keycloak, Authentik, Okta, ...) should work but are best-effort. Keycloak is used in CI. |
-| Inbox key | A passkey with the WebAuthn PRF extension unlocks the user's end-to-end private key. OIDC proves identity; the passkey protects the data. |
+| Request link key | Each request link has its own X25519 key pair, generated in the owner's browser when the link is created. The private key stays in that browser (IndexedDB, non-extractable). OIDC proves identity; the browser profile holds the keys. |
 | Users | Several accounts per instance. Access is granted by a role claim from the provider (in Entra, an app role). A file belongs to exactly one owner. |
 | File size | Configurable per instance and per request link. Default 5 GB, hard maximum 100 GB. |
-| Lost passkeys | All passkeys lost = inbox files unreadable. Accepted. The UI requires registering ≥2 passkeys. |
+| Lost browser data | Files received through a link open only in the browser profile that created it. Clearing that site's data, or losing the device, makes them unreadable. Accepted. The UI says so where links are created and listed. |
 | Backend language | Go |
-| Architecture | **Monolith**: one Go binary serves the HTML pages, the API and the static assets, all embedded with `go:embed`. Pages are rendered on the server. The only browser JavaScript is what must run client-side: encryption, passkeys, streaming transfers. |
+| Architecture | **Monolith**: one Go binary serves the HTML pages, the API and the static assets, all embedded with `go:embed`. Pages are rendered on the server. The only browser JavaScript is what must run client-side: encryption, request link keys, streaming transfers. |
 | Hosting | Self-hosted, one container, one data volume, on a domain you own. HTTPS is built in (ACME), or the app can run behind an existing reverse proxy. |
 
 ## 3. Cryptography (server never sees plaintext)
 
 - **Share link (A)**: the browser generates a random 256-bit key. File content and metadata (name, type) are encrypted with it. The key is placed in the URL fragment: `https://host/s/<id>#<key>`. Browsers never send the fragment to the server.
-- **Request link (B)**: each owner has an X25519 key pair. The request link carries the owner's public key in its fragment. The uploader encrypts a random file key to it with HPKE (RFC 9180, DHKEM-X25519 / HKDF-SHA256 / AES-256-GCM).
-- **Owner private key**: wrapped with a key derived from the **WebAuthn PRF extension** (HKDF over the PRF output) and stored server-side only in wrapped form. Every registered passkey wraps its own copy. The unwrapped key lives only in browser memory, as a non-extractable `CryptoKey`.
-- **Public key trust**: when creating a request link, the browser derives the public key from the unlocked private key. It never takes it from the server, so a compromised server can't swap in its own key.
+- **Request link (B)**: each request link has its own X25519 key pair, generated in the owner's browser when the link is created. The link carries the public key in its fragment: `https://host/r/<id>#<pubkey>`. The uploader encrypts a random file key to it with HPKE (RFC 9180, DHKEM-X25519 / HKDF-SHA256 / AES-256-GCM).
+- **Link private key**: generated non-extractable and stored as a `CryptoKey` in the browser's IndexedDB. It never leaves that browser profile, and no script, Dropr's included, can export it. The server never sees or stores either half of the pair.
+- **Public key trust**: the link's public key comes from the browser that generated it, never from the server, so a compromised server can't swap in its own key.
+- **Trade-off**: received files open only in the browser profile that created the link. Clearing that site's data or losing the device loses them. In exchange, neither the operator nor someone holding only the owner's provider login can read them.
 - **Stream format**: STREAM construction (as used by age and Tink). AES-256-GCM over 64 KiB plaintext segments, with nonce = prefix ‖ 32-bit counter ‖ last-segment flag. This blocks truncation, reordering and splicing. The 32-bit counter allows files up to 256 TB, far above the 100 GB cap.
 - **Primitives**: WebCrypto only (AES-GCM, X25519, HKDF). No custom primitives. Validate against published test vectors.
 
@@ -80,7 +81,7 @@ revalidate_every = "15m"
 - **Revalidation**: the server stores the refresh token (AES-256-GCM encrypted at rest) and refreshes it every `revalidate_every`. The new ID token must pass all checks above, carry the same `sub`, and still have the role. If the refresh fails or any check fails, the session is killed. Providers refuse refresh tokens for disabled users and revoked sessions.
 - **Logout**: ends the local session, then RP-initiated logout via the discovered `end_session_endpoint` when the provider has one. Front-channel logout is also supported when the provider offers it.
 - **Provisioning**: an account is created just-in-time on first successful login. Removing the role blocks access. The data stays until an admin purges it.
-- **Changing provider**: changes every user's `(iss, sub)`. `dropr user migrate --from-issuer ... --map file.csv` relinks existing accounts, their passkeys and their data to the new identities.
+- **Changing provider**: changes every user's `(iss, sub)`. `dropr user migrate --from-issuer ... --map file.csv` relinks existing accounts and their data to the new identities.
 
 ### 5.1.1 Microsoft Entra ID (officially supported)
 
@@ -97,19 +98,19 @@ revalidate_every = "15m"
 - **Authentik / Authelia**: `role_claim = "groups"`.
 - Any provider must support discovery, PKCE, refresh tokens and, in production, `private_key_jwt`. Dropr refuses to start in production mode otherwise.
 
-### 5.2 Passkey (step-up for the inbox)
+### 5.2 Request link keys (browser only)
 
-- **First login**: the user must register 2 passkeys (resident keys, `userVerification: required`, PRF required). This creates and wraps their X25519 key pair.
-- **Unlock**: required to create a request link or open received files. The server checks a passkey assertion bound to the current OIDC session before releasing the wrapped key. PRF output never leaves the browser.
+- **No setup step**: the first login lands on the dashboard. There is no key endpoint and no unlock.
+- **Creation**: the dashboard generates the link's key pair, creates the request on the server, then stores the private key in IndexedDB under the request ID. If storing fails, the browser deletes the new request: a link is never handed out without its key. It also asks for persistent storage so the browser does not evict the keys.
+- **Use**: the inbox opens each received file with the key of its link. Files received through a link created in another browser are listed without a name and cannot be downloaded there; they can still be deleted.
+- **Cleanup**: revoking a link deletes its key. Keys of links that expired or were revoked elsewhere are pruned when the link list loads.
 - Flow A (upload and share) needs OIDC only.
-- RP ID = the instance domain. **Changing the domain invalidates every passkey**, so choose the domain once.
-- Browsers without PRF support get a clear error.
 
 ### 5.3 Sessions
 
 - Server-side sessions with a `__Host-` cookie, `Secure; HttpOnly; SameSite=Strict`. The cookie holds a random 256-bit ID; the database stores only its SHA-256 hash.
 - 30 min idle timeout, 8 h absolute timeout, plus OIDC revalidation every 15 min.
-- The session ID rotates at login and again at passkey unlock.
+- The session ID rotates at login.
 
 ### 5.4 Admin CLI
 
@@ -117,7 +118,6 @@ Admin access is shell access to the host. There is no admin web UI.
 
 - `dropr user list`
 - `dropr user revoke <user>`: kills all sessions now
-- `dropr user reset-keys <user>`: wipes passkeys and the key pair. The inbox becomes unreadable.
 - `dropr user purge <user>`: deletes the user and all their data
 - `dropr gc`
 
@@ -149,11 +149,11 @@ Admin access is shell access to the host. There is no admin web UI.
 
 | Layer | Choice |
 |---|---|
-| Backend | Go, single static binary. Standard library plus `coreos/go-oidc/v3`, `golang.org/x/oauth2`, `go-webauthn/webauthn`, `modernc.org/sqlite` (pure Go). |
+| Backend | Go, single static binary. Standard library plus `coreos/go-oidc/v3`, `golang.org/x/oauth2`, `modernc.org/sqlite` (pure Go). |
 | Database | SQLite, WAL mode |
 | Blobs | Local disk volume |
 | Pages | Server-rendered with Go `html/template` (contextual auto-escaping). No inline scripts or styles, so the strict CSP holds. Every page works as a plain HTML document; JS only adds the crypto parts. |
-| Browser code | A few small TypeScript modules, no framework, bundled with esbuild and embedded in the binary: `crypto` (STREAM, HPKE, key wrapping), `upload`, `download` (+ service worker), `passkey`, `decrypt-names` (fills in encrypted filenames on the inbox and share pages). |
+| Browser code | A few small TypeScript modules, no framework, bundled with esbuild and embedded in the binary: `crypto` (STREAM, HPKE), `request-keys` (IndexedDB store of the link private keys), `upload`, `download` (+ service worker), `decrypt-names` (fills in encrypted filenames on the inbox and share pages). |
 | Deployment | One distroless container running as non-root, read-only root filesystem, one data volume (SQLite, blobs, ACME cache). Listens on 8443 inside the container, mapped to host port 443. |
 | Dev environment | Nix flake (Go, Node, esbuild). A dev Compose profile starts Keycloak with a seeded realm, so login works locally without a real tenant. |
 | CI | Go tests + fuzzing, browser-module tests, Playwright E2E against Keycloak |
@@ -162,9 +162,7 @@ Admin access is shell access to the host. There is no admin web UI.
 
 ```
 users     (id, issuer, subject, display_name, created_at, disabled_at)   -- UNIQUE(issuer, subject)
-sessions  (id_hash, user_id, refresh_token_enc, created_at, last_seen_at, revalidated_at, unlocked_at)
-passkeys  (id, user_id, credential, sign_count, wrapped_privkey, created_at, last_used_at)
-user_keys (user_id, pubkey)
+sessions  (id_hash, user_id, refresh_token_enc, created_at, last_seen_at, revalidated_at)
 shares    (id, owner_id, blob_id, size, expires_at, max_downloads, download_count)
 requests  (id, owner_id, expires_at, max_files, max_bytes, single_use, files_received)
 inbox     (id, request_id, owner_id, blob_id, size, created_at)
@@ -173,7 +171,7 @@ blobs     (id, parts, size, complete, created_at)
 
 ## 9. UX
 
-**Login**: one button, "Sign in" (the label is configurable, e.g. "Sign in with Microsoft"). On first login, a short guided step registers two passkeys.
+**Login**: one button, "Sign in" (the label is configurable, e.g. "Sign in with Microsoft"). Signing in lands straight on the dashboard.
 
 **Owner dashboard**
 ```
@@ -186,8 +184,8 @@ blobs     (id, parts, size, complete, created_at)
 └──────────────────────────────────────────┘
 ```
 - After an upload: a progress bar (resumable), then the link with **Copy**, the expiry (7 days preselected) and a QR code.
-- Asking for a file or opening Received files prompts once for the passkey ("Unlock your inbox").
-- Received: name, size, date, **Download** and **Delete**.
+- After creating a request link: the link with **Copy**, and a note that files sent through it open only in this browser.
+- Received: name, size, date, **Download** and **Delete**. Files received through a link created in another browser show size, date and **Delete** only.
 
 **Share recipient**: filename, size, a big **Download** button, "Expires in 6 days". No login.
 
@@ -207,16 +205,16 @@ Errors are written in plain language: "This link has expired."
 - **Keycloak example config** shipped as a reference (best-effort, also used in CI).
 - `docker compose up -d`. One service, plus `dropr.toml` (`public_url`, `tls`, the `[oidc]` section) and the secrets files. Running the binary directly (for example as a systemd service) works too.
 - On startup, Dropr checks provider discovery and its capabilities (PKCE S256, `private_key_jwt`, refresh tokens). In production mode it refuses to start if any check fails.
-- Backups: back up SQLite (online backup API) and the blob volume. Blobs are already encrypted. The database holds wrapped keys and encrypted refresh tokens, so protect it.
+- Backups: back up SQLite (online backup API) and the blob volume. Blobs are already encrypted. The database holds encrypted refresh tokens and HPKE-wrapped file keys, so protect it. Request link private keys are not on the server: they live in the owners' browser profiles, outside any server backup.
 - Updates: pinned image digests and a signed release tag.
 
 ## 11. Milestones
 
 1. **Skeleton**: Go module, config, SQLite migrations, TLS modes (ACME + proxy), `html/template` layout and asset embedding, security-header middleware, generic OIDC login/logout/revalidation, sessions, the dev Keycloak profile. Automated tests against Keycloak, plus a manual check against a real Entra test tenant.
-2. **Crypto core**: STREAM and HPKE in TypeScript, PRF key wrapping. Test vectors plus property tests (round-trip, truncation, reordering, tampering).
-3. **Passkeys**: registration (×2), step-up unlock, wrapped-key storage.
+2. **Crypto core**: STREAM and HPKE in TypeScript. Test vectors plus property tests (round-trip, truncation, reordering, tampering).
+3. **Request link keys**: a key pair per request link, generated in the browser, private key non-extractable in IndexedDB. (First built with passkeys and the WebAuthn PRF extension; replaced, see ARCHITECTURE.md §2.)
 4. **Files**: share/request APIs, chunked resumable uploads, Range downloads, expiry cleanup, quotas, rate limits.
-5. **Pages + browser modules**: server-rendered dashboard, share page, request page and inbox, wired to the upload, download, passkey and filename-decryption modules. Streaming downloads through File System Access or the service worker.
+5. **Pages + browser modules**: server-rendered dashboard, share page, request page and inbox, wired to the upload, download, request-key and filename-decryption modules. Streaming downloads through File System Access or the service worker.
 6. **Hardening and tests**: Go native fuzzing, `govulncheck`, `npm audit`, Mozilla Observatory. Playwright E2E for both flows in Chromium, Firefox and WebKit. Negative cases: expired, revoked, oversized, tampered, truncated, wrong key, role removed, wrong issuer/audience/nonce, `alg: none` / HS256 tokens. A 100 GB soak test.
 7. **Release**: THREAT_MODEL.md, Entra setup guide, Keycloak example, a release check against Entra, reproducible build, Compose file, external review before real use.
 
@@ -225,11 +223,12 @@ Errors are written in plain language: "This link has expired."
 | Attacker | Outcome |
 |---|---|
 | Network | TLS 1.3 + HSTS. Nothing readable. |
-| Database or disk theft | Ciphertext, sizes, timestamps, wrapped keys, encrypted refresh tokens. No plaintext, no filenames. |
-| Stolen provider credentials | Attacker can share new files and see link metadata, but **cannot read the inbox** without the passkey. Mitigated by MFA at the provider (Conditional Access in Entra). |
+| Database or disk theft | Ciphertext, sizes, timestamps, HPKE-wrapped file keys, encrypted refresh tokens. No plaintext, no filenames, no private keys. |
+| Stolen provider credentials | Attacker can share new files and see link metadata, but **cannot read the inbox** without the owner's browser profile. Mitigated by MFA at the provider (Conditional Access in Entra). |
 | Departed user | Role removed or account disabled at the provider, so the session dies within 15 min. `dropr user revoke` for immediate effect. |
 | Link interception | Whoever holds a share link can read the file until expiry or revocation. Use short expiry and download limits. |
 | Malicious uploader | Can only reach owners through their request links. Bounded by caps. Files are never rendered. |
 | Compromised server serving malicious JS | **Residual risk** of browser E2E. Mitigated by minimal dependencies, reproducible builds and published hashes. |
-| Compromised OIDC provider | Attacker can log in as any user but still cannot read inboxes without passkeys. |
-| Lost passkeys | Inbox data is lost by design. |
+| Compromised OIDC provider | Attacker can log in as any user but still cannot read inboxes without the owners' browser profiles. |
+| Control of the owner's browser profile | Device access, malware or XSS can *use* the link keys stored there to open received files, but cannot export them. Protected by the OS account and disk encryption. |
+| Lost browser data | Clearing the site's data or losing the device makes files received through that browser's links unreadable, by design. |
