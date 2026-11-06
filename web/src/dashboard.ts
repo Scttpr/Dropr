@@ -132,10 +132,9 @@ function initShare(main: HTMLElement): void {
       panel.finish(t.uploadReady);
       bumpCount("link-count");
       showLink(
-        { container: "share-result", input: "share-link", copy: "share-copy", expiry: "share-expiry", qr: "share-qr" },
+        { container: "share-result", input: "share-link", copy: "share-copy", expiry: "share-expiry" },
         url,
         expiryChoiceText(expiresIn),
-        t.shareQrLabel,
       );
     } catch (e) {
       if (!isAbortError(e)) notice.error(e);
@@ -213,10 +212,9 @@ function initRequest(main: HTMLElement): void {
       notice.status(t.requestReady);
       bumpCount("link-count");
       showLink(
-        { container: "request-result", input: "request-link", copy: "request-copy", expiry: "request-expiry", qr: "request-qr" },
+        { container: "request-result", input: "request-link", copy: "request-copy", expiry: "request-expiry" },
         url,
         expiryChoiceText(expiresIn),
-        t.requestQrLabel,
       );
     } catch (e) {
       notice.status("");

@@ -82,10 +82,8 @@ export const en = {
   downloadLimitInvalid: "The download limit must be a whole number of at least 1, or empty for no limit.",
   maxFilesInvalid: "The number of files must be a whole number of at least 1.",
   uploadReady: "Upload complete. Your link is ready.",
-  shareQrLabel: "QR code of the share link",
   creatingRequest: "Creating the request link…",
   requestReady: "Your request link is ready.",
-  requestQrLabel: "QR code of the request link",
 
   // ---- Share recipient -------------------------------------------------
   missingKey: "This link is missing its key (the part after #). Ask the sender for the complete link.",

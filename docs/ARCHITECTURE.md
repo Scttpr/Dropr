@@ -42,7 +42,7 @@ internal/jobs/            cleanup ticker (5 min) and its tasks
 web/                      TypeScript browser modules (esbuild), zero runtime dependencies
   src/crypto/             stream, hpke, kdf, meta, filekey, requestkey, b64 (pure, WebCrypto only)
   src/lib/                api, uploader, downloader, swproto, request-keys (IndexedDB), i18n + locales/,
-                          dropzone, progress, qr, format, …
+                          dropzone, progress, format, …
   src/*.ts                page entry points: dashboard, links, inbox, share, request, prefs; sw (service worker)
   scripts/                build.ts (hashed bundles + manifest.json), bench.ts
   test/                   node --test unit and property tests, vectors/ (FORMAT.md test vectors)
@@ -56,7 +56,7 @@ Go: stdlib-first. Direct dependencies: `coreos/go-oidc/v3`, `golang.org/x/oauth2
 `golang.org/x/crypto` (autocert), `golang.org/x/time/rate`, `modernc.org/sqlite`,
 `BurntSushi/toml`. Logging with `log/slog`. Browser: zero runtime
 dependencies; dev dependencies are only `typescript`, `esbuild` and
-`@types/node` (the QR encoder is vendored in `web/src/lib/qr.ts`), plus
+`@types/node`, plus
 `@playwright/test` in `e2e/`.
 
 ## 2. Encrypted format (normative summary; full spec in docs/FORMAT.md)
@@ -445,8 +445,8 @@ scope; a root-scope registration is refused).
 - Web: `npm test` runs node's test runner (`node --test`, TypeScript run
   natively) against WebCrypto in Node 24 (X25519, HKDF, AES-GCM): crypto
   modules against the FORMAT.md vectors, plus the uploader, downloader,
-  service-worker protocol, request-key store, API client, QR encoder and
-  formatting. `npm run typecheck` covers pages, worker and tests.
+  service-worker protocol, request-key store, API client and formatting.
+  `npm run typecheck` covers pages, worker and tests.
 - E2E (`make e2e`): Playwright in Chromium, Firefox and WebKit (browsers from
   nixpkgs) against the dev Keycloak: both flows, resume, tampering, expiry,
   revocation, download limits, roles, CSRF, headers, accessibility, request

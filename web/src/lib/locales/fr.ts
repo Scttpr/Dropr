@@ -113,10 +113,8 @@ export const fr: Messages = {
   downloadLimitInvalid: "La limite de téléchargements doit être un nombre entier d'au moins 1, ou rester vide pour aucune limite.",
   maxFilesInvalid: "Le nombre de fichiers doit être un nombre entier d'au moins 1.",
   uploadReady: "Envoi terminé. Votre lien est prêt.",
-  shareQrLabel: "QR code du lien de partage",
   creatingRequest: "Création du lien de dépôt…",
   requestReady: "Votre lien de dépôt est prêt.",
-  requestQrLabel: "QR code du lien de dépôt",
 
   // ---- Share recipient ---------------------------------------------------
   missingKey: "Il manque la clé de ce lien (la partie après #). Demandez le lien complet à l'expéditeur.",
