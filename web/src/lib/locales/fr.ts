@@ -68,7 +68,7 @@ export const fr: Messages = {
   },
   statusExpired: "Ce lien a expiré.",
   statusExhausted: "Ce lien a atteint sa limite de téléchargements.",
-  statusClosed: "Ce lien a été révoqué par son propriétaire.",
+  statusClosed: "Ce lien n'accepte plus de fichiers.",
   statusQuota: "Il n'y a plus assez d'espace de stockage pour ce fichier.",
   statusTooLarge: "Ce fichier est trop volumineux.",
   statusNetwork: "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",

@@ -25,6 +25,8 @@ describe("ApiError mapping", () => {
     assert.equal(long.message, messageForStatus(400));
     const coded = await errorFromResponse(jsonResponse(410, { error: "exhausted" }));
     assert.equal(coded.message, "This link has reached its download limit.");
+    const closed = await errorFromResponse(jsonResponse(410, { error: "closed" }));
+    assert.equal(closed.message, "This link no longer accepts files.");
   });
 
   it("flags transient errors as retryable", async () => {
