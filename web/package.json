@@ -1,0 +1,21 @@
+{
+  "name": "dropr-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Dropr browser modules (end-to-end encryption, transfers). Zero runtime dependencies.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.sw.json && tsc -p test/tsconfig.json",
+    "test": "node --test --test-reporter=spec \"test/**/*.test.ts\"",
+    "build": "node scripts/build.ts",
+    "bench": "node scripts/bench.ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}
