@@ -179,8 +179,10 @@ function initRequest(main: HTMLElement): void {
       notice.error(t.ownerUnknown);
       return;
     }
+    const singleUse = maybeId("request-single-use", HTMLInputElement)?.checked ?? false;
     const maxFilesInput = maybeId("request-max-files", HTMLInputElement);
-    const parsed = optionalPositiveInt(maxFilesInput);
+    const parsed = singleUse ? 1 : optionalPositiveInt(maxFilesInput);
+    // A single-use link closes on its first file, whatever the field says.
     const maxFiles = parsed === undefined ? 10 : parsed;
     if (maxFiles === null) {
       notice.error(t.maxFilesInvalid);
@@ -188,7 +190,6 @@ function initRequest(main: HTMLElement): void {
       return;
     }
     const expiresIn = expiryFrom(maybeId("request-expires-in", HTMLSelectElement), defaultExpiry);
-    const singleUse = maybeId("request-single-use", HTMLInputElement)?.checked ?? false;
     if (submit) submit.disabled = true;
     try {
       notice.status(t.creatingRequest);

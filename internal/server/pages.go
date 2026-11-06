@@ -156,6 +156,10 @@ func (s *Server) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 		s.deadLink(w, r, http.StatusGone, msgLinkClosed)
 		return
 	}
+	// A single-use link closes on its first finalized file: offer only one.
+	if rq.SingleUse {
+		files = 1
+	}
 	owner, err := s.store.UserByID(ctx, rq.OwnerID)
 	if err != nil {
 		s.serverError(w, r, "request owner", err)

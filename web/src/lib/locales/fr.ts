@@ -134,6 +134,7 @@ export const fr: Messages = {
   filesTooLarge: (total, left) => `Ces fichiers sont trop volumineux (${total}). Ce lien accepte encore jusqu'à ${left}.`,
   sentItem: (name, size) => `${name} (${size}) — envoyé`,
   cancelledAfter: (sent) => `Annulé. ${sent} ${p(sent, "fichier avait déjà été envoyé", "fichiers avaient déjà été envoyés")}.`,
+  cancelledReserved: "Le lien garde la place du fichier annulé pendant 24 heures au plus.",
   errorAfter: (message, sent) =>
     `${message} ${sent} ${p(sent, "fichier avait été envoyé", "fichiers avaient été envoyés")} avant l'erreur.`,
 
@@ -171,6 +172,10 @@ export const fr: Messages = {
   requestLinkLabel: (date) => `lien de dépôt créé le ${date}`,
   countOf: (n, max) => `${n} sur ${max}`,
   singleUse: " (usage unique)",
+  limitReached: "Limite atteinte",
+  limitReachedHint: `Ce lien ne fonctionne plus. Son fichier est conservé, et compte dans votre espace de stockage, jusqu'à l'expiration du lien${nb}: révoquez-le pour supprimer le fichier dès maintenant.`,
+  linkClosed: "Fermé",
+  linkClosedHint: "Ce lien n'accepte plus de fichiers. Les fichiers reçus restent dans Fichiers reçus jusqu'à l'expiration du lien.",
   copyLink: "Copier le lien",
   copyLinkNamed: (label) => `Copier le ${label}`,
   otherBrowser: "Autre navigateur",

@@ -12,7 +12,7 @@
  * @module
  */
 
-import { encodeRequestFragment, plaintextSize } from "./crypto/index.ts";
+import { TAG_SIZE, encodeRequestFragment, plaintextSize } from "./crypto/index.ts";
 import { type RequestSummary, type ShareSummary, api } from "./lib/api.ts";
 import { Notice, byId, copyText, el, focusTo, pageRoot, revealJsOnly } from "./lib/dom.ts";
 import { formatBytes, formatDate, formatExpiry } from "./lib/format.ts";
@@ -67,17 +67,26 @@ function init(main: HTMLElement): void {
     return b;
   }
 
+  /** A short note on a link that no longer works although it has not expired. */
+  function stateNote(text: string, hint: string): HTMLElement {
+    return el("span", { class: "muted state", text, attrs: { title: hint } });
+  }
+
   function shareRow(s: ShareSummary): HTMLTableRowElement {
     const label = t.shareLinkLabel(formatDate(s.created_at));
+    const exhausted = s.max_downloads !== null && s.download_count >= s.max_downloads;
     const tr = el("tr", { attrs: { "data-share-id": s.id } });
     tr.append(
       el("td", { class: "size", text: size(s.size) }),
       el("td", { class: "date", text: formatDate(s.created_at) }),
       el("td", { class: "expiry", text: formatExpiry(s.expires_at) }),
-      el("td", {
-        class: "downloads",
-        text: s.max_downloads === null ? String(s.download_count) : t.countOf(s.download_count, s.max_downloads),
-      }),
+      el(
+        "td",
+        { class: "downloads" },
+        s.max_downloads === null ? String(s.download_count) : t.countOf(s.download_count, s.max_downloads),
+        exhausted && " ",
+        exhausted && stateNote(t.limitReached, t.limitReachedHint),
+      ),
       el(
         "td",
         { class: "actions" },
@@ -107,16 +116,25 @@ function init(main: HTMLElement): void {
 
   function requestRow(r: RequestSummary, key: RequestKeyRecord | undefined): HTMLTableRowElement {
     const label = t.requestLinkLabel(formatDate(r.created_at));
+    // Same test as the server's uploader page: no room left for one more (empty) file.
+    const closed = r.closed || r.files_received >= r.max_files || r.max_bytes - r.bytes_received < TAG_SIZE;
     const tr = el("tr", { attrs: { "data-request-id": r.id } });
     tr.append(
       el("td", { class: "date", text: formatDate(r.created_at) }),
       el("td", { class: "expiry", text: formatExpiry(r.expires_at) }),
-      el("td", { class: "files", text: t.countOf(r.files_received, r.max_files) + (r.single_use ? t.singleUse : "") }),
+      el(
+        "td",
+        { class: "files" },
+        t.countOf(r.files_received, r.max_files) + (r.single_use ? t.singleUse : ""),
+        closed && " ",
+        closed && stateNote(t.linkClosed, t.linkClosedHint),
+      ),
       el(
         "td",
         { class: "actions" },
-        copyControl(r, key, label),
-        " ",
+        // A closed link is useless to whoever receives it: nothing to copy.
+        !closed && copyControl(r, key, label),
+        !closed && " ",
         revokeButton({ label, confirm: t.confirmRevokeRequest, done: t.requestRevoked }, () => revokeRequest(r.id), tr),
       ),
     );

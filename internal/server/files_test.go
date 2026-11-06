@@ -369,6 +369,9 @@ func TestRequestFlow(t *testing.T) {
 
 	// Single use: closes after the first finalized file.
 	single := o.createRequest(map[string]any{"expires_in": "1h", "max_files": 3, "max_bytes": 3 * smallSize, "single_use": true})
+	if resp, page := e.do(http.MethodGet, "/r/"+single, nil); resp.StatusCode != http.StatusOK || !strings.Contains(page, `data-max-files="1"`) {
+		t.Errorf("single-use page offers more than one file: %d", resp.StatusCode)
+	}
 	_, u1 := e.createRequestFile(single, smallSize)
 	_, u2 := e.createRequestFile(single, smallSize) // already reserved: may still finish
 	e.uploadAll(u1, randBytes(int(smallSize)))

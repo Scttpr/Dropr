@@ -102,6 +102,7 @@ export const en = {
   filesTooLarge: (total: string, left: string): string => `These files are too large (${total}). This link accepts up to ${left} more.`,
   sentItem: (name: string, size: string): string => `${name} (${size}) — sent`,
   cancelledAfter: (sent: number): string => `Cancelled. ${wasWere(sent)} sent before.`,
+  cancelledReserved: "The link keeps room for the cancelled file for up to 24 hours.",
   errorAfter: (message: string, sent: number): string => `${message} ${wasWere(sent)} sent before the error.`,
 
   // ---- Inbox -----------------------------------------------------------
@@ -135,6 +136,10 @@ export const en = {
   requestLinkLabel: (date: string): string => `request link created ${date}`,
   countOf: (n: number, max: number): string => `${n} of ${max}`,
   singleUse: " (single use)",
+  limitReached: "Limit reached",
+  limitReachedHint: "This link no longer works. Its file is kept, and counts against your storage, until the link expires: revoke it to delete the file now.",
+  linkClosed: "Closed",
+  linkClosedHint: "This link no longer accepts files. The files it received stay in Received files until the link expires.",
   copyLink: "Copy link",
   copyLinkNamed: (label: string): string => `Copy link: ${label}`,
   otherBrowser: "Other browser",

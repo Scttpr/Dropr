@@ -226,6 +226,8 @@ Required (if `request-form` exists; the section is optional): `request-form`
 Optional: `request-expires-in`, `request-max-files` (default 10),
 `request-single-use`, `request-create`, `request-status`, `request-expiry`,
 `request-hint` (server-rendered text, shown with the result), `request-qr`.
+When `request-single-use` is checked the JS sends `max_files: 1`, whatever
+`request-max-files` holds: the link closes on its first file.
 
 Submitting creates the link's key pair and the link (ARCHITECTURE.md §3
 "Request link keys"), in this order:
@@ -356,10 +358,19 @@ from `GET /api/shares` and `GET /api/requests`.
 All ids above are required (`*-list` are `<tbody>`) except `requests-note`
 (server-rendered text). Share rows: size, created, "Expires in …",
 "2 of 5" / "2", **Revoke**. Request rows: created, expiry,
-"1 of 10 (single use)", then, before **Revoke**: **Copy link** when this
+"1 of 1 (single use)", then, before **Revoke**: **Copy link** when this
 browser holds the link's key (the fragment is the stored public key, never a
 server value), otherwise `<span class="muted">Other browser</span>`. Share
 names are not shown (see §9).
+
+The lists hold every unexpired link, including links that no longer work:
+a share at its download limit gets `<span class="muted state">Limit
+reached</span>` in its downloads cell (its file stays, and counts against
+the quota, until expiry or Revoke), and a request link that is closed
+(`closed`, single use) or full (`files_received ≥ max_files`, or less than
+16 bytes left) gets `<span class="muted state">Closed</span>` in its files
+cell and no Copy link. Each `state` span carries a `title` explaining it.
+They are still counted in "Active links (N)".
 
 After `GET /api/requests` succeeds, the JS deletes the signed-in account's
 local keys of links no longer listed (expired, revoked, deleted elsewhere:
@@ -426,7 +437,7 @@ noscript:
 | Attribute | Required | Value |
 |---|---|---|
 | `data-request-id` | yes | the 22-char request id from the path |
-| `data-max-files` | no | files this link still accepts (`max_files − files_received`) |
+| `data-max-files` | no | files this link still accepts (`max_files − files_received`; `1` for a single-use link, which closes on its first file) |
 | `data-max-bytes` | no | plaintext bytes it still accepts (`max_bytes − bytes_received`) |
 
 The limits only give early, friendly errors; the server enforces them.
@@ -461,7 +472,9 @@ Required: `drop-zone`, `file-input` (`<input type=file multiple>`),
 Behaviour: the link's public key is in the URL fragment; without a valid
 fragment the drop zone is hidden and "This link is incomplete or damaged…"
 is shown. Files are sent one after the other; then `#upload-done` is shown
-and focused. Dead links: render the state server-side as for `/s/{id}`.
+and focused. Cancelling says that the link keeps room for the cancelled
+file for up to 24 hours (its reservation is released by the cleanup of
+stale uploads). Dead links: render the state server-side as for `/s/{id}`.
 
 noscript:
 
