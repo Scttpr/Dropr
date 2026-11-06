@@ -52,7 +52,7 @@ var pageCases = map[string]struct {
 		attrs: []string{`data-owner-id="UUUUUUUUUUUUUUUUUUUUUU"`, `data-max-file-size="5368709120"`, `data-default-expiry="1d"`, `data-max-request-bytes="5368710354"`},
 		ids: []string{"share-form", "drop-zone", "file-input", "upload-panel", "upload-progress", "upload-status",
 			"share-result", "share-link", "share-copy", "share-error", "request-form", "request-error",
-			"request-result", "request-link", "request-copy", "request-hint", "expires-in", "max-downloads", "share-qr", "request-qr"},
+			"request-result", "request-link", "request-copy", "request-hint", "expires-in", "max-downloads"},
 		text: []string{"Drop a file here to share", "Ask someone to send me a file", `Received files (<span id="inbox-count">3</span>)`, `Active links (<span id="link-count">2</span>)`,
 			`<option value="1d" selected>`, `action="/auth/logout"`},
 	},

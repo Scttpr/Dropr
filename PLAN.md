@@ -184,7 +184,7 @@ blobs     (id, parts, size, complete, created_at)
 │   Received files (3)    Active links (2) │
 └──────────────────────────────────────────┘
 ```
-- After an upload: a progress bar (resumable), then the link with **Copy**, the expiry (7 days preselected) and a QR code.
+- After an upload: a progress bar (resumable), then the link with **Copy** and the expiry (7 days preselected).
 - After creating a request link: the link with **Copy**, and a note that files sent through it open only in this browser.
 - Received: name, size, date, **Download** and **Delete**. Files received through a link created in another browser show size, date and **Delete** only.
 

@@ -73,7 +73,7 @@ The login page, error pages and the OIDC landing page load no page module
   to a sensible control after deletions. It never animates; CSS should honour
   `prefers-reduced-motion` for any transitions it adds.
 - JS-built content uses these class hooks: `danger` (destructive buttons),
-  `qr` (the SVG), `name`/`size`/`date`/`expiry`/`downloads`/`files`/`actions`
+  `name`/`size`/`date`/`expiry`/`downloads`/`files`/`actions`
   (table cells), `unreadable` (inbox name that failed to decrypt), `foreign`
   (inbox row of a file received through a link created in another browser).
   Server-rendered tables carry `class="data-table"` (style only).
@@ -169,7 +169,6 @@ share one browser profile without touching each other's keys
     <input type="text" id="share-link" readonly>
     <button type="button" id="share-copy">Copy</button>
     <p id="share-expiry"></p>
-    <div id="share-qr"></div>
     <button type="button" id="share-another">Share another file</button>
   </div>
 
@@ -182,13 +181,13 @@ Required ids: `share-form` (a `<form>`), `drop-zone`, `file-input`
 (`<progress>`), `upload-status`, `share-result`, `share-link` (`<input>`),
 `share-copy` (`<button>`), `share-error`. Optional: `expires-in` (`<select>`;
 default used if absent), `max-downloads`, `upload-file-name`, `upload-cancel`,
-`upload-retry`, `share-expiry`, `share-qr`, `share-another`.
+`upload-retry`, `share-expiry`, `share-another`.
 
 Behaviour: one file per share. While uploading, `share-form` is hidden and
 `upload-panel` shown; Retry appears after a connection loss (the upload also
 resumes by itself when the browser goes back online). On success
 `share-result` is shown with the link `https://<host>/s/<id>#<key>`, the Copy
-button, "Expires in N …" and an SVG QR code (`<svg class="qr" role="img">`);
+button and "Expires in N …";
 focus moves to the link field. Cancelling or failing deletes the unfinished
 share (`DELETE /api/shares/{id}`).
 
@@ -215,7 +214,6 @@ share (`DELETE /api/shares/{id}`).
     <p id="request-expiry"></p>
     <p id="request-hint" class="hint">Files sent through this link open only in this browser.
        Clearing this site's data makes them unreadable.</p>
-    <div id="request-qr"></div>
   </div>
   <div id="request-error" role="alert" tabindex="-1" hidden></div>
 </section>
@@ -225,7 +223,7 @@ Required (if `request-form` exists; the section is optional): `request-form`
 (`<form>`), `request-error`, `request-result`, `request-link`, `request-copy`.
 Optional: `request-expires-in`, `request-max-files` (default 10),
 `request-single-use`, `request-create`, `request-status`, `request-expiry`,
-`request-hint` (server-rendered text, shown with the result), `request-qr`.
+`request-hint` (server-rendered text, shown with the result).
 When `request-single-use` is checked the JS sends `max_files: 1`, whatever
 `request-max-files` holds: the link closes on its first file.
 
@@ -539,8 +537,7 @@ also accepts a bare array. Fields beyond those listed are ignored.
   (`()`) like every other feature.
 - CSP as in PLAN.md §7 works unchanged (`trusted-types dropr-sw` allows the
   one policy that registers the service worker; `worker-src 'self'` is
-  needed for the service worker; the QR code is inline SVG built with DOM
-  APIs, not an image).
+  needed for the service worker).
 
 ### Why share names are not on `/links`
 

@@ -44,7 +44,6 @@ for (const which of ["small", "large"] as const) {
     const url = await link.inputValue();
     expect(url).toMatch(new RegExp(`^${owner.dropr.origin}/s/[A-Za-z0-9_-]{22}#[A-Za-z0-9_-]+$`));
     await expect(p.locator("#share-expiry")).toHaveText("Expires in 7 days");
-    await expect(p.locator("#share-qr svg.qr")).toBeVisible();
 
     // Permissions-Policy denies clipboard-read (only writes are allowed), so
     // record what the Copy button writes instead of reading it back.

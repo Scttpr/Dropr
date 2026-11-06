@@ -54,7 +54,7 @@ test("owner pages: login, dashboard (idle, result, error), inbox, links", async 
 
   const f = await makeFile(filesDir, "a11y.txt", 2000);
   shareUrl = await shareFile(owner, f);
-  await axe(p, "dashboard with share result (QR)");
+  await axe(p, "dashboard with share result");
   expiredUrl = await shareFile(owner, f);
   sqlRun(dropr, "UPDATE shares SET expires_at = unixepoch() - 5 WHERE id = ?", linkId(expiredUrl));
   requestUrl = await createRequest(owner);
