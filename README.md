@@ -13,6 +13,12 @@ Two flows, nothing else:
 Files go up to 100 GB (default cap 5 GB), uploaded in resumable 32 MiB parts
 and streamed to disk on download.
 
+The interface is in English and French (picked from the browser's language,
+switchable on every page) with a light theme by default, plus dark and
+follow-the-system themes. Adding a language means one Go catalog
+(`internal/i18n`) and one TypeScript catalog (`web/src/lib/locales`); tests
+fail on any missing translation.
+
 ## Security model in six bullets
 
 * **The server never sees plaintext.** Files and their names are encrypted in

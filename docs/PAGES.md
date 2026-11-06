@@ -12,8 +12,9 @@ Related: HTTP surface in `docs/ARCHITECTURE.md` §3, formats in `docs/FORMAT.md`
 
 ### 1.1 Script loading
 
-- Exactly one module script per page, in `<head>`, resolved through
-  `manifest.json` (logical name → hashed file under `/assets/`):
+- One page module per page (plus `prefs.js`, the display settings, on every
+  page), in `<head>`, resolved through `manifest.json` (logical name → hashed
+  file under `/assets/`):
 
   ```html
   <script type="module" src="/assets/{{asset "dashboard.js"}}"></script>
@@ -37,7 +38,8 @@ Related: HTTP surface in `docs/ARCHITECTURE.md` §3, formats in `docs/FORMAT.md`
 | Request uploader | `/r/{id}` | `request` | `request.js` |
 | Service worker | `/sw.js` | – | `sw.js` (fixed name, see §9) |
 
-The login page, error pages and the OIDC landing page load no script.
+The login page, error pages and the OIDC landing page load no page module
+(only `prefs.js`).
 
 ### 1.2 Progressive enhancement
 
@@ -83,6 +85,34 @@ The login page, error pages and the OIDC landing page load no script.
   exchanged with the JSON API is the **ciphertext** size (FORMAT.md §4.3).
 - **Times** are Unix seconds.
 - **Expiry choices** are exactly `1h`, `1d`, `7d`, `30d`.
+
+### 1.5 Language and theme
+
+- **Language.** The server picks it per request: the `__Host-dropr_lang`
+  cookie (an explicit choice), else the best `Accept-Language` match, else
+  English. It renders `<html lang="en|fr">` and `Content-Language`, and
+  translates every server-rendered string (`internal/i18n`, msgid = the
+  English text). The modules read `<html lang>` and take their text from the
+  typed catalogs in `web/src/lib/locales/` (`en.ts` defines the shape; `tsc`
+  rejects an incomplete one). API errors are translated in the browser from
+  their `error` code; English shows the server's own `message`.
+- Sentences are translated whole: never build one from fragments or
+  substitute single words into markup (French articles agree in gender:
+  "cet ordinateur", "cette tablette"). Plurals are handled by each catalog
+  (`Intl.PluralRules`), lists by `Intl.ListFormat`, dates, numbers and
+  percentages by `Intl` with the visitor's regional variant.
+- **Theme.** `<html data-theme="light|dark|system">` from `__Host-dropr_theme`,
+  **light by default**, with a matching `<meta name="color-scheme">`. CSS
+  sets `color-scheme` from it and every color token is a `light-dark()`
+  pair, so the page renders in its final colors on first paint.
+- **Display settings** (every page, in the header): a button with
+  `popovertarget="prefs"` opens a native popover holding a
+  `<form method="post" action="/prefs" data-prefs>` with two groups of
+  `type="submit"` buttons (`name="lang"`, `name="theme"`, the current one
+  `aria-pressed="true"`). Without JavaScript the form posts and the server
+  redirects back. `prefs.js` intercepts it instead: the theme switches in
+  place, a language change sets the cookie and reloads, which keeps the URL
+  fragment (the key of a share or request link).
 
 ## 2. Dashboard — `/`, `data-page="dashboard"`, `dashboard.js`
 
@@ -233,7 +263,7 @@ next, with a way to try another option.
     <div class="choice" id="setup-choice-device">
       <input type="radio" id="setup-where-device" name="setup-where" value="device"
              aria-describedby="setup-where-device-desc">
-      <label for="setup-where-device"><span class="choice-title">This <span data-device>computer</span></span>
+      <label for="setup-where-device"><span class="choice-title" id="setup-where-device-title">This computer</span>
         <span class="choice-badge" hidden>Recommended</span></label>
       <p id="setup-where-device-desc">…</p>
     </div>
@@ -267,8 +297,11 @@ per option, each with a radio `setup-where-<value>` named `setup-where`:
 `device` (hint `client-device`, attachment `platform`), `phone` (`hybrid`,
 `cross-platform`), `security-key` (`security-key`, `cross-platform`) and
 `auto` (no hints: the browser or a password manager extension decides).
-Elements with `data-device` get the device word (`computer`, `phone`,
-`tablet`). The JS (`lib/passkey-env.ts`) detects what can work with
+On a phone or tablet the JS rewrites the sentences that name the device
+(`setup-where-device-title`, `setup-where-device-desc`,
+`setup-where-phone-title`, `setup-where-phone-desc`,
+`setup-phone-help-bluetooth`) as whole sentences, so translations can agree
+in gender ("cet ordinateur", "ce téléphone", "cette tablette"). The JS (`lib/passkey-env.ts`) detects what can work with
 `PublicKeyCredential.getClientCapabilities()` and
 `isUserVerifyingPlatformAuthenticatorAvailable()`, then:
 
@@ -331,7 +364,7 @@ the server renders no rows.
 <main id="main" data-page="inbox">
   <h1>Received files</h1>
   <p id="inbox-warning" class="warning">These files were sent by people outside your
-     organisation through your request links. Only open files you expect.</p>
+     organization through your request links. Only open files you expect.</p>
   <button type="button" id="inbox-unlock" data-js-only hidden>Unlock your inbox</button>
   <p id="inbox-status" role="status" aria-live="polite"></p>
   <div id="inbox-error" role="alert" tabindex="-1" hidden></div>
@@ -477,7 +510,7 @@ The limits only give early, friendly errors; the server enforces them.
 
 ```html
 <main id="main" data-page="request" data-request-id="…" data-max-files="10" data-max-bytes="5368709120">
-  <h1>Send a file to <span id="owner-name">Alice</span></h1>   <!-- display name, server-rendered -->
+  <h1 id="request-title">Send a file to Alice</h1>   <!-- display name, server-rendered -->
   <p>Files are encrypted in your browser. Only Alice can open them.</p>
   <div id="drop-zone" class="drop-zone" data-js-only hidden>
     <label for="file-input">Drop files here, or choose them</label>
@@ -500,8 +533,7 @@ The limits only give early, friendly errors; the server enforces them.
 Required: `drop-zone`, `file-input` (`<input type=file multiple>`),
 `upload-panel`, `upload-progress` (`<progress>`), `upload-status`,
 `upload-done`, `upload-error`. Optional: `upload-file-name`, `upload-cancel`,
-`upload-retry`, `upload-list` (gets one `<li>` per sent file), `owner-name`
-(not read by the JS).
+`upload-retry`, `upload-list` (gets one `<li>` per sent file).
 
 Behaviour: the owner's public key is in the URL fragment; without a valid
 fragment the drop zone is hidden and "This link is incomplete or damaged…"
