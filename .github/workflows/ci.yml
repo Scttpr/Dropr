@@ -146,6 +146,24 @@ jobs:
             | sort -k2 > "dropr-assets-${GITHUB_REF_NAME}.sha256"
           cat "dropr-assets-${GITHUB_REF_NAME}.sha256"
 
+      # Static binaries for the bare-metal install (deploy/debian/install.sh
+      # --version). They embed exactly the web assets hashed above.
+      - name: Build the release binaries
+        run: |
+          cp -r web-assets/. internal/web/static/
+          for arch in amd64 arm64; do
+            nix develop -c env CGO_ENABLED=0 GOOS=linux GOARCH="$arch" GOFLAGS=-mod=readonly \
+              go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -o "dropr-${GITHUB_REF_NAME}-linux-${arch}" ./cmd/dropr
+          done
+          sha256sum "dropr-${GITHUB_REF_NAME}-linux-"* > "dropr-${GITHUB_REF_NAME}-SHA256SUMS"
+          cat "dropr-${GITHUB_REF_NAME}-SHA256SUMS"
+
+      - name: Sign the binary checksums (keyless)
+        run: |
+          cosign sign-blob --yes --bundle "dropr-${GITHUB_REF_NAME}-SHA256SUMS.sigstore.json" \
+            "dropr-${GITHUB_REF_NAME}-SHA256SUMS"
+
       - name: Build the image and push by digest
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -181,4 +199,6 @@ jobs:
           printf 'Image: `%s@%s`\n\nVerify: see SECURITY.md.\n' "${IMAGE}" "${DIGEST}" > notes.md
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
             --notes-file notes.md \
-            "dropr-assets-${GITHUB_REF_NAME}.sha256" "dropr-${GITHUB_REF_NAME}.spdx.json"
+            "dropr-assets-${GITHUB_REF_NAME}.sha256" "dropr-${GITHUB_REF_NAME}.spdx.json" \
+            "dropr-${GITHUB_REF_NAME}-linux-amd64" "dropr-${GITHUB_REF_NAME}-linux-arm64" \
+            "dropr-${GITHUB_REF_NAME}-SHA256SUMS" "dropr-${GITHUB_REF_NAME}-SHA256SUMS.sigstore.json"

@@ -40,6 +40,14 @@ the browser bundle is built reproducibly and its hashes are published.
 * The container image `ghcr.io/scttpr/dropr@sha256:...` (registry name pending),
   its cosign signature (keyless, GitHub OIDC identity of the release workflow)
   and an SBOM (SPDX JSON).
+* Static Linux binaries `dropr-<version>-linux-amd64` and `-arm64` (with the
+  same embedded assets), `dropr-<version>-SHA256SUMS` and its keyless cosign
+  bundle `dropr-<version>-SHA256SUMS.sigstore.json`.
+  `deploy/debian/install.sh --version` verifies both; by hand:
+  `cosign verify-blob --bundle dropr-<version>-SHA256SUMS.sigstore.json
+  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/ci\.yml@refs/tags/v'
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  dropr-<version>-SHA256SUMS && sha256sum -c --ignore-missing dropr-<version>-SHA256SUMS`.
 * A signed git tag.
 
 ### Reproduce the hashes yourself
@@ -88,11 +96,11 @@ network position and from outside the server.
 
 ```sh
 cosign verify ghcr.io/scttpr/dropr@sha256:<digest> \
-  --certificate-identity-regexp 'https://github.com/scttpr/dropr/.github/workflows/ci.yml@refs/tags/v.*' \
+  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/ci\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-Compose users pin the image by digest (`deploy/compose.yaml`). The Nix-built
+Compose users pin the image by digest (`DROPR_IMAGE` in `.env`, see `deploy/docker/`). The Nix-built
 image is reproducible: `nix build .#image` yields the same layers as the release
 (the digest of the pushed image may differ in manifest packaging).
 

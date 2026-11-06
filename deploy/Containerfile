@@ -29,6 +29,14 @@ RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/dropr
 # Empty, correctly owned data directory for the volume.
 RUN mkdir -p /out/data && chown 65532:65532 /out/data && chmod 0700 /out/data
 
+# --- Optional: export the static binary for a bare-metal install --------------
+# Builds without a Go or Node toolchain on the host (needs BuildKit):
+#   docker build -f deploy/Containerfile --build-arg VERSION=v0.1.0 \
+#     --target binary --output type=local,dest=out .
+#   sudo deploy/debian/install.sh --binary out/dropr
+FROM scratch AS binary
+COPY --from=go /out/dropr /dropr
+
 # --- 3. Runtime: distroless, non-root, no shell ------------------------------
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d
 ARG VERSION=dev
