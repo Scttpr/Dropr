@@ -116,8 +116,10 @@ fi
 
 [ -f "$binary" ] || die "no such file: $binary"
 install -m 0755 "$binary" "$workdir/dropr"
-new_version=$("$workdir/dropr" version 2>/dev/null | head -n1) \
+# Read the whole output: `| head -n1` under pipefail fails on SIGPIPE.
+new_version=$("$workdir/dropr" version 2>/dev/null) \
   || die "$binary does not run on this host (wrong architecture or not a dropr binary)"
+new_version=${new_version%%$'\n'*}
 log "Installing ${new_version}"
 
 # --- User and directories -----------------------------------------------------
@@ -171,11 +173,6 @@ install -m 0755 "$SRC_DIR/run-with-credentials" "$PREFIX/lib/dropr/run-with-cred
 install -m 0755 "$SRC_DIR/dropr-admin"          "$PREFIX/sbin/dropr-admin"
 systemctl daemon-reload
 
-if command -v systemd-analyze >/dev/null; then
-  systemd-analyze verify /etc/systemd/system/dropr.service /etc/systemd/system/dropr-backup.service \
-    2>&1 | grep -v -e 'oidc_key.pem' -e 'refresh_key' >&2 || true
-fi
-
 # --- Binary (upgrade: back up first) -----------------------------------------------
 was_active=false
 systemctl is-active --quiet dropr.service && was_active=true
@@ -186,6 +183,12 @@ if $was_active && [ -x "$PREFIX/bin/dropr" ]; then
 fi
 install -o root -g root -m 0755 "$workdir/dropr" "$PREFIX/bin/dropr.new"
 mv -f "$PREFIX/bin/dropr.new" "$PREFIX/bin/dropr"
+
+# After the binary is in place, or verify reports ExecStart as missing.
+if command -v systemd-analyze >/dev/null; then
+  systemd-analyze verify /etc/systemd/system/dropr.service /etc/systemd/system/dropr-backup.service \
+    2>&1 | grep -v -e 'oidc_key.pem' -e 'refresh_key' >&2 || true
+fi
 
 systemctl enable --quiet dropr-backup.timer
 systemctl start dropr-backup.timer
@@ -219,7 +222,7 @@ else
   fi
   for _ in $(seq 1 30); do
     if "$PREFIX/sbin/dropr-admin" healthcheck >/dev/null 2>&1; then
-      log "Healthy: $("$PREFIX/bin/dropr" version | head -n1)"
+      log "Healthy: $("$PREFIX/bin/dropr" version | sed -n 1p)"
       exit 0
     fi
     sleep 2
