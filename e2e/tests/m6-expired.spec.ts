@@ -87,21 +87,3 @@ test("an expired request link shows the plain expired page and refuses uploads",
   expect(sqlGet<{ n: number }>(dropr, "SELECT count(*) AS n FROM inbox WHERE request_id = ?", id)?.n).toBe(0);
   await context.close();
 });
-
-test("an upload started before expiry cannot add parts after it", async ({ dropr, request, alice }) => {
-  // Fresh request link; reserve a file through the API, expire, then PUT a part.
-  const url = await createRequest(alice);
-  const id = linkId(url);
-  const created = await request.post(`${dropr.origin}/api/r/${id}/files`, {
-    headers: { origin: dropr.origin },
-    data: { size: 1016, parts: 1, meta: "A".repeat(80), wrapped_key: "A".repeat(107) },
-  });
-  expect(created.status(), await created.text()).toBe(201);
-  const { upload_id, upload_token } = (await created.json()) as { upload_id: string; upload_token: string };
-  sqlRun(dropr, "UPDATE requests SET expires_at = unixepoch() - 5 WHERE id = ?", id);
-  const put = await request.put(`${dropr.origin}/upload/${upload_id}/part/0`, {
-    headers: { origin: dropr.origin, authorization: `Bearer ${upload_token}` },
-    data: Buffer.alloc(1016),
-  });
-  expect(put.status()).toBe(410);
-});

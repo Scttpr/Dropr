@@ -61,6 +61,8 @@ func TestCSRF(t *testing.T) {
 		{http.MethodPost, map[string][]string{"Sec-Fetch-Site": {"same-site"}}, false},
 		{http.MethodPost, map[string][]string{"Sec-Fetch-Site": {"cross-site"}, "Origin": {origin}}, false},
 		{http.MethodPost, map[string][]string{"Sec-Fetch-Site": {"same-origin", "cross-site"}}, false},
+		{http.MethodPost, map[string][]string{"Sec-Fetch-Site": {"Same-Origin"}}, false},
+		{http.MethodPost, map[string][]string{"Sec-Fetch-Site": {"same-origin, same-origin"}}, false},
 		{http.MethodPost, map[string][]string{"Origin": {origin}}, true},
 		{http.MethodPost, map[string][]string{"Origin": {"https://drop.example.com.evil.com"}}, false},
 		{http.MethodPost, map[string][]string{"Origin": {"null"}}, false},

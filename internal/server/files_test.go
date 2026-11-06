@@ -503,6 +503,7 @@ func TestUploadValidation(t *testing.T) {
 		{"trailing data", "POST", "/api/shares", []byte(`{} {}`), nil, 400, "bad_request"},
 		{"body limit", "POST", "/api/shares", []byte(`{"meta":"` + strings.Repeat("A", 17<<10) + `"}`), nil, 413, ""},
 		{"wrapped key length", "POST", "/api/r/AAAAAAAAAAAAAAAAAAAAAA/files", map[string]any{"size": smallSize, "parts": 1, "meta": meta(), "wrapped_key": b64t.EncodeToString(make([]byte, 79))}, nil, 400, "bad_request"},
+		{"request file too large", "POST", "/api/r/AAAAAAAAAAAAAAAAAAAAAA/files", map[string]any{"size": blob.CipherSize(6 << 30), "parts": blob.PartsFor(blob.CipherSize(6 << 30)), "meta": meta(), "wrapped_key": b64t.EncodeToString(make([]byte, 80))}, nil, 413, "too_large"},
 		{"unknown request link", "POST", "/api/r/AAAAAAAAAAAAAAAAAAAAAA/files", map[string]any{"size": smallSize, "parts": 1, "meta": meta(), "wrapped_key": b64t.EncodeToString(make([]byte, 80))}, nil, 404, "not_found"},
 		{"request max_files 0", "POST", "/api/requests", map[string]any{"max_files": 0, "max_bytes": 100}, nil, 400, "bad_request"},
 		{"wrong token", "GET", "/upload/" + u.UploadID, nil, map[string]string{"Authorization": "Bearer " + strings.Repeat("A", 43)}, 401, "bad_token"},
