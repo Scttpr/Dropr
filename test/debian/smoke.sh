@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Smoke test of deploy/debian/install.sh on a throwaway Debian 13 VM made by
-# vm.sh (hostname dropr-smoke), after harden-host.sh. Never run it on a real
-# server: it edits /etc/hosts, trusts a local CA, adds nginx sites, points
-# Dropr at a stub identity provider and sets up a local restic repository.
+# vm.sh (hostname dropr-smoke). Never run it on a real server: it edits
+# /etc/hosts, trusts a local CA, adds nginx sites, points Dropr at a stub
+# identity provider and sets up a local restic repository.
 #
-#   sudo deploy/debian/test/smoke.sh /path/to/dropr
+#   sudo test/debian/smoke.sh /path/to/dropr
 #
 # First run: fresh install (the installer must stop for configuration), then
 # the test config (nginx in front, tls = "proxy", stub IdP over local TLS) and
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 bin=${1:?usage: smoke.sh /path/to/dropr}
-SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../deploy/debian" && pwd)
 DROP=drop.dropr.test
 IDP=idp.dropr.test
 WORK=/root/dropr-smoke
@@ -136,7 +136,7 @@ if [ ! -x /usr/local/bin/dropr ]; then
 
   step "Test configuration (behind nginx, stub IdP)"
   cat > /etc/dropr/dropr.toml <<EOF
-# Written by deploy/debian/test/smoke.sh.
+# Written by test/debian/smoke.sh.
 public_url       = "https://$DROP"
 mode             = "production"
 data_dir         = "/var/lib/dropr"
@@ -209,8 +209,7 @@ check "dropr-check.timer active" systemctl is-active dropr-check.timer
 if systemctl start dropr-check.service; then ok "self-check passes"; else
   bad "self-check failed:"; journalctl -u dropr-check -n 12 -o cat --no-pager | sed 's/^/        /'
 fi
-check "alert unit runs (dropr-alert@test)" systemctl start dropr-alert@test.service
-check "dropr-credential decrypts alert_env" dropr-credential show alert_env
+check "failure hook runs (dropr-alert@test)" systemctl start dropr-alert@test.service
 command -v restic >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq restic >/dev/null
 if [ ! -e /etc/dropr/credentials/restic_env.cred ]; then
   # A repository in the unit's cache directory stands in for S3 or rest-server.
@@ -228,25 +227,6 @@ if [ -e /var/lib/dropr-offsite/last-success ]; then ok "off-site backup follows 
   bad "off-site backup did not complete:"; journalctl -u dropr-offsite -n 12 -o cat --no-pager | sed 's/^/        /'
 fi
 check "off-site restore test" dropr-offsite restore-test
-
-# --- Host hardening ---------------------------------------------------------------------
-if [ -e /etc/sysctl.d/90-dropr-hardening.conf ]; then
-  step "Host hardening (harden-host.sh)"
-  sshd_cfg=$(sshd -T 2>/dev/null || true)
-  check "sshd refuses passwords" grep -qx 'passwordauthentication no' <<<"$sshd_cfg"
-  check "sshd refuses root logins" grep -qx 'permitrootlogin no' <<<"$sshd_cfg"
-  check "firewall input policy is drop" sh -c 'nft list chain inet filter input | grep -q "policy drop"'
-  check "nftables enabled at boot" systemctl is-enabled nftables
-  check "sysctl hardening applied" test "$(sysctl -n kernel.kptr_restrict)" = 2
-  check "unattended upgrades enabled" grep -q 'Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades
-  nts=""
-  for _ in $(seq 1 30); do
-    nts=$(chronyc -N -c authdata 2>/dev/null | grep -c ',NTS,' || true)
-    [ "${nts:-0}" -ge 2 ] && break
-    sleep 2
-  done
-  if [ "${nts:-0}" -ge 2 ]; then ok "chrony has $nts NTS sources"; else bad "chrony NTS sources: ${nts:-0} (chronyc -N authdata)"; fi
-fi
 
 # --- Summary -------------------------------------------------------------------------
 printf '\n\033[1m%d passed, %d failed\033[0m (installer logs in %s)\n' "$pass" "$fail" "$WORK"

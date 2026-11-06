@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Test the Debian 13 deployment in a QEMU VM booted from the official cloud
-# image: harden-host.sh, then smoke.sh (install.sh end to end). Runs as your
+# image: smoke.sh runs deploy/debian/install.sh end to end. Runs as your
 # user; qemu and cloud-localds come from nixpkgs when they are missing.
 #
 #   nix build .#dropr                    # or BIN=path/to/static/dropr
-#   deploy/debian/test/vm.sh up          # download, boot, harden, run smoke.sh
-#   deploy/debian/test/vm.sh smoke       # again: an upgrade run
-#   deploy/debian/test/vm.sh browse      # dev Keycloak + Chromium: use Dropr
-#   deploy/debian/test/vm.sh ssh
-#   deploy/debian/test/vm.sh down        # power off, keep the disk
-#   deploy/debian/test/vm.sh destroy     # power off, delete the disk
+#   test/debian/vm.sh up          # download, boot, run smoke.sh
+#   test/debian/vm.sh smoke       # again: an upgrade run
+#   test/debian/vm.sh browse      # dev Keycloak + Chromium: use Dropr
+#   test/debian/vm.sh ssh
+#   test/debian/vm.sh down        # power off, keep the disk
+#   test/debian/vm.sh destroy     # power off, delete the disk
 #
 # browse runs a Keycloak container with the dev realm on 127.0.0.1:8181,
 # switches the VM to it (browse.sh) and opens Chromium with a throwaway
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT=$(cd "$DIR/../../.." && pwd)
+ROOT=$(cd "$DIR/../.." && pwd)
 RELEASE=trixie
 BIN=${BIN:-$ROOT/result/bin/dropr}
 SSH_PORT=${SSH_PORT:-2222}
@@ -98,18 +98,15 @@ boot() {
 
 push() {
   running || die "VM not running (vm.sh up)"
-  log "Copying deploy/debian into the VM"
-  tar -C "$ROOT" -cf - deploy/debian | vm 'sudo rm -rf /src && sudo mkdir -p /src && sudo tar -C /src -xf -'
+  log "Copying deploy/debian and test/debian into the VM"
+  tar -C "$ROOT" -cf - deploy/debian test/debian | vm 'sudo rm -rf /src && sudo mkdir -p /src && sudo tar -C /src -xf -'
 }
 
 smoke() {
   [ -f "$BIN" ] || die "no binary at $BIN (nix build .#dropr, or set BIN)"
   push
   vm 'sudo tee /root/dropr >/dev/null && sudo chmod 0755 /root/dropr' < "$(realpath "$BIN")"
-  # SSH from the host reaches the guest from QEMU's 10.0.2.2.
-  ssh "${ssh_opts[@]}" -t debian@127.0.0.1 sudo /src/deploy/debian/harden-host.sh \
-    --admin-user debian --admin-cidr 10.0.2.2/32 --yes
-  ssh "${ssh_opts[@]}" -t debian@127.0.0.1 sudo /src/deploy/debian/test/smoke.sh /root/dropr
+  ssh "${ssh_opts[@]}" -t debian@127.0.0.1 sudo /src/test/debian/smoke.sh /root/dropr
 }
 
 keycloak() {
@@ -145,7 +142,7 @@ browse() {
   keycloak
   push
   vm 'sudo tee /root/dropr-pkjwt.pem >/dev/null' < "$ROOT/deploy/keycloak/test-keys/dropr-pkjwt.TEST-ONLY.pem"
-  ssh "${ssh_opts[@]}" -t debian@127.0.0.1 sudo /src/deploy/debian/test/browse.sh /root/dropr-pkjwt.pem
+  ssh "${ssh_opts[@]}" -t debian@127.0.0.1 sudo /src/test/debian/browse.sh /root/dropr-pkjwt.pem
   local spki
   # shellcheck disable=SC2016 # expands in the VM
   spki=$(vm 'for c in /etc/letsencrypt/live/drop.dropr.test/fullchain.pem /etc/nginx/dropr-smoke-kc/fullchain.pem; do

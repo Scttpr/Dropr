@@ -1,7 +1,14 @@
-# Alert that the unit named by the instance failed (dropr, dropr-backup,
-# dropr-offsite, dropr-check reference it with OnFailure=). Sends to the
-# webhook and/or email set in the alert_env credential:
-#   sudo dropr-credential edit alert_env
+# Failure hook: every Dropr unit (dropr, dropr-backup, dropr-offsite,
+# dropr-check) starts dropr-alert@<unit>.service through OnFailure=. By
+# default it only writes a critical line to the journal. Point it at your own
+# alerting with a drop-in, e.g. ntfy:
+#
+#   sudo systemctl edit dropr-alert@.service
+#   [Service]
+#   ExecStart=
+#   ExecStart=/usr/bin/curl -fsS --max-time 20 -H "Title: Dropr: %i failed" \
+#     -d "%i failed on %H" https://ntfy.sh/<a-long-random-topic>
+#
 # Test: sudo systemctl start dropr-alert@test.service
 
 [Unit]
@@ -10,13 +17,9 @@ Documentation=https://github.com/scttpr/dropr/blob/main/docs/deploy-debian.md#mo
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/lib/dropr/alert %i
+ExecStart=/usr/bin/systemd-cat --identifier=dropr-alert --priority=crit /bin/echo "%i failed"
 
 DynamicUser=true
-SupplementaryGroups=systemd-journal
-LoadCredentialEncrypted=alert_env:/etc/dropr/credentials/alert_env.cred
-StateDirectory=dropr-alert
-
 CapabilityBoundingSet=
 NoNewPrivileges=true
 ProtectSystem=strict
@@ -24,7 +27,7 @@ ProtectHome=true
 PrivateTmp=disconnected
 PrivateDevices=true
 ProtectProc=invisible
-InaccessiblePaths=-/etc/dropr/credentials
+InaccessiblePaths=-/etc/dropr
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true

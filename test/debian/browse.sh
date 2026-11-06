@@ -69,7 +69,7 @@ systemd-creds encrypt --with-key=auto --name=oidc_key "$key" "$cred"
 chmod 0600 "$cred"
 shred -u "$key"
 cat > /etc/dropr/dropr.toml <<EOF
-# Written by deploy/debian/test/browse.sh (dev Keycloak realm, TEST-ONLY key).
+# Written by test/debian/browse.sh (dev Keycloak realm, TEST-ONLY key).
 public_url       = "https://$DROP:$PORT"
 mode             = "production"
 data_dir         = "/var/lib/dropr"

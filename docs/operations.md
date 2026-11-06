@@ -106,14 +106,13 @@ with two ready-made kits:
   container runs as UID 65532 from a shell-less image with a read-only root,
   `cap_drop: ALL`, `no-new-privileges`, pid and memory limits.
 * **Debian 13 and systemd** (`deploy/debian/`, the recommended path):
-  `harden-host.sh` hardens a dedicated host (SSH, nftables, sysctl,
-  unattended upgrades, NTS time) under a rollback guard. `install.sh
-  --binary FILE` or `--version vX.Y.Z` (downloads the release binary and
-  verifies its signature) creates the `dropr` user, `/etc/dropr` with
-  credentials sealed by `systemd-creds` (TPM2 when present), a sandboxed
+  `install.sh --binary FILE` or `--version vX.Y.Z` (downloads the release
+  binary and verifies its signature) creates the `dropr` user, `/etc/dropr`
+  with credentials sealed by `systemd-creds` (TPM2 when present), a sandboxed
   `dropr.service` plus an AppArmor profile, the admin tools, daily backups
-  with optional restic off-site copies, a self-check timer with webhook or
-  email alerts, and a 7-day journal namespace. Rerunning it upgrades
+  with optional restic off-site copies, a self-check timer with a failure
+  hook for your alerting, and a 7-day journal namespace. The guide also gives
+  a host baseline (SSH, nftables, sysctl, updates, NTS time) as snippets. Rerunning it upgrades
   (backup, atomic swap, health check).
 
 Both images (Nix and Containerfile) install the binary as `/bin/dropr` and

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install or upgrade Dropr on a Debian 13 server as a hardened systemd
-# service. Run as root from a checkout of the release tag (after
-# deploy/debian/harden-host.sh on a fresh host):
+# service. Run as root from a checkout of the release tag, on a host prepared
+# as in docs/deploy-debian.md "Host baseline":
 #
 #   sudo deploy/debian/install.sh --binary ./dropr          # a binary you built or downloaded
 #   sudo deploy/debian/install.sh --version v0.1.0          # download + verify the release binary
@@ -87,7 +87,7 @@ command -v systemd-creds >/dev/null || die "systemd-creds is required"
 
 units="dropr.service dropr-backup.service dropr-backup.timer dropr-offsite.service
        dropr-check.service dropr-check.timer dropr-alert@.service"
-libs="run-with-credentials offsite check alert"
+libs="run-with-credentials offsite check"
 sbins="dropr-admin dropr-credential dropr-offsite"
 # shellcheck disable=SC2086 # word lists
 for f in $units $libs $sbins journald@dropr.conf dropr.toml apparmor/usr.local.bin.dropr; do
@@ -187,17 +187,6 @@ if [ ! -s "$CRED_DIR/oidc_key.cred" ] && $gen_oidc_key; then
   install -m 0644 "$workdir/cert.pem" "$CONF_DIR/oidc_cert.pem"
   oidc_cert_new=true
 fi
-if [ ! -s "$CRED_DIR/alert_env.cred" ]; then
-  cat > "$workdir/alert_env" <<'EOF'
-# Dropr alert settings: sudo dropr-credential edit alert_env
-# Test: sudo systemctl start dropr-alert@test.service
-#ALERT_WEBHOOK=https://ntfy.sh/<a-long-random-topic>
-#ALERT_WEBHOOK_FORMAT=text          # or json for Slack/Mattermost ({"text": ...})
-#ALERT_EMAIL=ops@example.com        # needs a sendmail, e.g. apt install msmtp-mta
-#ALERT_REPEAT_HOURS=6
-EOF
-  seal alert_env "$workdir/alert_env"
-fi
 chown root:root "$CRED_DIR"/* 2>/dev/null || true
 chmod 0600 "$CRED_DIR"/* 2>/dev/null || true
 
@@ -262,8 +251,8 @@ elif ! $ready; then
   1. Register Dropr at your identity provider (docs/setup-entra.md or
      docs/setup-keycloak.md).$( [ "${oidc_cert_new:-false}" = true ] && printf '\n     Upload the public certificate %s/oidc_cert.pem as the client credential.' "$CONF_DIR")$( [ -s "$CRED_DIR/oidc_key.cred" ] || printf '\n     Seal your client key (PEM): systemd-creds encrypt --with-key=auto \\\n       --name=oidc_key key.pem %s/oidc_key.cred' "$CRED_DIR")
   2. Edit $CONF_DIR/dropr.toml: public_url, acme_email and every <...> value.
-  3. Point DNS at this host, set a CAA record: 0 issue "letsencrypt.org".
-     harden-host.sh already opens TCP 80 and 443.
+  3. Point DNS at this host, set a CAA record: 0 issue "letsencrypt.org",
+     and allow TCP 80 and 443 in the firewall.
   4. sudo deploy/debian/install.sh again (or systemctl enable --now dropr),
      then: journalctl --namespace=dropr -f
 EOF

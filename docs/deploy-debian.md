@@ -1,18 +1,18 @@
 # Deploying Dropr on Debian 13
 
 This guide covers a production install on one server. The recommended path is
-a dedicated **Debian 13** host hardened by `harden-host.sh`, with Dropr
-installed as a sandboxed systemd service by `install.sh`. Docker Compose is the
+a dedicated **Debian 13** host with Dropr installed as a sandboxed systemd
+service by `install.sh`. Docker Compose is the
 alternative for other distributions or for hosts that already run Docker.
 
 | | [Debian 13 (systemd)](#debian-13-systemd) | [Docker (Compose)](#docker-compose) |
 |---|---|---|
 | Kit | `deploy/debian/` | `deploy/docker/` |
-| Entry points | `harden-host.sh`, then `install.sh` | `deploy/docker/setup.sh` |
+| Entry point | `deploy/debian/install.sh` | `deploy/docker/setup.sh` |
 | Host | Debian 13 only (systemd >= 257) | any Linux with Docker |
 | Runs as | system user `dropr`: systemd sandbox (exposure 1.4) plus an AppArmor profile | UID 65532 in a distroless image, read-only root, no capabilities |
 | Secrets | `systemd-creds`, sealed to the TPM2 when there is one | bind-mounted files, 0400 |
-| Operations | backups, off-site copies (restic), self-check and alerts included | backup timer; the rest is yours |
+| Operations | backups, off-site copies (restic), self-check, failure hook | backup timer; the rest is yours |
 | Upgrades | `install.sh` again: backup, atomic swap, health check | `setup.sh --image`: backup, recreate, health check |
 
 Both run the same binary with the same config keys and terminate TLS
@@ -40,9 +40,8 @@ git verify-tag v0.1.0 && git checkout v0.1.0
 * **Disk**: put `/var/lib/dropr` on a local ext4 or XFS file system sized as in
   [Capacity planning](operations.md#capacity-planning), never on NFS/SMB (SQLite
   WAL is not safe there), ideally its own mount with `nodev,nosuid,noexec`.
-* **An admin account** with an SSH key in `~/.ssh/authorized_keys` and `sudo`.
-  `harden-host.sh` turns off passwords and root logins, and refuses to run
-  without one.
+* **An admin account** with an SSH key in `~/.ssh/authorized_keys` and `sudo`,
+  before you turn off passwords and root logins.
 * **DNS**: an A/AAAA record for the name in `public_url`, and a CAA record
   `0 issue "letsencrypt.org"`. Choose the name once: request link keys are stored
   per origin in the owners' browsers
@@ -54,31 +53,117 @@ git verify-tag v0.1.0 && git checkout v0.1.0
 
 ## Debian 13 (systemd)
 
-### 2. Harden the host
+### 2. Host baseline
 
-```sh
-sudo deploy/debian/harden-host.sh --admin-user alice --admin-cidr 203.0.113.7/32 --dry-run
-sudo deploy/debian/harden-host.sh --admin-user alice --admin-cidr 203.0.113.7/32
+Generic Debian hardening, not specific to Dropr: apply it with your own tooling
+(Ansible, a cloud image, a company baseline) or by hand from the snippets
+below. Keep a root shell open while changing SSH and the firewall, and test a
+new login before closing it.
+
+**SSH**: key-only logins for named admins, no root, no forwarding, modern
+algorithms. `/etc/ssh/sshd_config.d/10-hardening.conf` (the first value sshd
+reads wins, so `10-` beats cloud-init's `50-`), then `sshd -t && systemctl
+reload ssh`:
+
+```
+AllowUsers alice
+PermitRootLogin no
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+MaxAuthTries 3
+LoginGraceTime 20
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding no
+AllowStreamLocalForwarding no
+PermitTunnel no
+KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
 ```
 
-`--dry-run` prints the diff of every file it would write. The real run sets:
+**Firewall**: inbound SSH from your admin addresses, 80 and 443, nothing else.
+`apt install nftables`, write `/etc/nftables.conf`, then
+`nft -c -f /etc/nftables.conf && systemctl enable --now nftables`:
 
-| Part | What it does |
-|---|---|
-| `sysctl` | hides kernel pointers and logs; no unprivileged BPF, user namespaces or perf; ptrace for root only; no kexec or SysRq; no ICMP redirects or source routing |
-| `ssh` | logins only for the `--admin-user` accounts, by key only; no root; 3 attempts; no forwarding; hybrid post-quantum (ML-KEM, sntrup) and curve25519 key exchange, AEAD ciphers |
-| `firewall` | nftables with default drop: SSH from the `--admin-cidr` networks only (or `--ssh-from-anywhere`, rate-limited per address), 80 and 443, essential ICMP; outbound open |
-| `updates` | unattended security upgrades, rebooting at `--reboot-time` (04:00) when a kernel or libc fix needs it |
-| `time` | chrony with **NTS** (authenticated time) from three operators, adjusting only when two agree; OIDC tokens and client assertions fail on a drifting clock |
+```
+#!/usr/sbin/nft -f
+flush ruleset
 
-SSH and the firewall are applied together under a guard: a transient timer
-rolls both back after two minutes unless you confirm, from a **new** SSH
-session, that you can still log in and use `sudo`. Replaced files are kept as
-`<file>.dropr-orig`. Skip any part with `--skip NAME` (for example when your
-provider's firewall does the filtering); rerunning is safe and only asks for
-confirmation when SSH or firewall rules change. The report at the end flags a
-missing TPM2, AppArmor turned off, or a data mount without
-`nodev,nosuid,noexec`.
+table inet filter {
+	set admin4 { type ipv4_addr; flags interval; elements = { 203.0.113.7/32 } }
+	set admin6 { type ipv6_addr; flags interval; }
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+		ct state established,related accept
+		ct state invalid drop
+		iif lo accept
+		icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+		icmp type echo-request limit rate 5/second accept
+		icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
+		icmpv6 type echo-request limit rate 5/second accept
+		udp sport 67 udp dport 68 accept
+		ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
+		tcp dport 22 ip saddr @admin4 accept
+		tcp dport 22 ip6 saddr @admin6 accept
+		tcp dport { 80, 443 } accept
+	}
+	chain forward { type filter hook forward priority filter; policy drop; }
+}
+```
+
+Outbound stays open: Dropr reaches the identity provider and Let's Encrypt,
+and the host needs time servers, apt and the off-site backup repository. Not
+on a Docker host: `flush ruleset` would remove Docker's rules.
+
+**Kernel**: `/etc/sysctl.d/90-hardening.conf`, then `sysctl --system`:
+
+```
+kernel.kptr_restrict = 2
+kernel.dmesg_restrict = 1
+kernel.unprivileged_bpf_disabled = 1
+net.core.bpf_jit_harden = 2
+kernel.unprivileged_userns_clone = 0
+kernel.perf_event_paranoid = 3
+kernel.yama.ptrace_scope = 2
+kernel.kexec_load_disabled = 1
+kernel.sysrq = 0
+fs.suid_dumpable = 0
+fs.protected_fifos = 2
+fs.protected_regular = 2
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_source_route = 0
+```
+
+**Security updates**: `apt install unattended-upgrades` and
+`dpkg-reconfigure -plow unattended-upgrades`; to let kernel and libc fixes take
+effect, add `/etc/apt/apt.conf.d/52reboot` (Dropr starts again on boot):
+
+```
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:00";
+```
+
+**Time**: OIDC tokens and client assertions fail on a drifting clock, and
+plain NTP can be spoofed. `apt install chrony`, comment out the `pool` line in
+`/etc/chrony/chrony.conf`, then add `/etc/chrony/sources.d/nts.sources` and
+`systemctl restart chrony`; `chronyc -N authdata` should list them as `NTS`:
+
+```
+server time.cloudflare.com iburst nts
+server nts.netnod.se iburst nts
+server ptbtime1.ptb.de iburst nts
+```
+
+**AppArmor** is on by default in Debian 13; keep it (`aa-enabled` prints
+`Yes`): `install.sh` loads a profile for Dropr.
 
 ### 3. Get the binary
 
@@ -163,7 +248,7 @@ HTTPS request obtains the certificate.
   (`head -c 32 /dev/urandom | base64 | sudo dropr-credential set refresh_key -`
   signs everyone out; a new OIDC key needs its certificate uploaded, see
   [Key rotation](operations.md#key-rotation)).
-* **The host**: `harden-host.sh` above. Local changes to the units go into
+* **The host**: the [baseline](#2-host-baseline) above. Local changes to the units go into
   drop-ins (`sudo systemctl edit dropr`), which upgrades keep.
 
 ### Admin, credentials, logs
@@ -171,7 +256,7 @@ HTTPS request obtains the certificate.
 ```sh
 sudo dropr-admin user list               # any `dropr` admin command (operations.md "Admin CLI")
 sudo dropr-credential list               # sealed credentials
-sudo dropr-credential edit alert_env     # decrypt, edit, re-seal (plaintext stays on /run)
+sudo dropr-credential edit restic_env    # decrypt, edit, re-seal (plaintext stays on /run)
 journalctl --namespace=dropr --since -1h # request logs, kept 7 days
 systemctl list-timers 'dropr-*'
 ```
@@ -224,16 +309,22 @@ OIDC client certificate (30 days). Thresholds are `Environment=` lines in
 `sudo systemctl edit dropr-check` (see `/usr/local/lib/dropr/check`).
 
 A failure of the check, the service, the backup or the off-site copy starts
-`dropr-alert@<unit>.service`, which posts the unit name and its last log lines
-to a webhook and/or sends an email, at most once per unit every 6 hours:
+`dropr-alert@<unit>.service`. Out of the box it only writes a critical line to
+the journal; connect it to whatever alerting you already use with a drop-in,
+for example ntfy:
 
 ```sh
-sudo dropr-credential edit alert_env
-#   ALERT_WEBHOOK=https://ntfy.sh/<a-long-random-topic>
-#   ALERT_WEBHOOK_FORMAT=json              # for Slack or Mattermost
-#   ALERT_EMAIL=ops@example.com            # needs a sendmail: apt install msmtp-mta
+sudo systemctl edit dropr-alert@.service
+#   [Service]
+#   ExecStart=
+#   ExecStart=/usr/bin/curl -fsS --max-time 20 -H "Title: Dropr: %i failed" \
+#     -d "%i failed on %H" https://ntfy.sh/<a-long-random-topic>
 sudo systemctl start dropr-alert@test.service
 ```
+
+Drop-ins are world-readable: a webhook URL that contains a token belongs in a
+credential (`LoadCredentialEncrypted=` in the same drop-in) rather than on the
+command line.
 
 Also watch the host from outside (`/healthz`, the served code against the
 release hashes): see [After every deploy](#after-every-deploy).
@@ -280,11 +371,12 @@ Requirements in [TLS modes](operations.md#tls-modes).
 
 ### Testing the kit
 
-`deploy/debian/test/vm.sh up` boots the official Debian 13 cloud image in QEMU,
-runs `harden-host.sh`, then `test/smoke.sh`: a fresh install, a start behind
-nginx against a stub IdP over local TLS, an upgrade, the admin CLI, backups, an
-off-site copy to a local restic repository with a restore test, the self-check,
-AppArmor confinement without denials and the host hardening. It takes a static
+`test/debian/vm.sh up` (a development tool, not part of the deploy kit)
+boots the official Debian 13 cloud image in QEMU and runs `test/debian/smoke.sh`:
+a fresh install, a start behind nginx against a stub IdP over local TLS, an
+upgrade, the admin CLI, backups, an off-site copy to a local restic repository
+with a restore test, the self-check and failure hook, and AppArmor confinement
+without denials. It takes a static
 binary in `BIN` (default `result/bin/dropr` from `nix build .#dropr`).
 `vm.sh browse` then switches the VM to the dev Keycloak realm and opens
 Chromium on it, to use the installed Dropr by hand.
@@ -292,9 +384,9 @@ Chromium on it, to use the installed Dropr by hand.
 ## Docker (Compose)
 
 For other distributions, or hosts that already run Docker. [Before you
-start](#1-before-you-start) applies here too. On Debian 13 you can still run
-`harden-host.sh` with `--skip firewall`: Docker manages its own nftables rules,
-which the generated ruleset would flush; filter as in
+start](#1-before-you-start) applies here too, and so does the
+[host baseline](#2-host-baseline) except its firewall: Docker manages its own
+rules, which `flush ruleset` would remove; filter as in
 [the firewall note](#docker-and-the-host-firewall).
 
 ### Install Docker
