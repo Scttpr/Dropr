@@ -31,12 +31,11 @@ Related: HTTP surface in `docs/ARCHITECTURE.md` §3, formats in `docs/FORMAT.md`
 | Page | Path | `data-page` | Manifest name |
 |---|---|---|---|
 | Dashboard | `/` (signed in) | `dashboard` | `dashboard.js` |
-| Passkey setup | `/setup` | `setup` | `setup.js` |
 | Received files | `/inbox` | `inbox` | `inbox.js` |
 | Active links | `/links` | `links` | `links.js` |
 | Share recipient | `/s/{id}` | `share` | `share.js` |
 | Request uploader | `/r/{id}` | `request` | `request.js` |
-| Service worker | `/sw.js` | – | `sw.js` (fixed name, see §9) |
+| Service worker | `/sw.js` | – | `sw.js` (fixed name, see §8) |
 
 The login page, error pages and the OIDC landing page load no page module
 (only `prefs.js`).
@@ -75,9 +74,19 @@ The login page, error pages and the OIDC landing page load no page module
   `prefers-reduced-motion` for any transitions it adds.
 - JS-built content uses these class hooks: `danger` (destructive buttons),
   `qr` (the SVG), `name`/`size`/`date`/`expiry`/`downloads`/`files`/`actions`
-  (table cells), `unreadable` (inbox name that failed to decrypt).
+  (table cells), `unreadable` (inbox name that failed to decrypt), `foreign`
+  (inbox row of a file received through a link created in another browser).
 
-### 1.4 Values and units
+### 1.4 Owner pages
+
+The dashboard, `/inbox` and `/links` render `data-owner-id` on `<main>`
+(required): the signed-in account's ID (`users.id`). The JS stores it as
+`ownerId` in every request link key record it creates, and only ever lists,
+uses or prunes records whose `ownerId` equals it, so several accounts can
+share one browser profile without touching each other's keys
+(ARCHITECTURE.md §3 "Request link keys").
+
+### 1.5 Values and units
 
 - **Sizes** in `data-*` are integers in **bytes**. `data-max-file-size` and the
   request page's `data-max-bytes` are **plaintext** bytes (what the user picks);
@@ -86,7 +95,7 @@ The login page, error pages and the OIDC landing page load no page module
 - **Times** are Unix seconds.
 - **Expiry choices** are exactly `1h`, `1d`, `7d`, `30d`.
 
-### 1.5 Language and theme
+### 1.6 Language and theme
 
 - **Language.** The server picks it per request: the `__Host-dropr_lang`
   cookie (an explicit choice), else the best `Accept-Language` match, else
@@ -122,7 +131,8 @@ The login page, error pages and the OIDC landing page load no page module
 |---|---|---|
 | `data-max-file-size` | yes | instance `limits.max_file_size`, plaintext bytes (e.g. `5368709120`) |
 | `data-default-expiry` | yes | `limits.default_expiry` (`7d` by default) |
-| `data-max-request-bytes` | no | `max_bytes` sent when creating a request link: a **ciphertext** budget (the API counts ciphertext, §1.4). The server renders the ciphertext size of one maximal file, `CipherSize(max_file_size)`. If absent the JS falls back to `data-max-file-size`, which is slightly too small for a maximal file. |
+| `data-owner-id` | yes | the signed-in account's ID (§1.4) |
+| `data-max-request-bytes` | no | `max_bytes` sent when creating a request link: a **ciphertext** budget (the API counts ciphertext, §1.5). The server renders the ciphertext size of one maximal file, `CipherSize(max_file_size)`. If absent the JS falls back to `data-max-file-size`, which is slightly too small for a maximal file. |
 
 ### Share a file (flow A)
 
@@ -186,6 +196,8 @@ share (`DELETE /api/shares/{id}`).
 ```html
 <section aria-labelledby="request-heading">
   <h2 id="request-heading">Receive a file</h2>
+  <p class="muted">Create a link that lets someone send you files, even without an account.
+     Only you can open them, in this browser.</p>
   <form id="request-form" data-js-only hidden>
     <label for="request-expires-in">Link expires after</label>
     <select id="request-expires-in">…same four options…</select>
@@ -200,6 +212,8 @@ share (`DELETE /api/shares/{id}`).
     <input type="text" id="request-link" readonly>
     <button type="button" id="request-copy">Copy</button>
     <p id="request-expiry"></p>
+    <p id="request-hint" class="hint">Files sent through this link open only in this browser.
+       Clearing this site's data makes them unreadable.</p>
     <div id="request-qr"></div>
   </div>
   <div id="request-error" role="alert" tabindex="-1" hidden></div>
@@ -210,10 +224,23 @@ Required (if `request-form` exists; the section is optional): `request-form`
 (`<form>`), `request-error`, `request-result`, `request-link`, `request-copy`.
 Optional: `request-expires-in`, `request-max-files` (default 10),
 `request-single-use`, `request-create`, `request-status`, `request-expiry`,
-`request-qr`.
+`request-hint` (server-rendered text, shown with the result), `request-qr`.
 
-Submitting prompts once for the passkey ("Unlock"), then shows
-`https://<host>/r/<id>#<owner public key>`.
+Submitting creates the link's key pair and the link (ARCHITECTURE.md §3
+"Request link keys"), in this order:
+
+1. generate an X25519 key pair, private key non-extractable;
+2. `POST /api/requests`;
+3. store `{id, privateKey, publicKey, ownerId, createdAt}` in IndexedDB (`dropr`,
+   store `request-keys`). If storing fails, the JS deletes the new request
+   (`DELETE /api/requests/{id}`) and shows the error in `request-error`: a
+   link is never shown without its key;
+4. ask for persistent storage (`navigator.storage.persist()`, best effort;
+   a refusal is not an error);
+5. show `https://<host>/r/<id>#<b64url(public key)>` in `request-result`
+   and move focus to the link field.
+
+No passkey or unlock step exists: the first sign-in lands on this page.
 
 ### Server-rendered navigation (plain HTML)
 
@@ -221,151 +248,31 @@ Links to `/inbox` ("Received files (3)") and `/links` ("Active links (2)")
 with counts, and the sign-out form (`POST /auth/logout`). The counts are
 wrapped in `<span id="inbox-count">` and `<span id="link-count">`: the JS adds
 one to `link-count` after a share upload or a request link creation succeeds,
-so the tile stays right without a reload. The inbox count (and its span) is
-rendered only for a session that holds a passkey unlock ("Received files"
-otherwise): someone signed in with only the owner's identity provider
-credentials does not learn how many files arrived.
+so the tile stays right without a reload. The JS tolerates a missing
+`inbox-count`.
 
 ### noscript
 
 > Dropr encrypts files in your browser before they are uploaded, so sharing
 > and receiving files needs JavaScript. Please enable it for this site.
 
-## 3. Passkey setup — `/setup`, `data-page="setup"`, `setup.js`
+## 3. Received files — `/inbox`, `data-page="inbox"`, `inbox.js`
 
-Audience: people who are not at ease with digital services. Plain, short
-words; one obvious next action; no jargon (never "PRF", "WebAuthn",
-"authenticator", "hybrid"); every error says what happened and what to do
-next, with a way to try another option.
-
-| Attribute | Required | Value |
-|---|---|---|
-| `data-passkey-count` | yes | number of passkeys the user already has (`0` or `1`) |
-| `data-next` | no | same-origin path to go to when done (default `/`); anything else is ignored |
-
-```html
-<main id="main" data-page="setup" data-passkey-count="0" data-next="/">
-  <h1>Protect your received files</h1>
-  <p>A passkey is like a key that only you have, kept on your phone or computer.
-     It keeps the files people send you private.</p>
-  <p>You'll make two. The second one is a spare key, in case you lose the first.</p>
-  <ol aria-label="Your progress">
-    <li id="setup-step-1">Your first passkey</li>
-    <li id="setup-step-2">Your spare passkey</li>
-  </ol>
-  <div id="setup-done" class="success" tabindex="-1" hidden>
-    <p id="setup-done-title"></p><p id="setup-done-next"></p>
-  </div>
-  <h2 id="setup-step-title">Step 1 of 2: your first passkey</h2>
-  <p id="setup-reauth" hidden>For your safety, first confirm with the passkey you already made. …</p>
-  <fieldset id="setup-where" data-js-only hidden>
-    <legend>Where do you want to keep this passkey?</legend>
-    <div class="choice" id="setup-choice-device">
-      <input type="radio" id="setup-where-device" name="setup-where" value="device"
-             aria-describedby="setup-where-device-desc">
-      <label for="setup-where-device"><span class="choice-title" id="setup-where-device-title">This computer</span>
-        <span class="choice-badge" hidden>Recommended</span></label>
-      <p id="setup-where-device-desc">…</p>
-    </div>
-    <!-- same for "phone" (+ title id setup-where-phone-title, desc, and the
-         checklist <div id="setup-phone-help" hidden>), "security-key", and
-         "auto" (checked by default; "Another way") -->
-  </fieldset>
-  <div id="setup-browser-note" hidden>
-    <p>When you click the button, your browser will show you its own options. …</p>
-    <p id="setup-browser-tip" hidden>…</p>
-    <details id="setup-phone-tips" hidden><summary>Using your phone? What you need</summary></details>
-  </div>
-  <button type="button" id="setup-register" data-js-only hidden>Create my first passkey</button>
-  <p id="setup-status" role="status" aria-live="polite"></p>
-  <div id="setup-error" role="alert" tabindex="-1" hidden></div>
-  <button type="button" id="setup-other" hidden>Try another way</button>
-  <p>Without a passkey, files sent to you can't be opened. That's why the spare one matters.</p>
-  <noscript>…</noscript>
-</main>
-```
-
-Required: `setup-register` (`<button>`), `setup-status`, `setup-error`.
-Optional (the JS skips what is missing): `setup-step-1`, `setup-step-2`
-(the JS sets `data-state` = `done|current|todo` and `aria-current="step"`),
-`setup-step-title`, `setup-done` (with `setup-done-title`,
-`setup-done-next`), `setup-reauth`, `setup-browser-note` (with
-`setup-browser-tip`, `setup-phone-tips`), `setup-other`, and `setup-where`.
-
-**Where to save it.** `setup-where` holds one card `setup-choice-<value>`
-per option, each with a radio `setup-where-<value>` named `setup-where`:
-`device` (hint `client-device`, attachment `platform`), `phone` (`hybrid`,
-`cross-platform`), `security-key` (`security-key`, `cross-platform`) and
-`auto` (no hints: the browser or a password manager extension decides).
-On a phone or tablet the JS rewrites the sentences that name the device
-(`setup-where-device-title`, `setup-where-device-desc`,
-`setup-where-phone-title`, `setup-where-phone-desc`,
-`setup-phone-help-bluetooth`) as whole sentences, so translations can agree
-in gender ("cet ordinateur", "ce téléphone", "cette tablette"). The JS (`lib/passkey-env.ts`) detects what can work with
-`PublicKeyCredential.getClientCapabilities()` and
-`isUserVerifyingPlatformAuthenticatorAvailable()`, then:
-
-- hides an option known not to work (no passkey storage on this device; no
-  phone support), keeps unknown ones without promising anything, and always
-  keeps `security-key` and `auto`;
-- moves the recommended option first, shows its `.choice-badge` and checks
-  it: step 1 this device, else a phone; step 2 somewhere else than step 1
-  (`device` is hidden in step 2 when step 1 used it; the place of step 1 is
-  kept in `sessionStorage` `dropr:setup-last-choice` across a reload);
-- shows `setup-phone-help` (Bluetooth on both devices, internet on both,
-  Google Password Manager on Android and not Microsoft Authenticator,
-  Passwords / iCloud Keychain on iPhone) while `phone` is checked;
-- when the browser ignores hints (no `getClientCapabilities`, or Firefox),
-  hides `setup-where` and shows `setup-browser-note` instead (choice
-  `auto`), with `setup-browser-tip` when neither this device nor a phone
-  can work and the phone checklist in `setup-phone-tips` on computers.
-
-**Behaviour.** The button label per state: "Create my first passkey",
-"Create my spare passkey", "Confirm with my first passkey" (step 2 that must
-re-confirm), "Try again" (after an error). While a prompt is open,
-`setup-status` says what to do there (e.g. "Scan the QR code with your
-phone's camera, then follow the steps on your phone."). Step 1 creates the
-passkey; if `create()` returned the PRF output that is the only prompt (no
-`confirm` is sent). Otherwise one `get()` follows on the same credential
-with the same hints and its transports, announced in `setup-status`
-("Almost done. Your phone will ask you one more time to confirm. That's
-normal."). After step 1, `setup-done` says "Your first passkey is ready."
-and suggests a different device for the spare, and takes focus. The first
-registration authorizes step 2 for 5 minutes, so step 2 normally prompts
-only for the new passkey. With `data-passkey-count="1"` (page reloaded), or
-when step 2 is answered `reauth_required`, `setup-reauth` explains why
-before anything happens; the click then confirms with the existing passkey
-(hinted to where step 1 saved it, or from its stored transports) and
-creates the second. After the second, `setup-done` says "All done! Both of
-your passkeys are ready." and the JS navigates to `data-next` 1.5 s later.
-
-**Errors** go to `setup-error` (focused): plain sentences from
-`lib/passkey.ts` (`passkeyErrorMessage`, `PRF_UNSUPPORTED_MESSAGE`, which
-names the places that work and says Microsoft Authenticator can't be used).
-A cancelled or timed-out phone attempt gets the phone checklist message.
-`setup-other` ("Try another way") then appears; it checks the next offered
-option and focuses it. Browsers without WebAuthn get a plain message and a
-disabled button; browsers reporting no PRF support get a non-blocking one.
-
-noscript:
-
-> Setting up passkeys needs JavaScript. Please enable it for this site.
-
-The server should redirect `/setup` → `/` once the user has ≥ 2 passkeys,
-and `/`, `/inbox`, `/links` → `/setup` while they have fewer.
-
-## 4. Received files — `/inbox`, `data-page="inbox"`, `inbox.js`
-
-No `<main>` data is required (`data-count` may be rendered for CSS/text, only
-for an unlocked session; the JS does not read it). The list is fetched from `GET /api/inbox` after unlock;
-the server renders no rows.
+`<main>` carries `data-owner-id` (required, §1.4); `data-count` may be
+rendered for CSS/text (the JS does not read it). The JS fetches the list from
+`GET /api/inbox` on start and opens each entry with the signed-in account's
+local key of its `request_id`; the server renders no rows. The list holds
+only files of unexpired request links: an expired link's files disappear
+from it (and cannot be downloaded) at once, before the cleanup job deletes
+them.
 
 ```html
 <main id="main" data-page="inbox">
   <h1>Received files</h1>
   <p id="inbox-warning" class="warning">These files were sent by people outside your
      organization through your request links. Only open files you expect.</p>
-  <button type="button" id="inbox-unlock" data-js-only hidden>Unlock your inbox</button>
+  <p id="inbox-device-note" class="muted">Files open only in the browser where you
+     created the request link they came through.</p>
   <p id="inbox-status" role="status" aria-live="polite"></p>
   <div id="inbox-error" role="alert" tabindex="-1" hidden></div>
 
@@ -389,27 +296,30 @@ the server renders no rows.
 </main>
 ```
 
-Required: `inbox-unlock` (`<button>`), `inbox-status`, `inbox-error`,
-`inbox-table`, `inbox-list` (`<tbody>`), `inbox-empty`, `download-panel`,
-`download-progress` (`<progress>`), `download-status`. Optional:
-`download-file-name`, `download-cancel`, `inbox-warning`.
+Required: `inbox-status`, `inbox-error`, `inbox-table`, `inbox-list`
+(`<tbody>`), `inbox-empty`, `download-panel`, `download-progress`
+(`<progress>`), `download-status`. Optional: `download-file-name`,
+`download-cancel`, `inbox-warning`, `inbox-device-note` (server-rendered
+text, right after `inbox-warning`).
 
 Rows built by the JS (4 cells, matching the header):
 `<tr data-inbox-id="…"><td class="name">…</td><td class="size">…</td><td class="date"><time datetime="…">…</time></td><td class="actions"><button>Download</button> <button class="danger">Delete</button></td></tr>`.
-Entries that fail to decrypt show "Unreadable file" (`class="name unreadable"`)
-with Delete only. Delete asks for confirmation (`confirm()`).
-
-The unlocked key lives in the page's memory only: every visit to `/inbox`
-asks for the passkey once.
+Entries whose link key is not in this browser get `class="foreign"` on the
+row, the name cell "Sent through a link created in another browser", size and
+date, and Delete only (no Download): their name cannot be decrypted here.
+Entries that fail to decrypt although the key is present show "Unreadable
+file" (`class="name unreadable"`) with Delete only. Delete asks for
+confirmation (`confirm()`).
 
 noscript:
 
-> Received files are decrypted in your browser with your passkey, which needs
-> JavaScript. Please enable it for this site.
+> Received files are decrypted in your browser, which needs JavaScript. Please
+> enable it for this site.
 
-## 5. Active links — `/links`, `data-page="links"`, `links.js`
+## 4. Active links — `/links`, `data-page="links"`, `links.js`
 
-Both lists are fetched from `GET /api/shares` and `GET /api/requests`.
+`<main>` carries `data-owner-id` (required, §1.4). Both lists are fetched
+from `GET /api/shares` and `GET /api/requests`.
 
 ```html
 <main id="main" data-page="links">
@@ -429,6 +339,8 @@ Both lists are fetched from `GET /api/shares` and `GET /api/requests`.
 
   <section aria-labelledby="requests-heading">
     <h2 id="requests-heading">Request links</h2>
+    <p id="requests-note" class="muted">A request link can be copied, and its files
+       opened, only in the browser that created it.</p>
     <table id="requests-table" hidden>
       <thead><tr><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Files received</th>
         <th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
@@ -440,17 +352,27 @@ Both lists are fetched from `GET /api/shares` and `GET /api/requests`.
 </main>
 ```
 
-All ids above are required (`*-list` are `<tbody>`). Share rows: size,
-created, "Expires in …", "2 of 5" / "2", **Revoke**. Request rows: created,
-expiry, "1 of 10 (single use)", **Copy link** (asks for the passkey: the link
-fragment is the owner's public key, taken only from the unlocked key) and
-**Revoke**. Share names are not shown (see §10).
+All ids above are required (`*-list` are `<tbody>`) except `requests-note`
+(server-rendered text). Share rows: size, created, "Expires in …",
+"2 of 5" / "2", **Revoke**. Request rows: created, expiry,
+"1 of 10 (single use)", then, before **Revoke**: **Copy link** when this
+browser holds the link's key (the fragment is the stored public key, never a
+server value), otherwise `<span class="muted">Other browser</span>`. Share
+names are not shown (see §9).
+
+After `GET /api/requests` succeeds, the JS deletes the signed-in account's
+local keys of links no longer listed (expired, revoked, deleted elsewhere:
+their files are gone with them). Records created less than 60 s before the
+list was requested are kept (another tab may have just stored a new link's
+key), and records of other accounts (`ownerId` ≠ `data-owner-id`) are never
+touched. Revoke deletes the link's local key once `DELETE /api/requests/{id}`
+succeeded.
 
 noscript:
 
 > Managing links needs JavaScript. Please enable it for this site.
 
-## 6. Share recipient — `/s/{id}`, `data-page="share"`, `share.js`
+## 5. Share recipient — `/s/{id}`, `data-page="share"`, `share.js`
 
 | Attribute | Required | Value |
 |---|---|---|
@@ -498,7 +420,7 @@ noscript:
 > This file is end-to-end encrypted and is decrypted in your browser, which
 > needs JavaScript. Please enable it for this site to download the file.
 
-## 7. Request uploader — `/r/{id}`, `data-page="request"`, `request.js`
+## 6. Request uploader — `/r/{id}`, `data-page="request"`, `request.js`
 
 | Attribute | Required | Value |
 |---|---|---|
@@ -535,7 +457,7 @@ Required: `drop-zone`, `file-input` (`<input type=file multiple>`),
 `upload-done`, `upload-error`. Optional: `upload-file-name`, `upload-cancel`,
 `upload-retry`, `upload-list` (gets one `<li>` per sent file).
 
-Behaviour: the owner's public key is in the URL fragment; without a valid
+Behaviour: the link's public key is in the URL fragment; without a valid
 fragment the drop zone is hidden and "This link is incomplete or damaged…"
 is shown. Files are sent one after the other; then `#upload-done` is shown
 and focused. Dead links: render the state server-side as for `/s/{id}`.
@@ -545,7 +467,7 @@ noscript:
 > Files are encrypted in your browser before they are sent, which needs
 > JavaScript. Please enable it for this site.
 
-## 8. JSON shapes the pages rely on
+## 7. JSON shapes the pages rely on
 
 In addition to ARCHITECTURE.md §3 (all `size` values are ciphertext bytes,
 times Unix seconds, binary values unpadded base64url):
@@ -556,25 +478,16 @@ times Unix seconds, binary values unpadded base64url):
   `{id, expires_at, max_files, max_bytes, single_use: bool, files_received, bytes_received, created_at}`.
 - `GET /api/inbox` → array (or `{"inbox": [...]}`) of
   `{id, request_id, size, created_at, meta, wrapped_key}`.
-- `GET /api/passkeys` → array (or `{"passkeys": [...]}`) of `{id, created_at, last_used_at: int|null}`.
-- `POST /api/passkeys/unlock/finish` → `{wrapped_privkey, credential_id, user_handle?}`
-  (`user_handle` optional fallback for authenticators that omit it).
-- `POST /api/passkeys/register/begin` → `{publicKey: {...}, confirm: {challenge}}`;
-  `POST /api/passkeys/unlock/begin` takes `{purpose?: "unlock"|"add"|"delete", passkey_id?}`
-  (ARCHITECTURE.md §3 "Passkeys": adding or deleting a passkey needs a fresh
-  assertion made for that action; 403 `reauth_required` otherwise).
 - `GET /upload/{id}` is called with the `Authorization: Bearer` upload token.
 - `GET /dl/{token}` with `Range: bytes=N-` must answer `206` with
   `Content-Range: bytes N-(size-1)/size`; without Range, `200`. Anything else
   is treated as a broken server.
 - Errors: `{"error": code, "message": text}`. Codes the pages recognise:
   `expired`, `exhausted`, `token_used` (download token byte budget spent: the
-  downloader fetches a new token), `revoked`, `locked` (session not unlocked),
-  `reauth_required` (fresh passkey assertion needed),
-  `quota_exceeded`, `too_large`. `message` is shown verbatim (as text) when
+  downloader fetches a new token), `revoked`, `quota_exceeded`, `too_large`. `message` is shown verbatim (as text) when
   present and ≤ 300 characters.
 
-## 9. Service worker (`/sw.js`)
+## 8. Service worker (`/sw.js`)
 
 - Built as a classic script (IIFE) with a fixed file name, `sw.js`, listed in
   the manifest as `"sw.js": "sw.js"`. Serve it at `/sw.js` with
@@ -593,12 +506,13 @@ times Unix seconds, binary values unpadded base64url):
 - Limitation: if decryption or the network fails mid-way, the browser shows a
   failed download (it cannot be told why); the page shows the reason.
 
-## 10. Headers the pages need
+## 9. Headers the pages need
 
-- `Permissions-Policy` must keep `publickey-credentials-create=(self)`,
-  `publickey-credentials-get=(self)` and `clipboard-write=(self)` allowed;
-  a blanket "deny all" breaks setup, unlock and Copy.
-- CSP as in ARCHITECTURE.md §7 works unchanged (`trusted-types dropr-sw` allows the
+- `Permissions-Policy` must keep `clipboard-write=(self)` allowed; a blanket
+  "deny all" breaks Copy. Nothing else is needed: Dropr uses no WebAuthn, so
+  `publickey-credentials-create` and `publickey-credentials-get` are denied
+  (`()`) like every other feature.
+- CSP as in PLAN.md §7 works unchanged (`trusted-types dropr-sw` allows the
   one policy that registers the service worker; `worker-src 'self'` is
   needed for the service worker; the QR code is inline SVG built with DOM
   APIs, not an image).
@@ -607,9 +521,6 @@ times Unix seconds, binary values unpadded base64url):
 
 A share's name is sealed under its FK, which only the link holds; the
 owner's browser does not keep it. A possible extension (not implemented):
-the dashboard HPKE-seals FK to the owner's own public key
-(`info = "dropr/v1 share " ‖ shareId`) and stores it as `owner_key` with
-`PUT /api/shares/{id}/owner_key` before finalizing (the id is only known
-after `POST /api/shares`). After unlocking, `/links` could then show names
-and rebuild share links. It needs the authenticated public key at share
-time, i.e. a passkey unlock for flow A, which today needs OIDC only.
+the dashboard keeps FK in IndexedDB next to the request link keys, so
+`/links` could show names and rebuild share links, with the same limit as
+request links (only in the browser that created the share).

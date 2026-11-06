@@ -12,8 +12,9 @@ Placeholders used below: `<host>` = your Dropr domain (for example
 `drop.example.com`), `<tenant-id>` = your directory (tenant) ID,
 `<application-id>` = the app's Application (client) ID.
 
-> **Choose the domain first.** Passkeys are bound to the domain (WebAuthn RP
-> ID). Changing it later invalidates every passkey. See
+> **Choose the domain first.** Request link keys are stored in the owners'
+> browsers per origin, and links embed the host. Changing the domain later
+> makes received files unreadable and breaks existing links. See
 > [operations.md](operations.md#changing-the-domain).
 
 > **Do not recreate the app registration later.** Entra's `sub` claim is
@@ -122,8 +123,10 @@ if your tenant requires post-logout URIs to be registered, add that URL too.
 
 ## 8. Conditional Access (strongly recommended)
 
-Dropr delegates MFA to Entra, and the passkey protects the inbox, not the
-login. Require phishing-resistant sign-in for the app:
+Dropr delegates MFA to Entra. A stolen login cannot read files already
+received (their keys stay in the owner's browser), but it can create shares
+and new request links in the owner's name. Require phishing-resistant sign-in
+for the app:
 
 Entra ID, Conditional Access, Policies, New policy:
 
@@ -194,7 +197,7 @@ misconfigured provider stops startup with the failing check named.
 ## 10. Verify
 
 1. Open `https://<host>`, click **Sign in with Microsoft**, sign in as an
-   assigned user. You should land on the passkey setup page.
+   assigned user. You should land on the dashboard.
 2. Sign in as an unassigned user: Entra shows AADSTS50105.
 3. Temporarily remove the role from your test user. Within
    `revalidate_every` the Dropr session ends, or sign-in is denied with a 403

@@ -40,7 +40,8 @@ change your firewall, SSH or Docker daemon settings.
 * **Clock**: keep NTP running (`timedatectl` shows `System clock synchronized:
   yes`). OIDC client assertions and tokens are rejected when the clock drifts.
 * **DNS**: an A/AAAA record for the host in `public_url`, and a CAA record
-  `0 issue "letsencrypt.org"`. Choose the name once: passkeys are bound to it
+  `0 issue "letsencrypt.org"`. Choose the name once: request link keys are stored per
+  origin in the owners' browsers
   ([Changing the domain](operations.md#changing-the-domain)).
 * **Firewall**: allow 22 (preferably from your admin addresses only), 80 and
   443. With ufw on the bare-metal install:

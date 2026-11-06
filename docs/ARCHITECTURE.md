@@ -26,15 +26,15 @@ internal/db/              SQLite open (WAL, foreign_keys, busy_timeout), embedde
 internal/store/           typed queries per table (no ORM)
 internal/auth/oidc/       discovery, PKCE, private_key_jwt, token verification, revalidation
 internal/auth/session/    server-side sessions, cookie handling, rotation
-internal/auth/passkey/    go-webauthn ceremonies, wrapped-key storage
 internal/blob/            sharded part storage, multi-part ReadSeeker, disk-space checks, GC
 internal/httpx/           middleware: security headers, CSP, CSRF, body limits, rate limit, real-IP, logging
 internal/server/          router (net/http ServeMux patterns), handlers, page view-models
 internal/web/             html/template pages + go:embed of internal/web/static (esbuild output + manifest.json)
 internal/jobs/            cleanup ticker (5 min), log retention
 web/                      TypeScript browser modules (esbuild), tests
-  src/crypto/             stream.ts, hpke.ts, keywrap.ts, b64.ts, meta.ts  (pure, WebCrypto only)
-  src/upload.ts download.ts sw.ts passkey.ts decrypt-names.ts dashboard.ts …
+  src/crypto/             stream.ts, hpke.ts, b64.ts, meta.ts  (pure, WebCrypto only)
+  src/lib/request-keys.ts IndexedDB store of the per-link private keys
+  src/upload.ts download.ts sw.ts decrypt-names.ts dashboard.ts …
   test/                   unit + property tests (node --test / vitest), test vectors
 e2e/                      Playwright specs, Keycloak realm, fake-IdP for negative tests
 deploy/                   Containerfile, compose.yaml, compose.dev.yaml (Keycloak), dropr.example.toml
@@ -42,7 +42,7 @@ docs/                     ARCHITECTURE.md, FORMAT.md, THREAT_MODEL.md, setup-ent
 ```
 
 Go: stdlib-first. Allowed deps: `coreos/go-oidc/v3`, `golang.org/x/oauth2`,
-`golang.org/x/crypto` (autocert), `go-webauthn/webauthn`, `modernc.org/sqlite`,
+`golang.org/x/crypto` (autocert), `modernc.org/sqlite`,
 one TOML lib, `golang.org/x/time/rate` if needed. Logging with `log/slog`.
 Browser: zero runtime deps. Dev deps only (typescript, esbuild, test runner,
 @playwright/test, a QR encoder may be vendored as a tiny TS file).
@@ -54,7 +54,7 @@ Notation: `||` concat, integers big-endian, `HKDF = HKDF-SHA256`.
 - **File key** `FK`: 32 random bytes, fresh per file.
   - Share link: `FK` is placed in the URL fragment, base64url (no padding):
     `https://host/s/<shareId>#<b64url(FK)>`.
-  - Request link: `FK` is sealed to the owner's X25519 public key with HPKE
+  - Request link: `FK` is sealed to the link's X25519 public key with HPKE
     base mode, suite DHKEM(X25519,HKDF-SHA256)/HKDF-SHA256/AES-256-GCM
     (kem 0x0020, kdf 0x0001, aead 0x0002),
     `info = "dropr/v1 request " || requestId`, `aad = ""`.
@@ -75,18 +75,22 @@ Notation: `||` concat, integers big-endian, `HKDF = HKDF-SHA256`.
   sealed as `AES-256-GCM(MK, nonce = 0x00{12}, aad = "dropr/v1 meta")`,
   stored by the server as opaque base64url `meta` (≤ 4 KiB decoded).
 - **Request label** (optional, owner-only note on a request link): UTF-8 ≤ 256 B,
-  HPKE-sealed to the owner's own public key with
+  HPKE-sealed to the link's own public key with
   `info = "dropr/v1 label " || requestId`, stored as `label_meta = enc || ct`
   (set after creation with `PUT /api/requests/{id}/label`, since it binds the id).
 - **HPKE open** needs the recipient public key (`kem_context = enc || pkR`), so
   the API is `hpkeOpen({privateKey, publicKey}, enc, info, aad, ct)`.
-- **Owner key pair**: X25519. Private key wrapped per passkey:
-  `prf = WebAuthn PRF(eval.first = SHA-256("dropr/v1 prf"))`,
-  `KEK = HKDF(ikm=prf, salt=userHandle, info="dropr/v1 kek", 32)`,
-  `wrapped_privkey = iv(12) || AES-256-GCM(KEK, iv, aad="dropr/v1 privkey", plaintext = JSON JWK {kty,crv,d,x})`.
-  The public key used for request links is `x` from the **unwrapped** JWK
-  (authenticated by the KEK), never a server-provided value. After unwrap the
-  private key is re-imported **non-extractable**.
+- **Request link key pair**: X25519, one per request link, generated in the
+  owner's browser when the link is created (`generateKey({name: "X25519"},
+  extractable = false, ["deriveBits"])`, so the private key can never be
+  exported, not even by Dropr's own scripts). The private key never leaves
+  that browser: it is stored as a `CryptoKey` in IndexedDB (§3 "Request link
+  keys"). The public key is the link fragment, `/r/<id>#<b64url(pub)>`. The
+  server never sees or stores either half, so it cannot substitute a key, and
+  nobody holding only the owner's OIDC login can read received files.
+  Consequence (accepted): files received through a link open only in the
+  browser profile that created it; clearing that site's data makes them
+  unreadable.
 
 ## 3. HTTP surface
 
@@ -97,9 +101,8 @@ base64url (22 chars). Anything not listed returns 404.
 ### Pages (server-rendered, `html/template`, no inline JS/CSS)
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| GET | `/` | session → dashboard (→ `/setup` until 2 passkeys), else login page | |
+| GET | `/` | session → dashboard, else login page | |
 | GET | `/login` | – | "Sign in" button → `/auth/login` |
-| GET | `/setup` | session | first-login passkey registration (×2) |
 | GET | `/inbox` | session | list received files (encrypted names, decrypted client-side) |
 | GET | `/links` | session | active share + request links |
 | GET | `/s/{id}` | – | share recipient page; dead links render a plain 404/410 page without the script |
@@ -121,57 +124,39 @@ Session cookie: `__Host-dropr_session`, `Secure; HttpOnly; SameSite=Strict; Path
 
 Display settings: `__Host-dropr_lang` (`en`, `fr`) and `__Host-dropr_theme` (`light`, `dark`, `system`; default `light`), `Secure; SameSite=Lax; Path=/; Max-Age=1 year`. Not HttpOnly: `prefs.js` sets them so a change keeps the URL fragment. They carry no secret.
 
-### Passkeys (session required)
-| Method | Path | Notes |
-|---|---|---|
-| POST | `/api/passkeys/register/begin` | → `{"publicKey": {...}, "confirm": {"challenge": b64url}}`: creation options (`residentKey: required`, `userVerification: required`, `attestation: none`, `extensions: {prf: {}, credProps: true}`, `excludeCredentials` = the user's passkeys, `user.id` = the account's WebAuthn handle) plus the challenge of the confirmation assertion. With 0 passkeys (initial setup): refused with 409 `setup_in_progress` while another session of the account has a registration pending. With ≥ 1 passkey: consumes the session's "add" grant (403 `reauth_required` without one); the ceremony then expires with the grant |
-| POST | `/api/passkeys/register/finish` | body: `{credential, wrapped_privkey(b64url), pubkey(b64url), confirm?}` → `{id, passkey_count, setup_complete}`. Requires UV, PRF `enabled` (else 400 `prf_unsupported`), `wrapped_privkey` 92–1024 bytes, `pubkey` 32 bytes. `confirm` is an assertion (same JSON as unlock/finish's `credential`) by the **new** credential over `confirm.challenge`, user-verified: **optional**, also for the first passkey (the registration ceremony already proves possession with UV over a server challenge); verified whenever present (400 `passkey_failed` if invalid). First registration stores `pubkey` in `user_keys`, **marks the session unlocked (rotating its ID) and leaves an "add" grant** for the second passkey; later ones must present the identical key (constant-time compare, else 409 `pubkey_mismatch`). 409 `passkeys_changed` if the account gained or lost its key since begin |
-| POST | `/api/passkeys/unlock/begin` | body empty or `{purpose?: "unlock"\|"add"\|"delete", passkey_id?}` (`passkey_id` = b64url credential ID, with "delete" only; unknown → 404) → `{"publicKey": {...}}` assertion options: `allowCredentials` = the user's passkeys, `userVerification: required`, `extensions.prf.eval.first` = SHA-256("dropr/v1 prf") |
-| POST | `/api/passkeys/unlock/finish` | body `{credential}` → `{wrapped_privkey, credential_id, user_handle}` (all b64url) for the passkey used; sets `unlocked_at`, rotates the session ID; for purpose "add"/"delete", leaves that grant on the new session |
-| GET | `/api/passkeys` | → `{"passkeys": [{id, created_at, last_used_at|null}]}` |
-| DELETE | `/api/passkeys/{id}` | consumes the session's "delete" grant for exactly this passkey (403 `reauth_required` without one; the unlock flag is not enough); refused (409 `too_few_passkeys`) if fewer than 2 would remain → 204 |
+### Request link keys (browser only, no endpoint)
 
-- **RP**: RP ID = host of `public_url` (must be a domain name, not an IP),
-  accepted origin = exactly the public origin.
-- **User handle** (`users.webauthn_handle`): 32 random bytes created on the
-  first `register/begin`, never changed (not even by `dropr user reset-keys`):
-  it is the HKDF salt of the client KEK (§2).
-- **Ceremonies** are stored server-side (`webauthn_ceremonies`), one per
-  session, keyed by the session ID hash with `ON DELETE CASCADE`, 5 min TTL,
-  single-use (a finish call deletes it whatever the outcome). An assertion is
-  therefore bound to the OIDC session that began it. `unlock/finish` consumes
-  the ceremony *before* rotating the session (rotation deletes the old
-  session row and would cascade). A ceremony begun in a tab whose session
-  is rotated by another tab is lost; the user retries.
-- **Management grants** (security audit M-1): adding or deleting a passkey
-  needs a fresh, user-verified assertion by an existing passkey of the
-  account, made in this session for that exact action. A successful
-  `unlock/finish` of a ceremony begun with purpose "add" or "delete"
-  (+ `passkey_id`) stores one grant (`passkey_grants`, one per session,
-  keyed by the session hash with `ON DELETE CASCADE`, 5 min after the
-  assertion, single-use: the consuming call deletes it whatever the outcome).
-  `register/begin` consumes an "add" grant, `DELETE /api/passkeys/{id}` a
-  "delete" grant whose target is that ID. The long-lived unlock flag never
-  suffices. Passkey additions and deletions are logged at WARN.
-- **Initial setup** (0 passkeys): no grant can exist, so the first
-  registration is allowed without one, but (a) it belongs to the session that
-  began it: another session of the account gets 409 `setup_in_progress` while
-  that registration ceremony is pending (5 min), and (b) the registration
-  ceremony itself proves possession of the new credential with UV over a server
-  challenge, so a confirmation assertion over `confirm.challenge` is optional
-  (verified if present). The browser still runs that `get()` when `create()`
-  returned no PRF output (many authenticators evaluate PRF only on `get()`),
-  and sends it; otherwise it skips the second prompt. A first registration leaves an "add" grant on
-  the rotated session, so the second passkey of the setup needs no further
-  assertion within 5 minutes; after that (or after a reload) the setup page
-  asks the first passkey again (purpose "add"). Whoever signs in first with
-  valid IdP credentials still creates the account key: see THREAT_MODEL.md.
-- **Counters**: go-webauthn semantics. A non-zero counter that does not
-  increase is refused (403 `passkey_cloned`, stored counter unchanged).
-  Synced passkeys always report 0 and are never flagged.
-- begin/finish are rate-limited per session (60/min, burst 30).
-- **Setup**: complete with ≥ 2 passkeys. `/`, `/inbox`, `/links` redirect to
-  `/setup` until then; `/setup` redirects to `/` afterwards.
+There is no key endpoint and no setup step: the first sign-in lands on the
+dashboard.
+
+- **Store**: IndexedDB database `dropr`, version 1, object store
+  `request-keys`, key path `id` (the request ID). Record:
+  `{id: string, privateKey: CryptoKey /*X25519, non-extractable*/,
+  publicKey: Uint8Array(32), ownerId: string /*users.id*/, createdAt: number
+  /*Unix s*/}`. Owner pages (`/`, `/inbox`, `/links`) carry the signed-in
+  account's ID as `data-owner-id` on `<main>`.
+- **Create** (dashboard): generate the pair → `POST /api/requests` → `put`
+  the record under the returned ID → show `/r/<id>#<b64url(pub)>`. If the
+  `put` fails, the browser deletes the new request (`DELETE
+  /api/requests/{id}`) and reports the error: a link is never handed out
+  without its key. The browser also asks for persistent storage
+  (`navigator.storage.persist()`, best effort) so the keys are not evicted.
+- **Use**: `/inbox` opens each entry with the key of its `request_id`;
+  entries without a local key are listed as "received through a link
+  created in another browser" (size, date, Delete; no name, no Download).
+  `/links` offers "Copy link" only for requests with a local key (the
+  fragment is the stored public key, never a server value).
+- **Prune**: after a successful `GET /api/requests`, records whose ID is not
+  in the list (expired, revoked, deleted elsewhere) are deleted: their files
+  are gone from the server with the link. Records created less than 60 s
+  before the list was requested are kept, so a tab listing links never
+  deletes a key another tab has just stored for a new link. Revoking a link
+  deletes its record after the `DELETE` succeeds.
+- Several accounts may share one browser profile: listing, Copy link and
+  pruning only ever consider records whose `ownerId` is the signed-in
+  account, so one account never touches another's keys (the server lists
+  only the signed-in owner's requests, so a foreign record would otherwise
+  look like a deleted link).
 
 ### Shares (flow A)
 | Method | Path | Auth | Notes |
@@ -185,13 +170,13 @@ Display settings: `__Host-dropr_lang` (`en`, `fr`) and `__Host-dropr_theme` (`li
 ### Requests (flow B)
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | `/api/requests` | session + unlocked | `{expires_in?, max_files: 1..1000, max_bytes, single_use}` → 201 `{request_id}`; client builds link `/r/<id>#<b64url(pubkey)>`. `16 ≤ max_bytes ≤ max_files × C(limits.max_file_size)` |
-| PUT | `/api/requests/{id}/label` | session (owner) | `{label_meta}` (b64url, 49–512 bytes, HPKE-sealed to the owner with `info = "dropr/v1 label " ‖ requestId`, so set after creation) → 204 |
+| POST | `/api/requests` | session | `{expires_in?, max_files: 1..1000, max_bytes, single_use}` → 201 `{request_id}`; client builds link `/r/<id>#<b64url(pubkey)>` from the link's own key pair (§2). `16 ≤ max_bytes ≤ max_files × C(limits.max_file_size)` |
+| PUT | `/api/requests/{id}/label` | session (owner) | `{label_meta}` (b64url, 49–512 bytes, HPKE-sealed to the link's public key with `info = "dropr/v1 label " ‖ requestId`, so set after creation) → 204 |
 | DELETE | `/api/requests/{id}` | session (owner) | revoke: row + every inbox file and blob it received → 204 |
 | GET | `/api/requests` | session | → `{"requests": [{id, expires_at, max_files, max_bytes, single_use, files_received, bytes_received, closed, label_meta|null, created_at}]}` (unexpired) |
 | POST | `/api/r/{id}/files` | – (rate-limited) | `{size, parts, meta, wrapped_key}` → 201 `{upload_id, upload_token}`; 404 unknown, 410 `expired` / `closed`, 409 `link_full`, 413 `too_large` / `quota_exceeded` |
-| GET | `/api/inbox` | session + unlocked | → `{"inbox": [{id, request_id, size, parts, created_at, meta, wrapped_key}]}` (complete files) |
-| POST | `/api/inbox/{id}/download` | session + unlocked | → `{token, size, parts}` |
+| GET | `/api/inbox` | session | → `{"inbox": [{id, request_id, size, parts, created_at, meta, wrapped_key}]}` (complete files of unexpired requests) |
+| POST | `/api/inbox/{id}/download` | session (owner) | → `{token, size, parts}`; 404 once its request expired (the link takes its files with it) |
 | DELETE | `/api/inbox/{id}` | session (owner) | delete row + blob → 204 (link counters unchanged) |
 
 The owner's display name for the uploader page ("Send a file to Alice") is
@@ -276,7 +261,9 @@ CORP same-origin, `Accept-Ranges: bytes`, no `Last-Modified`/`ETag`.
   may still be handed on within its budget.
 - **Token lifetime**: sliding, valid 1 h after its last use, at most 24 h after
   issuance, never past the share's expiry.
-- **Inbox tokens** also require the owner's unlocked session (404 otherwise).
+- **Inbox tokens** also require the owner's session (404 otherwise) and answer
+  410 `expired` once their request link expired; their sliding lifetime never
+  passes the request's expiry.
 - The write deadline slides with progress (2 min stall), so 100 GB downloads
   are bounded by progress, not duration.
 - **Slow and concurrent transfers** (audit L-4): part uploads and downloads
@@ -295,10 +282,9 @@ CORP same-origin, `Accept-Ranges: bytes`, no `Last-Modified`/`ETag`.
   (every 5 min, and `dropr gc`) deletes their rows and files. After that the
   link is unknown (404).
 - The cleanup job also deletes incomplete uploads older than 24 h (releasing
-  request reservations), expired download tokens and passkey ceremonies, and
+  request reservations), expired download tokens, and
   blob directories without a row (older than 1 h).
-- `dropr user purge` and `dropr user reset-keys` delete the affected blob
-  files immediately.
+- `dropr user purge` deletes the affected blob files immediately.
 
 ### Error codes
 | Code | Status | Meaning |
@@ -306,18 +292,14 @@ CORP same-origin, `Accept-Ranges: bytes`, no `Last-Modified`/`ETag`.
 | `bad_request` | 400 | malformed, unknown fields, wrong content type, out-of-range value |
 | `invalid_size` | 400 | declared size/parts is no possible ciphertext geometry |
 | `bad_part`, `wrong_part_size`, `bad_parts` | 400 | part index, part body size, finalize part count |
-| `passkey_failed`, `ceremony_expired`, `prf_unsupported` | 400 | WebAuthn verification failed (incl. a bad confirmation) / no pending ceremony / PRF missing |
 | `too_slow` | 408 | part upload below the minimum transfer rate |
 | `unauthenticated` | 401 | no valid session |
 | `bad_token` | 401 | missing or wrong upload token |
-| `locked` | 403 | passkey unlock required |
-| `passkey_cloned` | 403 | sign counter regressed |
-| `reauth_required` | 403 | adding/deleting a passkey needs a fresh assertion for that action |
 | `not_found` | 404 | unknown or revoked link, upload, item; other owners' objects |
-| `already_complete`, `incomplete`, `link_full`, `pubkey_mismatch`, `passkey_exists`, `too_few_passkeys`, `too_many_passkeys`, `no_passkeys`, `setup_in_progress`, `passkeys_changed` | 409 | state conflicts |
+| `already_complete`, `incomplete`, `link_full` | 409 | state conflicts |
 | `expired`, `exhausted`, `closed`, `token_used` | 410 | link (or upload) expired, download limit reached, link closed (single use, or owner lost access), download token byte budget spent |
 | `too_large`, `quota_exceeded` | 413 | file/body too large, owner quota |
-| `rate_limited` | 429 | per-session passkey limit (per-IP limits answer 429 text) |
+| `rate_limited` | 429 | per-IP limit, with `Retry-After` (JSON on API paths, plain text on pages) |
 | `too_many_transfers` | 429 | concurrent transfer cap (total or per client address) |
 | `disk_full` | 507 | free disk below headroom |
 | `internal` | 500 | server error |
@@ -338,12 +320,8 @@ same-origin `fetch` too.
 Extends PLAN.md §8 with the columns the protocol needs:
 
 ```
-users     (id TEXT PK, issuer, subject, display_name, created_at, disabled_at, quota_bytes NULL, webauthn_handle BLOB(32) NULL UNIQUE)  UNIQUE(issuer, subject)
-sessions  (id_hash BLOB PK, user_id FK, refresh_token_enc BLOB, oidc_sid TEXT, created_at, last_seen_at, revalidated_at, unlocked_at NULL, rotated_from NULL)
-passkeys  (id BLOB PK /*credential id*/, user_id FK, credential BLOB /*go-webauthn JSON*/, sign_count, wrapped_privkey BLOB, created_at, last_used_at)
-user_keys (user_id PK FK, pubkey BLOB(32))
-webauthn_ceremonies (session_hash BLOB PK FK→sessions ON DELETE CASCADE, kind 'register'|'unlock', data BLOB /*JSON: go-webauthn SessionData, confirmation SessionData, setup flag, grant purpose/target*/, expires_at)
-passkey_grants (session_hash BLOB PK FK→sessions ON DELETE CASCADE, purpose 'add'|'delete', target BLOB NULL /*credential id*/, expires_at)
+users     (id TEXT PK, issuer, subject, display_name, created_at, disabled_at, quota_bytes NULL, access_lost_at NULL)  UNIQUE(issuer, subject)
+sessions  (id_hash BLOB PK, user_id FK, refresh_token_enc BLOB, oidc_sid TEXT, created_at, last_seen_at, revalidated_at)
 blobs     (id TEXT PK, owner_id FK, parts INT, size INT, complete INT, upload_token_hash BLOB, created_at)
 shares    (id TEXT PK, owner_id FK, blob_id FK, size, meta BLOB, expires_at, max_downloads NULL, download_count, created_at)
 requests  (id TEXT PK, owner_id FK, expires_at, max_files, max_bytes, single_use, files_received, bytes_received, created_at, label_meta BLOB(49..512) NULL, closed_at NULL)
@@ -355,7 +333,11 @@ Migrations: `0001_init.sql` (the tables above without the additions),
 `0002_passkeys_files.sql` (`users.webauthn_handle`, `webauthn_ceremonies`,
 `requests.label_meta`, `requests.closed_at`, `dl_tokens.created_at`),
 `0003_security_fixes.sql` (`passkey_grants`, `users.access_lost_at`,
-`dl_tokens.served_bytes`).
+`dl_tokens.served_bytes`), `0004_remove_passkeys.sql` (drops `passkeys`,
+`user_keys`, `webauthn_ceremonies`, `passkey_grants`,
+`users.webauthn_handle`, `sessions.unlocked_at`, `sessions.rotated_from`; deletes every request link
+and received file, whose keys were wrapped by the dropped passkeys and are
+unrecoverable; the orphan sweep then removes their blob files).
 `blobs.id` is the `upload_id` of the API. Every owner-scoped query filters on
 the session's `owner_id`; other owners' objects answer 404. Deleting a blob
 row cascades to its share or inbox row and download tokens; blob files are
@@ -436,5 +418,4 @@ scope; a root-scope registration is refused).
 - `go vet`, `golangci-lint run`, `govulncheck ./...` must be clean.
 - Web: `npm test` runs node's test runner on the crypto modules against
   WebCrypto in Node 24 (globalThis.crypto.subtle supports X25519, HKDF, AES-GCM).
-- E2E: Playwright in Chromium/Firefox/WebKit with a virtual WebAuthn
-  authenticator (CDP in Chromium; PRF support required) against Keycloak.
+- E2E: Playwright in Chromium/Firefox/WebKit against Keycloak.

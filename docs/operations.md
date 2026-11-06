@@ -168,9 +168,8 @@ credentials: `sudo dropr-admin ...` (NixOS module and `deploy/debian`), or
 | Command | Effect |
 |---|---|
 | `dropr serve` | Run the server |
-| `dropr user list` | Table of accounts: ID, name, subject, created, sessions, passkeys, keys, issuer |
+| `dropr user list` | Table of accounts: ID, name, subject, created, sessions, issuer |
 | `dropr user revoke <user>` | End all sessions now and pause their request links until they sign in again (use after disabling someone at the IdP) |
-| `dropr user reset-keys <user> [--yes]` | Wipe passkeys and the key pair. Received files and request links are deleted (undecryptable); share links remain; the user re-registers passkeys at next login |
 | `dropr user purge <user> [--yes]` | Delete the user and all their data; run `dropr gc` afterwards to reclaim blob disk space |
 | `dropr user migrate --from-issuer URL --map file.csv [--to-issuer URL] [--dry-run] [--yes]` | Relink accounts to a new provider; see below |
 | `dropr gc` | Run the cleanup jobs once (the server also runs them every 5 minutes) |
@@ -193,11 +192,16 @@ restic backup /var/lib/dropr/blobs
 
 Take the database backup **first**, then the blobs: blobs that have no row are
 removed by GC after restore, whereas a row without its blob is a broken file.
-Blobs are ciphertext already. The database holds wrapped private keys and
+Blobs are ciphertext already. The database holds HPKE-wrapped file keys and
 encrypted refresh tokens: **encrypt the backup and restrict access to it**.
 Also back up the secret files separately (`refresh_key`, `oidc_key.pem`);
-without `refresh_key` restored sessions simply need a new login, but without
-the database the inbox keys are gone.
+without `refresh_key` restored sessions simply need a new login.
+
+Request link private keys are **not** on the server and not in any server
+backup: each lives in the browser profile that created the link. A restore
+brings received files back only for owners who still have that browser
+profile; files received through links created in a profile that was since
+cleared stay unreadable.
 
 Restore: stop Dropr, place the backup as `data_dir/dropr.db` (remove any stale
 `dropr.db-wal` and `dropr.db-shm`), restore `blobs/`, start, run `dropr gc`.
@@ -214,6 +218,29 @@ Encrypt rate limits if you restore repeatedly).
    change the digest, `docker compose up -d`. NixOS: `nixos-rebuild switch`.
 4. Check `dropr version`, the startup log (discovery results and warnings) and
    `/healthz`.
+
+### Upgrading to schema 4 (passkeys removed)
+
+Migration `0004_remove_passkeys.sql` removes the passkey workflow. Received
+files used to be encrypted to an account key wrapped by the owner's passkeys;
+each request link now has its own key, kept in the owner's browser
+(ARCHITECTURE.md §2). The old keys cannot be carried over, so the migration
+**deletes every request link and every received file** (the orphan sweep then
+removes their blob files) and drops the `passkeys`, `user_keys`,
+`webauthn_ceremonies` and `passkey_grants` tables. Share links, accounts and
+sessions are kept. The `dropr user reset-keys` command no longer exists.
+
+Before upgrading:
+
+1. Tell users to **download every received file** they want to keep, and that
+   their request links will stop working.
+2. Take the backup (step 2 above), after they are done.
+3. After the upgrade, users create new request links. Files sent through a
+   link open only in the browser that created it, so they should create links
+   in their everyday browser profile, not a private window.
+
+Rolling back to an older release needs the pre-upgrade backup (the schema
+change is not reversible), and restores the old links and files with it.
 
 Browsers cache `/assets` immutably under content-hashed names and the service
 worker `/sw.js` has a fixed name, so clients pick up new code at their next
@@ -276,23 +303,25 @@ certificate alongside the old one**, replace `oidc_key.pem`, restart, confirm
 logins, then delete the old certificate from the app registration. Keycloak:
 import the new certificate, update `client_key_id` if needed, restart.
 
-**Owner keys and passkeys.** Not rotated by the operator. Users add a new
-passkey and remove an old one (the UI keeps at least two). `reset-keys` is the
-destructive path.
+**Request link keys.** Not managed by the operator: each request link has its
+own key pair, generated in the owner's browser and deleted with the link. To
+"rotate", the owner revokes a link and creates a new one.
 
 ## Changing the domain
 
-Passkeys are bound to the domain (the WebAuthn RP ID is the host of
-`public_url`). **Changing it invalidates every passkey**, which makes every
-owner's wrapped private key unreachable: all received files become unreadable.
-Share links also change, and the redirect URI at the IdP must be updated. Pick
-the domain once. A move is only safe if the old domain keeps serving Dropr, or
-you accept that all inboxes are lost (`dropr user reset-keys`).
+Request link private keys are stored in the owners' browsers per origin (the
+scheme and host of `public_url`). **Changing the domain makes every stored key
+unreachable** from the new origin: files already received become unreadable,
+and the links already handed out point to the old host. Share links change
+too, and the redirect URI at the IdP must be updated. Pick the domain once. A
+move is only safe after owners have downloaded their received files; then
+have them revoke their old request links (or let the links expire) and create
+new ones on the new domain.
 
 ## Changing identity provider
 
-Every user's `(issuer, subject)` changes. Relink existing accounts, passkeys
-and data with a CSV of `old_subject,new_subject` lines:
+Every user's `(issuer, subject)` changes. Relink existing accounts and data
+with a CSV of `old_subject,new_subject` lines:
 
 ```sh
 dropr user migrate --from-issuer https://old-issuer --map map.csv --dry-run

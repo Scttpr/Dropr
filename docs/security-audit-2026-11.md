@@ -1,5 +1,13 @@
 # Dropr pre-release security audit
 
+> **Note, 2026-11-06:** this is a historical record, kept as written. After the
+> audit, the passkey / WebAuthn PRF workflow was removed: request links now use
+> a per-link X25519 key pair generated in the owner's browser, with the private
+> key stored non-extractable in IndexedDB (ARCHITECTURE.md §2, §3 "Request link
+> keys"). Findings and review notes about passkeys, PRF key wrapping, unlock
+> and `reset-keys` (M-1, I-5, I-6 and the matching "no findings" bullets) no
+> longer apply to the current code; the other findings and their fixes stand.
+
 Date: 2026-11-05. Scope: the repository as it stood during the audit (another engineer was integrating at the same time; `session.go`, `passkey.go` and `server.go` changed while I was reading them, and the line numbers below match the final state I read).
 Method: manual review of the spec (PLAN, ARCHITECTURE, FORMAT, PAGES, THREAT_MODEL) against the code, plus `go test ./...` and `npm test`, plus throwaway tests in a scratch copy of the repo.
 Test status: web tests 203/203 pass. Go tests pass except `internal/server TestAnonymousPagesAndHeaders` ("GET /api/nope: 404"). That failure comes from the routing/notFound work in progress, not from a security problem.
