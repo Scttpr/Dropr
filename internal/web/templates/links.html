@@ -1,0 +1,36 @@
+{{define "title"}}Active links · Dropr{{end}}
+{{define "main"}}{{with .View}}
+<main id="main" class="site-main" data-page="links" data-count="{{.Count}}">
+  <div class="page-head">
+    <h1>Active links</h1>
+    <p class="muted">{{if eq .Count 0}}No active links.{{else if eq .Count 1}}1 active link.{{else}}{{.Count}} active links.{{end}}</p>
+  </div>
+  <p id="links-status" class="transfer-status" role="status" aria-live="polite"></p>
+  <div id="links-error" class="error" role="alert" tabindex="-1" hidden></div>
+
+  <section class="card" aria-labelledby="shares-heading">
+    <h2 id="shares-heading">Share links</h2>
+    <div class="table-wrap">
+      <table id="shares-table" class="data-table" hidden>
+        <thead><tr><th scope="col">Size</th><th scope="col">Created</th><th scope="col">Expires</th>
+          <th scope="col">Downloads</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody id="shares-list"></tbody>
+      </table>
+    </div>
+    <p id="shares-empty" class="empty" hidden tabindex="-1">No active share links.</p>
+  </section>
+
+  <section class="card" aria-labelledby="requests-heading">
+    <h2 id="requests-heading">Request links</h2>
+    <div class="table-wrap">
+      <table id="requests-table" class="data-table" hidden>
+        <thead><tr><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Files received</th>
+          <th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody id="requests-list"></tbody>
+      </table>
+    </div>
+    <p id="requests-empty" class="empty" hidden tabindex="-1">No active request links.</p>
+  </section>
+  <noscript><p class="notice">Managing links needs JavaScript. Please enable it for this site.</p></noscript>
+</main>
+{{end}}{{end}}

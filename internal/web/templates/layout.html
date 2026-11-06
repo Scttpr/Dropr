@@ -1,0 +1,55 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+{{- if .RefreshToRoot}}
+<meta http-equiv="refresh" content="0;url=/">
+{{- end}}
+<title>{{block "title" .}}Dropr{{end}}</title>
+<link rel="stylesheet" href="{{asset "app.css"}}" integrity="{{integrity "app.css"}}">
+<link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+{{- range .Scripts}}
+<script type="module" src="{{.Src}}" integrity="{{.Integrity}}"></script>
+{{- end}}
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <a class="brand" href="/"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.5c-.4 0-.8.2-1.1.5C8.3 6 5 10.3 5 14a7 7 0 0 0 14 0c0-3.7-3.3-8-5.9-11-.3-.3-.7-.5-1.1-.5Z"/></svg><span>Dropr</span></a>
+  {{- if .User}}
+  <nav class="site-nav" aria-label="Main">
+    {{- if and (ne .Page "setup") (ne .Page "forbidden")}}
+    <ul class="nav-links">
+      <li><a href="/"{{if eq .Page "dashboard"}} aria-current="page"{{end}}>Home</a></li>
+      <li><a href="/inbox"{{if eq .Page "inbox"}} aria-current="page"{{end}}>Received files</a></li>
+      <li><a href="/links"{{if eq .Page "links"}} aria-current="page"{{end}}>Active links</a></li>
+    </ul>
+    {{- end}}
+    <span class="who">{{if .User.DisplayName}}{{.User.DisplayName}}{{else}}Signed in{{end}}</span>
+    <form method="post" action="/auth/logout" class="inline">
+      <button type="submit" class="button button-quiet">Sign out</button>
+    </form>
+  </nav>
+  {{- end}}
+</header>
+{{block "main" .}}
+<main id="main" class="site-main">
+{{block "content" .}}{{end}}
+</main>
+{{end}}
+<footer class="site-footer">
+  <p>End-to-end encrypted: files are encrypted in your browser and the server never sees their contents.</p>
+</footer>
+</body>
+</html>
+{{end}}
+
+{{define "expiry-options"}}
+      <option value="1h"{{if eq . "1h"}} selected{{end}}>1 hour</option>
+      <option value="1d"{{if eq . "1d"}} selected{{end}}>1 day</option>
+      <option value="7d"{{if eq . "7d"}} selected{{end}}>7 days</option>
+      <option value="30d"{{if eq . "30d"}} selected{{end}}>30 days</option>
+{{end}}

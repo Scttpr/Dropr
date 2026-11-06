@@ -1,0 +1,94 @@
+{{define "title"}}Dropr{{end}}
+{{define "main"}}{{with .View}}
+<main id="main" class="site-main" data-page="dashboard" data-max-file-size="{{.MaxFileSize}}" data-default-expiry="{{.DefaultExpiry}}" data-max-request-bytes="{{.MaxRequestBytes}}">
+  <h1 class="visually-hidden">Dropr</h1>
+
+  <section class="card card-share" aria-labelledby="share-heading">
+    <h2 id="share-heading">Share a file</h2>
+    <form id="share-form" class="stack" data-js-only hidden>
+      <div id="drop-zone" class="drop-zone">
+        <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+        <label for="file-input" class="drop-label"><span class="drop-title">Drop a file here to share</span> <span class="drop-sub">or choose one (up to {{bytes .MaxFileSize}})</span></label>
+        <input type="file" id="file-input" name="file" class="file-input">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="expires-in">Link expires after</label>
+          <select id="expires-in" name="expires_in">{{template "expiry-options" .DefaultExpiry}}</select>
+        </div>
+        <div class="field">
+          <label for="max-downloads">Download limit <span class="optional">(optional)</span></label>
+          <input type="number" id="max-downloads" name="max_downloads" min="1" max="999999" inputmode="numeric" placeholder="No limit">
+        </div>
+      </div>
+    </form>
+
+    <div id="upload-panel" class="transfer" hidden>
+      <p id="upload-file-name" class="transfer-name"></p>
+      <progress id="upload-progress" max="100" value="0" aria-labelledby="upload-file-name"></progress>
+      <p id="upload-status" class="transfer-status" role="status" aria-live="polite"></p>
+      <div class="button-row">
+        <button type="button" id="upload-cancel" class="button">Cancel</button>
+        <button type="button" id="upload-retry" class="button button-primary" hidden>Retry</button>
+      </div>
+    </div>
+
+    <div id="share-result" class="link-result" hidden>
+      <div class="link-main">
+        <label for="share-link">Share link</label>
+        <div class="link-box">
+          <input type="text" id="share-link" class="link-input" readonly>
+          <button type="button" id="share-copy" class="button button-primary">Copy</button>
+        </div>
+        <p id="share-expiry" class="muted"></p>
+        <p class="hint">Anyone with this link can download the file. The key is in the part after “#” and never reaches the server.</p>
+        <button type="button" id="share-another" class="button">Share another file</button>
+      </div>
+      <div id="share-qr" class="qr-box"></div>
+    </div>
+
+    <div id="share-error" class="error" role="alert" tabindex="-1" hidden></div>
+    <noscript><p class="notice">Dropr encrypts files in your browser before they are uploaded, so sharing and receiving files needs JavaScript. Please enable it for this site.</p></noscript>
+  </section>
+
+  <section class="card" aria-labelledby="request-heading">
+    <h2 id="request-heading">Receive a file</h2>
+    <p class="muted">Create a link that lets someone send you files, even without an account. Only you can open them.</p>
+    <form id="request-form" class="stack" data-js-only hidden>
+      <div class="field-row">
+        <div class="field">
+          <label for="request-expires-in">Link expires after</label>
+          <select id="request-expires-in" name="expires_in">{{template "expiry-options" .DefaultExpiry}}</select>
+        </div>
+        <div class="field">
+          <label for="request-max-files">Maximum number of files</label>
+          <input type="number" id="request-max-files" name="max_files" min="1" max="1000" value="10" inputmode="numeric">
+        </div>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="request-single-use" name="single_use">
+        <label for="request-single-use">Single use (the link closes after the first upload)</label>
+      </div>
+      <div><button type="submit" id="request-create" class="button button-primary button-large">Ask someone to send me a file</button></div>
+    </form>
+    <p id="request-status" class="transfer-status" role="status" aria-live="polite"></p>
+    <div id="request-result" class="link-result" hidden>
+      <div class="link-main">
+        <label for="request-link">Request link</label>
+        <div class="link-box">
+          <input type="text" id="request-link" class="link-input" readonly>
+          <button type="button" id="request-copy" class="button button-primary">Copy</button>
+        </div>
+        <p id="request-expiry" class="muted"></p>
+      </div>
+      <div id="request-qr" class="qr-box"></div>
+    </div>
+    <div id="request-error" class="error" role="alert" tabindex="-1" hidden></div>
+  </section>
+
+  <nav class="tiles" aria-label="Your files and links">
+    <a class="tile" href="/inbox"><span class="tile-title">Received files{{if ge .InboxCount 0}} (<span id="inbox-count">{{.InboxCount}}</span>){{end}}</span><span class="tile-sub">Files people sent you</span></a>
+    <a class="tile" href="/links"><span class="tile-title">Active links (<span id="link-count">{{.LinkCount}}</span>)</span><span class="tile-sub">Share and request links you created</span></a>
+  </nav>
+</main>
+{{end}}{{end}}

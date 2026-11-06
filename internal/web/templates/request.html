@@ -1,0 +1,27 @@
+{{define "title"}}Send a file · Dropr{{end}}
+{{define "main"}}{{with .View}}
+<main id="main" class="site-main" data-page="request" data-request-id="{{.ID}}" data-max-files="{{.MaxFiles}}" data-max-bytes="{{.MaxBytes}}">
+  <section class="card card-narrow card-recipient" aria-labelledby="request-title">
+    <h1 id="request-title">Send a file to <span id="owner-name">{{.OwnerName}}</span></h1>
+    <p class="muted">Files are encrypted in your browser. Only {{.OwnerName}} can open them. {{expiresIn .ExpiresAt}}.</p>
+    <div id="drop-zone" class="drop-zone" data-js-only hidden>
+      <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+      <label for="file-input" class="drop-label"><span class="drop-title">Drop files here</span> <span class="drop-sub">or choose them (up to {{bytes .MaxBytes}}{{if gt .MaxFiles 1}}, {{.MaxFiles}} files{{end}})</span></label>
+      <input type="file" id="file-input" name="files" class="file-input" multiple>
+    </div>
+    <div id="upload-panel" class="transfer" hidden>
+      <p id="upload-file-name" class="transfer-name"></p>
+      <progress id="upload-progress" max="100" value="0" aria-labelledby="upload-file-name"></progress>
+      <p id="upload-status" class="transfer-status" role="status" aria-live="polite"></p>
+      <div class="button-row">
+        <button type="button" id="upload-cancel" class="button">Cancel</button>
+        <button type="button" id="upload-retry" class="button button-primary" hidden>Retry</button>
+      </div>
+    </div>
+    <ul id="upload-list" class="sent-list"></ul>
+    <p id="upload-done" class="success" hidden tabindex="-1">✓ Sent. You can close this page.</p>
+    <div id="upload-error" class="error" role="alert" tabindex="-1" hidden></div>
+    <noscript><p class="notice">Files are encrypted in your browser before they are sent, which needs JavaScript. Please enable it for this site.</p></noscript>
+  </section>
+</main>
+{{end}}{{end}}
