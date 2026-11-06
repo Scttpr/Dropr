@@ -3,9 +3,10 @@
 Status: draft for external review (PLAN.md milestone 7). Scope: Dropr as
 specified in `PLAN.md`, `docs/ARCHITECTURE.md` and `docs/FORMAT.md`, deployed
 as one instance with Microsoft Entra ID (or another OIDC provider) for login.
-Where a mitigation is not implemented yet (milestones 3-6 are still landing),
-the "Code" column names where it lives or must live. Treat this document as a
-checklist to re-verify against the code before a release.
+Every mitigation listed is implemented; the "Code" column names where it
+lives. Findings of the internal audit and their fixes are in
+[security-audit-2026-11.md](security-audit-2026-11.md). Treat this document
+as a checklist to re-verify against the code before each release.
 
 ## 1. What Dropr is protecting, and from whom
 
@@ -326,5 +327,9 @@ account per person, and no request links from shared computers.
 * Go: negative OIDC tests (alg none, HS256, wrong issuer/audience/nonce, expired,
   missing role) in `internal/auth/oidc`; native fuzz targets for every parser of
   untrusted input; `govulncheck` in CI.
-* End-to-end: Playwright suites against Keycloak (milestone 6).
+* End-to-end: Playwright suites in Chromium, Firefox and WebKit against
+  Keycloak (`e2e/tests`): tampered ciphertext and request keys, expiry,
+  revocation, download limits, roles, CSRF, security headers, request link
+  keys scoped per account.
+* Deployment: NixOS VM test of the hardened module (`nix/vm-test.nix`).
 * Before real use: external review (PLAN §11, milestone 7).
