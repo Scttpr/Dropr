@@ -1,0 +1,10 @@
+# Throwaway Debian box with systemd as PID 1 for smoke.sh. Built and run by
+# container.sh; RELEASE=bookworm tests Debian 12.
+ARG RELEASE=trixie
+FROM docker.io/library/debian:${RELEASE}
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      systemd systemd-sysv dbus ca-certificates curl openssl nginx sudo \
+ && rm -rf /var/lib/apt/lists/*
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

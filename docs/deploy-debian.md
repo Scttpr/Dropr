@@ -205,6 +205,18 @@ bodies, long timeouts, X-Forwarded-For overwritten rather than appended). Caddy:
 `reverse_proxy 127.0.0.1:8080 { flush_interval -1 }`. Requirements in
 [TLS modes](operations.md#tls-modes).
 
+### Smoke test on a throwaway box
+
+`deploy/debian/test/` runs `install.sh` end to end (fresh install, start behind
+nginx against a stub IdP over local TLS, upgrade, admin, backup) on a scratch
+Debian box: `vm.sh` (QEMU with the official cloud image, faithful to a VPS)
+or `container.sh` (privileged Podman container: installer file work only, as
+systemd does not provide credentials there). Both take
+`RELEASE=trixie|bookworm` and a static binary in `BIN` (default
+`result/bin/dropr` from `nix build .#dropr`). After a VM run, `vm.sh browse`
+switches the VM to the dev Keycloak realm and opens Chromium on it, to use
+the installed Dropr by hand.
+
 ## Docker (Compose)
 
 ### Install Docker
