@@ -119,7 +119,8 @@ Admin access is shell access to the host. There is no admin web UI.
 - `dropr user list`
 - `dropr user revoke <user>`: kills all sessions now
 - `dropr user purge <user>`: deletes the user and all their data
-- `dropr gc`
+- `dropr user migrate`: relinks accounts after a provider change (§5.1)
+- `dropr gc`, `dropr backup --out FILE`, `dropr healthcheck`
 
 ## 6. Links
 
@@ -153,7 +154,7 @@ Admin access is shell access to the host. There is no admin web UI.
 | Database | SQLite, WAL mode |
 | Blobs | Local disk volume |
 | Pages | Server-rendered with Go `html/template` (contextual auto-escaping). No inline scripts or styles, so the strict CSP holds. Every page works as a plain HTML document; JS only adds the crypto parts. |
-| Browser code | A few small TypeScript modules, no framework, bundled with esbuild and embedded in the binary: `crypto` (STREAM, HPKE), `request-keys` (IndexedDB store of the link private keys), `upload`, `download` (+ service worker), `decrypt-names` (fills in encrypted filenames on the inbox and share pages). |
+| Browser code | A few small TypeScript modules, no framework, bundled with esbuild and embedded in the binary: `crypto` (STREAM, HPKE), `request-keys` (IndexedDB store of the link private keys), `uploader`, `downloader` (+ service worker), `decrypt-names` (fills in encrypted filenames on the inbox and share pages), one entry module per page, plus `prefs` (language and theme) and typed EN/FR catalogs. |
 | Deployment | One distroless container running as non-root, read-only root filesystem, one data volume (SQLite, blobs, ACME cache). Listens on 8443 inside the container, mapped to host port 443. |
 | Dev environment | Nix flake (Go, Node, esbuild). A dev Compose profile starts Keycloak with a seeded realm, so login works locally without a real tenant. |
 | CI | Go tests + fuzzing, browser-module tests, Playwright E2E against Keycloak |
@@ -192,6 +193,11 @@ blobs     (id, parts, size, complete, created_at)
 **Request uploader**: "Send a file to Alice", a drop zone, progress, then "✓ Sent. You can close this page." No login.
 
 Errors are written in plain language: "This link has expired."
+
+**Language and theme**: English and French, picked from the browser's
+language and switchable on every page; light theme by default, plus dark and
+"follow the system". Both work without JavaScript (a small form in the page
+header) and are remembered in cookies.
 
 ## 10. Self-hosting
 

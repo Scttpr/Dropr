@@ -51,7 +51,7 @@ export function messageForStatus(status: number, code = "", { t }: Locale = loca
       return t.statusExpired;
     case "exhausted":
       return t.statusExhausted;
-    case "revoked":
+    case "closed":
       return t.statusClosed;
     case "quota_exceeded":
       return t.statusQuota;

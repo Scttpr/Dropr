@@ -39,7 +39,7 @@ export const en = {
   apiCodes: {} as Readonly<Record<string, string>>,
   statusExpired: "This link has expired.",
   statusExhausted: "This link has reached its download limit.",
-  statusClosed: "This link has been revoked by its owner.",
+  statusClosed: "This link no longer accepts files.",
   statusQuota: "There is not enough storage space left for this file.",
   statusTooLarge: "This file is too large.",
   statusNetwork: "Could not reach the server. Check your connection and try again.",

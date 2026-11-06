@@ -170,11 +170,12 @@ credentials: `sudo dropr-admin ...` (NixOS module and `deploy/debian`), or
 | `dropr serve` | Run the server |
 | `dropr user list` | Table of accounts: ID, name, subject, created, sessions, issuer |
 | `dropr user revoke <user>` | End all sessions now and pause their request links until they sign in again (use after disabling someone at the IdP) |
-| `dropr user purge <user> [--yes]` | Delete the user and all their data; run `dropr gc` afterwards to reclaim blob disk space |
+| `dropr user purge <user> [--yes]` | Delete the user and all their data, blob files included (if some files cannot be removed it says so, and `dropr gc` finishes the job) |
 | `dropr user migrate --from-issuer URL --map file.csv [--to-issuer URL] [--dry-run] [--yes]` | Relink accounts to a new provider; see below |
 | `dropr gc` | Run the cleanup jobs once (the server also runs them every 5 minutes) |
 | `dropr backup --out FILE` | Consistent online backup of the SQLite database; `FILE` must not exist |
-| `dropr version` | Version, Go version, schema version |
+| `dropr healthcheck [--url URL]` | Probe `GET /healthz` of the local server, exit 0 when healthy (the container healthcheck) |
+| `dropr version` | Version, Go version, VCS revision, schema version |
 
 `<user>` is a user ID or a subject matching exactly one account. Destructive
 commands ask you to type `yes` unless `--yes` is given.

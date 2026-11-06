@@ -96,6 +96,8 @@ admin CLI and capacity planning for 100 GB files.
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Assets, attackers, STRIDE, residual risks |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | HTTP surface, data model, contracts |
 | [docs/FORMAT.md](docs/FORMAT.md) | Normative byte formats and test vectors |
+| [docs/PAGES.md](docs/PAGES.md) | Page ↔ browser module DOM contract, language and theme |
+| [docs/security-audit-2026-11.md](docs/security-audit-2026-11.md) | Internal security audit: findings and fixes |
 | [PLAN.md](PLAN.md) | Product plan and decisions |
 | [SECURITY.md](SECURITY.md) | Reporting, supported versions, verifying releases |
 

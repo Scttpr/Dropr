@@ -18,34 +18,46 @@ side at once.
 ## 1. Repository layout
 
 ```
-flake.nix                 dev shell + package + container image
+flake.nix                 dev shell, packages (dropr, web-assets, image), checks, NixOS module
+nix/                      module.nix (services.dropr), vm-test.nix, hashes.nix (`make hashes`)
 go.mod                    module github.com/scttpr/dropr
-cmd/dropr/                main: `dropr serve | user … | gc | backup | healthcheck | version`
-internal/config/          TOML config (BurntSushi/toml or pelletier), validation, secrets-from-files
-internal/db/              SQLite open (WAL, foreign_keys, busy_timeout), embedded migrations, backup
-internal/store/           typed queries per table (no ORM)
-internal/auth/oidc/       discovery, PKCE, private_key_jwt, token verification, revalidation
-internal/auth/session/    server-side sessions, cookie handling, rotation
-internal/blob/            sharded part storage, multi-part ReadSeeker, disk-space checks, GC
-internal/httpx/           middleware: security headers, CSP, CSRF, body limits, rate limit, real-IP, logging
-internal/server/          router (net/http ServeMux patterns), handlers, page view-models
-internal/web/             html/template pages + go:embed of internal/web/static (esbuild output + manifest.json)
-internal/jobs/            cleanup ticker (5 min), log retention
-web/                      TypeScript browser modules (esbuild), tests
-  src/crypto/             stream.ts, hpke.ts, b64.ts, meta.ts  (pure, WebCrypto only)
-  src/lib/request-keys.ts IndexedDB store of the per-link private keys
-  src/upload.ts download.ts sw.ts decrypt-names.ts dashboard.ts …
-  test/                   unit + property tests (node --test / vitest), test vectors
-e2e/                      Playwright specs, Keycloak realm, fake-IdP for negative tests
-deploy/                   Containerfile, compose.yaml, compose.dev.yaml (Keycloak), dropr.example.toml
-docs/                     ARCHITECTURE.md, FORMAT.md, THREAT_MODEL.md, setup-entra.md, setup-keycloak.md
+cmd/dropr/                main: `dropr serve | user list|revoke|purge|migrate | gc | backup | healthcheck | version`
+internal/config/          TOML config (BurntSushi/toml), validation, binary sizes, secrets from files
+internal/db/              SQLite open (WAL, foreign_keys, busy_timeout), embedded migrations, online backup
+internal/store/           typed queries per table (no ORM); storetest/ fixtures
+internal/auth/oidc/       discovery, PKCE, private_key_jwt assertions, token verification, revalidation;
+  oidctest/               fake OIDC provider for negative tests
+internal/auth/session/    server-side sessions, cookie handling, rotation, idle/absolute timeouts
+internal/blob/            sharded part storage, part geometry, multi-part ReadSeeker, Range serving, disk-space checks
+internal/httpx/           middleware: security headers, CSP, CSRF, body limits, deadlines, rate and transfer
+                          limits, real client IP, JSON problems, request logging
+internal/server/          router (net/http ServeMux patterns), API, transfer and page handlers
+internal/web/             html/template pages (templates/), display settings (prefs.go), asset manifest,
+                          go:embed of internal/web/static (esbuild output, gitignored)
+internal/i18n/            language negotiation, gettext-style Go catalogs (English = msgid, fr.go)
+internal/seal/            AES-GCM sealing of server secrets, HKDF subkeys of the refresh key
+internal/ids/             random IDs (128-bit) and bearer secrets (256-bit), validation
+internal/keyed/           per-key mutex (per-blob part commit / finalize lock)
+internal/jobs/            cleanup ticker (5 min) and its tasks
+web/                      TypeScript browser modules (esbuild), zero runtime dependencies
+  src/crypto/             stream, hpke, kdf, meta, filekey, requestkey, b64 (pure, WebCrypto only)
+  src/lib/                api, uploader, downloader, swproto, request-keys (IndexedDB), i18n + locales/,
+                          dropzone, progress, qr, format, …
+  src/*.ts                page entry points: dashboard, links, inbox, share, request, prefs; sw (service worker)
+  scripts/                build.ts (hashed bundles + manifest.json), bench.ts
+  test/                   node --test unit and property tests, vectors/ (FORMAT.md test vectors)
+e2e/                      Playwright specs (tests/), fixtures, soak/ (100 GiB soak run)
+deploy/                   Containerfile, dropr.example.toml, compose.dev.yaml + keycloak/ (dev realm),
+                          docker/ (production Compose kit), debian/ (systemd kit), dropr.dev.toml
+docs/                     contracts, format, threat model, provider setup, operations, deployment
 ```
 
-Go: stdlib-first. Allowed deps: `coreos/go-oidc/v3`, `golang.org/x/oauth2`,
-`golang.org/x/crypto` (autocert), `modernc.org/sqlite`,
-one TOML lib, `golang.org/x/time/rate` if needed. Logging with `log/slog`.
-Browser: zero runtime deps. Dev deps only (typescript, esbuild, test runner,
-@playwright/test, a QR encoder may be vendored as a tiny TS file).
+Go: stdlib-first. Direct dependencies: `coreos/go-oidc/v3`, `golang.org/x/oauth2`,
+`golang.org/x/crypto` (autocert), `golang.org/x/time/rate`, `modernc.org/sqlite`,
+`BurntSushi/toml`. Logging with `log/slog`. Browser: zero runtime
+dependencies; dev dependencies are only `typescript`, `esbuild` and
+`@types/node` (the QR encoder is vendored in `web/src/lib/qr.ts`), plus
+`@playwright/test` in `e2e/`.
 
 ## 2. Encrypted format (normative summary; full spec in docs/FORMAT.md)
 
@@ -78,6 +90,8 @@ Notation: `||` concat, integers big-endian, `HKDF = HKDF-SHA256`.
   HPKE-sealed to the link's own public key with
   `info = "dropr/v1 label " || requestId`, stored as `label_meta = enc || ct`
   (set after creation with `PUT /api/requests/{id}/label`, since it binds the id).
+  v1 labels are 49..304 bytes sealed; the server stores up to 512 (headroom).
+  The API and crypto exist; the pages do not offer a label field yet.
 - **HPKE open** needs the recipient public key (`kem_context = enc || pkR`), so
   the API is `hpkeOpen({privateKey, publicKey}, enc, info, aad, ct)`.
 - **Request link key pair**: X25519, one per request link, generated in the
@@ -110,6 +124,7 @@ base64url (22 chars). Anything not listed returns 404.
 | GET | `/assets/{hash-name}` | – | immutable, long cache |
 | GET | `/sw.js` | – | service worker (registered with scope `/_dl/`), `Cache-Control: no-cache` |
 | GET | `/_dl/{…}` | – | always 404 ("The download could not start"): only the service worker answers there |
+| GET | `/healthz` | – | `200 ok` when the database answers within 2 s, else 503 (load balancers, `dropr healthcheck`) |
 | POST | `/prefs` | – | display settings without JavaScript: `lang` (`en`, `fr`) and/or `theme` (`light`, `dark`, `system`) → cookies, 303 to `next` (same-origin path only, else `/`) |
 
 ### Auth
@@ -295,6 +310,7 @@ CORP same-origin, `Accept-Ranges: bytes`, no `Last-Modified`/`ETag`.
 | `too_slow` | 408 | part upload below the minimum transfer rate |
 | `unauthenticated` | 401 | no valid session |
 | `bad_token` | 401 | missing or wrong upload token |
+| `csrf` | 403 | cross-site state-changing request (JSON on API paths, an HTML error page elsewhere) |
 | `not_found` | 404 | unknown or revoked link, upload, item; other owners' objects |
 | `already_complete`, `incomplete`, `link_full` | 409 | state conflicts |
 | `expired`, `exhausted`, `closed`, `token_used` | 410 | link (or upload) expired, download limit reached, link closed (single use, or owner lost access), download token byte budget spent |
@@ -306,14 +322,17 @@ CORP same-origin, `Accept-Ranges: bytes`, no `Last-Modified`/`ETag`.
 
 Per-IP rate limits (keyed hashes): `/s/{id}`, `/r/{id}`, `/api/s/{id}/download`
 and `/api/r/{id}/files` share one limiter (60/min, burst 30), `/upload/*`
-(900/min, burst 200), `/dl/*` (120/min, burst 60). Part PUTs and `/dl/*` also
-count against the concurrent transfer caps (see Downloads).
+(900/min, burst 200), `/dl/*` (120/min, burst 60), and `/auth/login`,
+`/auth/callback`, `/auth/frontchannel-logout` share another (30/min, burst
+10). Part PUTs and `/dl/*` also count against the concurrent transfer caps
+(see Downloads).
 
 ### State-changing request protection
-Every non-GET/HEAD request: reject unless `Sec-Fetch-Site` ∈ {`same-origin`,
-`none`} (absent header → fall back to `Origin` == public origin; both absent →
-reject). Exceptions: `/auth/callback` (GET anyway). Upload endpoints are
-same-origin `fetch` too.
+Every request other than GET, HEAD and OPTIONS: reject (403 `csrf`) unless
+`Sec-Fetch-Site` ∈ {`same-origin`, `none`} (`same-site` is refused: sibling
+subdomains are not trusted). Absent header → `Origin` must equal the public
+origin; both absent → reject. This complements `SameSite=Strict` on the
+session cookie. Upload endpoints are same-origin `fetch` too.
 
 ## 4. Data model (SQLite, strict tables)
 
@@ -326,7 +345,7 @@ blobs     (id TEXT PK, owner_id FK, parts INT, size INT, complete INT, upload_to
 shares    (id TEXT PK, owner_id FK, blob_id FK, size, meta BLOB, expires_at, max_downloads NULL, download_count, created_at)
 requests  (id TEXT PK, owner_id FK, expires_at, max_files, max_bytes, single_use, files_received, bytes_received, created_at, label_meta BLOB(49..512) NULL, closed_at NULL)
 inbox     (id TEXT PK, request_id FK, owner_id FK, blob_id FK, size, meta BLOB, wrapped_key BLOB(80), created_at /*finalize time*/)
-dl_tokens (token_hash BLOB PK, blob_id FK, share_id NULL, expires_at /*sliding*/, counted INT, created_at)
+dl_tokens (token_hash BLOB PK, blob_id FK, share_id NULL, expires_at /*sliding*/, counted INT, served_bytes INT, created_at)
 ```
 
 Migrations: `0001_init.sql` (the tables above without the additions),
@@ -415,7 +434,21 @@ scope; a root-scope registration is refused).
   claim paths). A fake OIDC provider (`internal/auth/oidc/oidctest`) signs
   tokens with an in-memory RSA/EC key for negative tests (alg none, HS256,
   wrong iss/aud/nonce, expired, missing role).
-- `go vet`, `golangci-lint run`, `govulncheck ./...` must be clean.
-- Web: `npm test` runs node's test runner on the crypto modules against
-  WebCrypto in Node 24 (globalThis.crypto.subtle supports X25519, HKDF, AES-GCM).
-- E2E: Playwright in Chromium/Firefox/WebKit against Keycloak.
+- `go vet`, `golangci-lint run`, `govulncheck ./...` must be clean
+  (`make check` = build, lint, race tests, govulncheck; `make fuzz` runs every
+  fuzz target for `FUZZTIME`).
+- Translations: `TestCatalogsComplete` (internal/i18n) scans the templates and
+  Go sources for msgids; `web/test/i18n.test.ts` checks that every locale has
+  every key and a French text for every API error code the Go code emits.
+- `make test-keycloak`: real logins against the dev Keycloak
+  (`-tags keycloak`).
+- Web: `npm test` runs node's test runner (`node --test`, TypeScript run
+  natively) against WebCrypto in Node 24 (X25519, HKDF, AES-GCM): crypto
+  modules against the FORMAT.md vectors, plus the uploader, downloader,
+  service-worker protocol, request-key store, API client, QR encoder and
+  formatting. `npm run typecheck` covers pages, worker and tests.
+- E2E (`make e2e`): Playwright in Chromium, Firefox and WebKit (browsers from
+  nixpkgs) against the dev Keycloak: both flows, resume, tampering, expiry,
+  revocation, download limits, roles, CSRF, headers, accessibility, request
+  link keys, languages and themes. `make soak` streams up to 100 GiB through
+  the real API. `nix flake check` adds a NixOS VM test of the module.
