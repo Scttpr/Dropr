@@ -134,6 +134,8 @@ export interface RequestSummary {
   readonly single_use: boolean;
   readonly files_received: number;
   readonly bytes_received: number;
+  /** A single-use link that received its file. */
+  readonly closed: boolean;
   readonly created_at: number;
 }
 export interface InboxEntry {
@@ -233,6 +235,7 @@ export function parseRequestSummary(x: unknown): RequestSummary {
     single_use: bool(o, "single_use"),
     files_received: int(o, "files_received"),
     bytes_received: o["bytes_received"] === undefined ? 0 : int(o, "bytes_received"),
+    closed: o["closed"] === undefined ? false : bool(o, "closed"),
     created_at: int(o, "created_at"),
   };
 }

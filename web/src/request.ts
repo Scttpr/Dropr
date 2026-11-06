@@ -93,7 +93,8 @@ function init(main: HTMLElement): void {
       focusTo(doneEl);
     } catch (e) {
       panel.hide();
-      if (isAbortError(e)) notice.error(sent > 0 ? t.cancelledAfter(sent) : t.cancelled);
+      // The server keeps a cancelled file's reservation until the 24 h cleanup.
+      if (isAbortError(e)) notice.error(`${sent > 0 ? t.cancelledAfter(sent) : t.cancelled} ${t.cancelledReserved}`);
       else notice.error(sent > 0 ? t.errorAfter(errorMessage(e), sent) : e);
     } finally {
       busy = false;
