@@ -16,18 +16,16 @@
       version = self.shortRev or self.dirtyShortRev or "dev";
 
       # Only what each build needs, so editing docs/ or deploy/ never rebuilds.
-      webSrc = lib.fileset.toSource {
-        root = ./web;
-        fileset = lib.fileset.unions [
-          ./web/package.json
-          ./web/package-lock.json
-          ./web/tsconfig.json
-          ./web/tsconfig.sw.json
-          ./web/src
-          ./web/test
-          ./web/scripts
-        ];
-      };
+      webFiles = lib.fileset.unions [
+        ./web/package.json
+        ./web/package-lock.json
+        ./web/tsconfig.json
+        ./web/tsconfig.sw.json
+        ./web/src
+        ./web/test
+        ./web/scripts
+      ];
+      webSrc = lib.fileset.toSource { root = ./web; fileset = webFiles; };
       goSrc = lib.fileset.toSource {
         root = ./.;
         fileset = lib.fileset.difference
@@ -127,6 +125,20 @@
           p = mkPackages pkgs;
           webCheck = p.web-assets.overrideAttrs (old: {
             pname = "dropr-web-check";
+            # test/i18n.test.ts reads the server's messages and error codes
+            # from ../internal, so the tests need those files next to web/.
+            # npmDeps keeps coming from webSrc (same package-lock.json).
+            src = lib.fileset.toSource {
+              root = ./.;
+              fileset = lib.fileset.unions [
+                webFiles
+                ./internal/i18n/fr.go
+                ./internal/server/api.go
+                ./internal/httpx/problem.go
+                ./internal/httpx/streams.go
+              ];
+            };
+            sourceRoot = "source/web";
             buildPhase = ''
               runHook preBuild
               npm run typecheck
