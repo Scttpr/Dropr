@@ -1,0 +1,226 @@
+package server
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/scttpr/dropr/internal/auth/session"
+	"github.com/scttpr/dropr/internal/blob"
+	"github.com/scttpr/dropr/internal/ids"
+	"github.com/scttpr/dropr/internal/store"
+	"github.com/scttpr/dropr/internal/web"
+)
+
+// Plain-language dead-link messages (PLAN.md §9).
+const (
+	msgLinkUnknown   = "This link does not exist or has been revoked."
+	msgLinkExpired   = "This link has expired."
+	msgLinkExhausted = "This link has reached its download limit."
+	msgLinkClosed    = "This link no longer accepts files."
+)
+
+// ownerPage loads the session of an owner-only page. It redirects to /login
+// without a session and to /setup until passkey setup is complete (unless
+// allowIncomplete). It returns nil when it has answered.
+func (s *Server) ownerPage(w http.ResponseWriter, r *http.Request, allowIncomplete bool) (*session.Session, int) {
+	sess := session.FromContext(r.Context())
+	if sess == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return nil, 0
+	}
+	n, complete, err := s.passkeys.SetupComplete(r.Context(), sess.UserID())
+	if err != nil {
+		s.serverError(w, r, "count passkeys", err)
+		return nil, 0
+	}
+	if !complete && !allowIncomplete {
+		http.Redirect(w, r, "/setup", http.StatusSeeOther)
+		return nil, 0
+	}
+	return sess, n
+}
+
+func (s *Server) serverError(w http.ResponseWriter, r *http.Request, what string, err error) {
+	s.log.ErrorContext(r.Context(), what, "err", err)
+	s.pages.Error(w, r, http.StatusInternalServerError, "Something went wrong",
+		"The server had a problem. Please try again in a moment.", nil)
+}
+
+// handleHome serves the login page to visitors and the dashboard to users
+// who completed passkey setup.
+func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+	if session.FromContext(r.Context()) == nil {
+		s.pages.Render(w, r, http.StatusOK, web.PageLogin, web.PageData{})
+		return
+	}
+	sess, _ := s.ownerPage(w, r, false)
+	if sess == nil {
+		return
+	}
+	ctx := r.Context()
+	inbox, err := s.inboxCount(r, sess)
+	if err != nil {
+		s.serverError(w, r, "count inbox", err)
+		return
+	}
+	links, err := s.store.CountActiveLinks(ctx, sess.UserID(), s.now())
+	if err != nil {
+		s.serverError(w, r, "count links", err)
+		return
+	}
+	s.pages.Render(w, r, http.StatusOK, web.PageDashboard, web.PageData{User: sess.User, View: &web.DashboardView{
+		MaxFileSize:     s.cfg.Limits.MaxFileSizeBytes,
+		DefaultExpiry:   s.cfg.Limits.DefaultExpiry,
+		MaxRequestBytes: blob.CipherSize(s.cfg.Limits.MaxFileSizeBytes),
+		InboxCount:      inbox,
+		LinkCount:       links,
+	}})
+}
+
+func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	sess, n := s.ownerPage(w, r, true)
+	if sess == nil {
+		return
+	}
+	if n >= 2 {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	s.pages.Render(w, r, http.StatusOK, web.PageSetup, web.PageData{Title: "Set up passkeys", User: sess.User,
+		View: &web.SetupView{PasskeyCount: n, Next: "/"}})
+}
+
+func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
+	sess, _ := s.ownerPage(w, r, false)
+	if sess == nil {
+		return
+	}
+	n, err := s.inboxCount(r, sess)
+	if err != nil {
+		s.serverError(w, r, "count inbox", err)
+		return
+	}
+	s.pages.Render(w, r, http.StatusOK, web.PageInbox, web.PageData{Title: "Received files", User: sess.User,
+		View: &web.InboxView{Count: n}})
+}
+
+func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
+	sess, _ := s.ownerPage(w, r, false)
+	if sess == nil {
+		return
+	}
+	n, err := s.store.CountActiveLinks(r.Context(), sess.UserID(), s.now())
+	if err != nil {
+		s.serverError(w, r, "count links", err)
+		return
+	}
+	s.pages.Render(w, r, http.StatusOK, web.PageLinks, web.PageData{Title: "Active links", User: sess.User,
+		View: &web.LinksView{Count: n}})
+}
+
+func (s *Server) deadLink(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	title := "Link not available"
+	if status == http.StatusNotFound {
+		title = "Link not found"
+	}
+	s.pages.Error(w, r, status, title, msg, nil)
+}
+
+// handleSharePage renders the share recipient page, or a plain-language
+// 404/410 page (without the script) when the link is dead.
+func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !ids.Valid(id) {
+		s.deadLink(w, r, http.StatusNotFound, msgLinkUnknown)
+		return
+	}
+	sh, err := s.store.ShareByID(r.Context(), id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		s.deadLink(w, r, http.StatusNotFound, msgLinkUnknown)
+		return
+	case err != nil:
+		s.serverError(w, r, "share page", err)
+		return
+	case !sh.ExpiresAt.After(s.now()):
+		s.deadLink(w, r, http.StatusGone, msgLinkExpired)
+		return
+	case sh.MaxDownloads != nil && sh.DownloadCount >= *sh.MaxDownloads:
+		s.deadLink(w, r, http.StatusGone, msgLinkExhausted)
+		return
+	}
+	plain, _ := blob.PlainSize(sh.Size)
+	s.pages.Render(w, r, http.StatusOK, web.PageShare, web.PageData{Title: "Download a file", View: &web.ShareView{
+		ID: sh.ID, Size: sh.Size, PlainSize: plain, Parts: sh.Parts, ExpiresAt: sh.ExpiresAt.Unix(),
+	}})
+}
+
+// handleRequestPage renders the uploader page of a request link, or a dead
+// link page.
+func (s *Server) handleRequestPage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !ids.Valid(id) {
+		s.deadLink(w, r, http.StatusNotFound, msgLinkUnknown)
+		return
+	}
+	ctx := r.Context()
+	rq, err := s.store.RequestByID(ctx, id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		s.deadLink(w, r, http.StatusNotFound, msgLinkUnknown)
+		return
+	case err != nil:
+		s.serverError(w, r, "request page", err)
+		return
+	case !rq.ExpiresAt.After(s.now()):
+		s.deadLink(w, r, http.StatusGone, msgLinkExpired)
+		return
+	}
+	files := rq.MaxFiles - rq.FilesReceived
+	remaining := rq.MaxBytes - rq.BytesReceived
+	if rq.ClosedAt != nil || files <= 0 || remaining < blob.TagSize {
+		s.deadLink(w, r, http.StatusGone, msgLinkClosed)
+		return
+	}
+	owner, err := s.store.UserByID(ctx, rq.OwnerID)
+	if err != nil {
+		s.serverError(w, r, "request owner", err)
+		return
+	}
+	// The owner lost access at the identity provider or was revoked: the
+	// link is closed until they sign in again (audit I-3).
+	if active, err := s.store.AccountActive(ctx, rq.OwnerID); err != nil {
+		s.serverError(w, r, "request owner", err)
+		return
+	} else if !active {
+		s.deadLink(w, r, http.StatusGone, msgLinkClosed)
+		return
+	}
+	name := owner.DisplayName
+	if name == "" {
+		name = "the owner of this link"
+	}
+	s.pages.Render(w, r, http.StatusOK, web.PageRequest, web.PageData{Title: "Send a file", View: &web.RequestView{
+		ID:             rq.ID,
+		OwnerName:      name,
+		ExpiresAt:      rq.ExpiresAt.Unix(),
+		MaxFiles:       files,
+		MaxBytes:       min(blob.MaxPlainFor(remaining), s.cfg.Limits.MaxFileSizeBytes),
+		RemainingBytes: remaining,
+		MaxFileSize:    s.cfg.Limits.MaxFileSizeBytes,
+	}})
+}
+
+func (s *Server) handleDLFallback(w http.ResponseWriter, r *http.Request) {
+	s.pages.Error(w, r, http.StatusNotFound, "Download did not start", "The download could not start. Go back and try again.", nil)
+}
+
+// inboxCount returns the number of received files, or -1 (hidden) unless the
+// session holds a passkey unlock: someone with only the owner's identity
+// provider credentials does not learn how many files arrived (audit I-6).
+func (s *Server) inboxCount(r *http.Request, sess *session.Session) (int, error) {
+	if !s.sessions.IsUnlocked(sess) {
+		return -1, nil
+	}
+	return s.store.CountInbox(r.Context(), sess.UserID())
+}
