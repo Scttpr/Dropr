@@ -85,6 +85,14 @@ sudo deploy/debian/install.sh --binary ~/dropr
 
 ### Install
 
+| Option | Effect |
+|---|---|
+| `--binary FILE` | install this static Linux binary |
+| `--version vX.Y.Z` | download the release binary, check SHA-256 and the cosign bundle |
+| `--skip-signature` | with `--version`: accept the binary when cosign is not installed (checksum only; avoid) |
+| `--no-oidc-key` | do not generate the OIDC client key and certificate (bring your own) |
+| `--no-start` | install files only; do not start or restart the service |
+
 The first run of `install.sh`:
 
 1. creates the system user `dropr` (no shell, no home outside the state directory);
