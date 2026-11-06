@@ -2,7 +2,7 @@
  * Bundle the browser entry points with esbuild.
  *
  * - Page entries: every top-level `src/*.ts` file except `sw.ts` (one per
- *   page: dashboard, setup, inbox, links, share, request). Library code
+ *   page: dashboard, inbox, links, share, request). Library code
  *   (`src/crypto/`, `src/lib/`) is bundled into each entry; no code splitting,
  *   so each page loads exactly one same-origin script. ESM, content-hashed
  *   names `<name>-<hash>.js`, served from `/assets/`.

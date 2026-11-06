@@ -16,7 +16,7 @@ import {
 } from "../src/crypto/filekey.ts";
 import { open } from "../src/crypto/hpke.ts";
 import { hkdf } from "../src/crypto/kdf.ts";
-import { deriveKek, generateOwnerKeyPair, toOwnerKeyPair, unwrapPrivateKey, wrapPrivateKey } from "../src/crypto/keywrap.ts";
+import { generateRequestKeyPair } from "../src/crypto/requestkey.ts";
 import { openMeta, sealMeta } from "../src/crypto/meta.ts";
 import { ciphertextSize, createDecryptStream, encryptPart, partCount, partPlainRange, plaintextSize, SEGMENT_SIZE } from "../src/crypto/stream.ts";
 import { concatAll, randomChunks, Rng, runStream } from "./helpers.ts";
@@ -85,38 +85,38 @@ describe("link fragments", () => {
 
 describe("request-flow key wrapping", () => {
   it("wraps FK into 80 bytes that open with info \"dropr/v1 request \" ‖ id", async () => {
-    const owner = await toOwnerKeyPair(await generateOwnerKeyPair());
+    const link = await generateRequestKeyPair();
     const fk = generateFileKey();
-    const wrapped = await wrapFileKeyForRequest(owner.publicKey, REQUEST_ID, fk);
+    const wrapped = await wrapFileKeyForRequest(link.publicKey, REQUEST_ID, fk);
     assert.equal(wrapped.length, WRAPPED_FILE_KEY_SIZE);
     assert.equal(WRAPPED_FILE_KEY_SIZE, 80);
-    assert.deepEqual(await unwrapFileKeyFromRequest(owner, REQUEST_ID, wrapped), fk);
+    assert.deepEqual(await unwrapFileKeyFromRequest(link, REQUEST_ID, wrapped), fk);
     // Byte layout cross-check against raw HPKE.
-    const raw = await open(owner, wrapped.subarray(0, 32), utf8("dropr/v1 request " + REQUEST_ID), new Uint8Array(0), wrapped.subarray(32));
+    const raw = await open(link, wrapped.subarray(0, 32), utf8("dropr/v1 request " + REQUEST_ID), new Uint8Array(0), wrapped.subarray(32));
     assert.deepEqual(raw, fk);
   });
 
-  it("rejects wrong request id, wrong owner, tampering and bad lengths", async () => {
-    const owner = await toOwnerKeyPair(await generateOwnerKeyPair());
-    const other = await toOwnerKeyPair(await generateOwnerKeyPair());
-    const wrapped = await wrapFileKeyForRequest(owner.publicKey, REQUEST_ID, generateFileKey());
-    await assert.rejects(unwrapFileKeyFromRequest(owner, OTHER_ID, wrapped), DecryptionError);
+  it("rejects wrong request id, wrong key pair, tampering and bad lengths", async () => {
+    const link = await generateRequestKeyPair();
+    const other = await generateRequestKeyPair();
+    const wrapped = await wrapFileKeyForRequest(link.publicKey, REQUEST_ID, generateFileKey());
+    await assert.rejects(unwrapFileKeyFromRequest(link, OTHER_ID, wrapped), DecryptionError);
     await assert.rejects(unwrapFileKeyFromRequest(other, REQUEST_ID, wrapped), DecryptionError);
     for (let i = 0; i < wrapped.length; i++) {
       const bad = wrapped.slice();
       bad[i] = (bad[i] ?? 0) ^ (i === 31 ? 0x40 : 0x01);
-      await assert.rejects(unwrapFileKeyFromRequest(owner, REQUEST_ID, bad), DecryptionError, `byte ${i}`);
+      await assert.rejects(unwrapFileKeyFromRequest(link, REQUEST_ID, bad), DecryptionError, `byte ${i}`);
     }
-    await assert.rejects(unwrapFileKeyFromRequest(owner, REQUEST_ID, wrapped.subarray(0, 79)), DecryptionError);
-    await assert.rejects(unwrapFileKeyFromRequest(owner, REQUEST_ID, new Uint8Array([...wrapped, 0])), DecryptionError);
+    await assert.rejects(unwrapFileKeyFromRequest(link, REQUEST_ID, wrapped.subarray(0, 79)), DecryptionError);
+    await assert.rejects(unwrapFileKeyFromRequest(link, REQUEST_ID, new Uint8Array([...wrapped, 0])), DecryptionError);
   });
 
   it("validates request ids and FK length", async () => {
-    const owner = await toOwnerKeyPair(await generateOwnerKeyPair());
+    const link = await generateRequestKeyPair();
     for (const id of ["", "short", REQUEST_ID + "A", REQUEST_ID.slice(0, 21) + "B", REQUEST_ID.slice(0, 21) + "+", "q83vEjRWeJq8Ad7tEjRWe=="]) {
-      await assert.rejects(wrapFileKeyForRequest(owner.publicKey, id, generateFileKey()), FormatError, id);
+      await assert.rejects(wrapFileKeyForRequest(link.publicKey, id, generateFileKey()), FormatError, id);
     }
-    await assert.rejects(wrapFileKeyForRequest(owner.publicKey, REQUEST_ID, new Uint8Array(16)), FormatError);
+    await assert.rejects(wrapFileKeyForRequest(link.publicKey, REQUEST_ID, new Uint8Array(16)), FormatError);
   });
 });
 
@@ -151,24 +151,19 @@ describe("end-to-end flows", () => {
     assert.ok(Buffer.from(got.data).equals(pt));
   });
 
-  it("flow B: request link with passkey-unlocked owner key", async () => {
+  it("flow B: request link with its own key pair", async () => {
     const rng = new Rng(200);
-    // Setup: owner key wrapped by a passkey's PRF output.
-    const owner = await generateOwnerKeyPair();
-    const prf = rng.bytes(32);
-    const userHandle = rng.bytes(32);
-    const blob = await wrapPrivateKey(await deriveKek(prf, userHandle), owner);
-    // Owner creates a request link from the *unwrapped* public key.
-    const unlocked = await unwrapPrivateKey(await deriveKek(prf, userHandle), blob);
-    const link = `https://drop.example/r/${REQUEST_ID}#${encodeRequestFragment(unlocked.publicKey)}`;
+    // Owner creates the link's key pair in the browser; its public key is the fragment.
+    const keyPair = await generateRequestKeyPair();
+    const url = `https://drop.example/r/${REQUEST_ID}#${encodeRequestFragment(keyPair.publicKey)}`;
     // Uploader.
-    const pk = decodeRequestFragment(new URL(link).hash);
+    const pk = decodeRequestFragment(new URL(url).hash);
     const fk = generateFileKey();
     const pt = rng.bytes(SEGMENT_SIZE);
     const stored = await upload(fk, pt, "scan.zip");
     const wrapped = await wrapFileKeyForRequest(pk, REQUEST_ID, fk);
     // Owner reads the inbox.
-    const fk2 = await unwrapFileKeyFromRequest(unlocked, REQUEST_ID, wrapped);
+    const fk2 = await unwrapFileKeyFromRequest(keyPair, REQUEST_ID, wrapped);
     const got = await download(fk2, stored, rng);
     assert.equal(got.meta.name, "scan.zip");
     assert.ok(Buffer.from(got.data).equals(pt));

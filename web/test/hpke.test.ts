@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { DecryptionError, FormatError } from "../src/crypto/errors.ts";
 import { _internals, importX25519PrivateKey, open, seal, type HpkeRecipient } from "../src/crypto/hpke.ts";
-import { generateOwnerKeyPair, toOwnerKeyPair } from "../src/crypto/keywrap.ts";
+import { generateRequestKeyPair } from "../src/crypto/requestkey.ts";
 import { hex, property, unhex } from "./helpers.ts";
 
 interface Vector {
@@ -101,7 +101,7 @@ describe("HPKE seal/open", () => {
   const enc = new TextEncoder();
 
   it("round-trips random messages to a fresh key", async () => {
-    const r = await toOwnerKeyPair(await generateOwnerKeyPair());
+    const r = await generateRequestKeyPair();
     await property(
       40,
       (rng) => ({ info: rng.bytes(rng.int(0, 64)), aad: rng.bytes(rng.int(0, 64)), pt: rng.bytes(rng.int(0, 300)) }),
@@ -116,7 +116,7 @@ describe("HPKE seal/open", () => {
   });
 
   it("uses a fresh ephemeral key every time", async () => {
-    const r = await toOwnerKeyPair(await generateOwnerKeyPair());
+    const r = await generateRequestKeyPair();
     const a = await seal(r.publicKey, new Uint8Array(0), new Uint8Array(0), new Uint8Array(32));
     const b = await seal(r.publicKey, new Uint8Array(0), new Uint8Array(0), new Uint8Array(32));
     assert.notDeepEqual(a.enc, b.enc);
@@ -124,8 +124,8 @@ describe("HPKE seal/open", () => {
   });
 
   it("rejects wrong key, wrong info, wrong aad, tampered enc and ct", async () => {
-    const r = await toOwnerKeyPair(await generateOwnerKeyPair());
-    const other = await toOwnerKeyPair(await generateOwnerKeyPair());
+    const r = await generateRequestKeyPair();
+    const other = await generateRequestKeyPair();
     const info = enc.encode("dropr/v1 request AAAAAAAAAAAAAAAAAAAAAA");
     const aad = new Uint8Array(0);
     const pt = new Uint8Array(32).fill(7);
@@ -166,7 +166,7 @@ describe("HPKE seal/open", () => {
   });
 
   it("open refuses low-order enc (all-zero DH)", async () => {
-    const r = await toOwnerKeyPair(await generateOwnerKeyPair());
+    const r = await generateRequestKeyPair();
     for (const p of lowOrder) {
       await assert.rejects(open(r, unhex(p), new Uint8Array(0), new Uint8Array(0), new Uint8Array(16)), DecryptionError, p);
     }

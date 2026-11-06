@@ -4,9 +4,10 @@
  * DOM contract: docs/PAGES.md §Links.
  *
  * Share names are not shown: they are encrypted under each file's FK, which
- * only the link holds (the owner's browser does not keep it). Request links
- * can be copied again after unlocking, because their fragment is the
- * owner's own public key, taken from the unlocked key pair.
+ * only the link holds (the owner's browser does not keep it). A request link
+ * can be copied again in the browser that created it, because its fragment
+ * is the public key stored there (lib/request-keys.ts); listing the links
+ * also prunes the keys of links that are gone.
  *
  * @module
  */
@@ -16,7 +17,7 @@ import { type RequestSummary, type ShareSummary, api } from "./lib/api.ts";
 import { Notice, byId, copyText, el, focusTo, pageRoot, revealJsOnly } from "./lib/dom.ts";
 import { formatBytes, formatDate, formatExpiry } from "./lib/format.ts";
 import { t } from "./lib/i18n.ts";
-import { ensureUnlocked } from "./lib/passkey.ts";
+import { type RequestKeyRecord, nowSeconds, requestKeysFor } from "./lib/request-keys.ts";
 
 function size(cipher: number): string {
   try {
@@ -26,8 +27,9 @@ function size(cipher: number): string {
   }
 }
 
-function init(): void {
+function init(main: HTMLElement): void {
   revealJsOnly();
+  const requestKeys = requestKeysFor(main);
   const notice = new Notice(byId("links-error"), byId("links-status"));
 
   interface RevokeText {
@@ -85,20 +87,27 @@ function init(): void {
     return tr;
   }
 
-  function requestRow(r: RequestSummary): HTMLTableRowElement {
-    const label = t.requestLinkLabel(formatDate(r.created_at));
-    const tr = el("tr", { attrs: { "data-request-id": r.id } });
+  /** Copy link, or a note when this browser does not hold the link's key (the fragment is never a server value). */
+  function copyControl(r: RequestSummary, key: RequestKeyRecord | undefined, label: string): HTMLElement {
+    if (key === undefined) return el("span", { class: "muted", text: t.otherBrowser, attrs: { title: t.otherBrowserHint } });
     const copy = el("button", { text: t.copyLink, attrs: { type: "button", "aria-label": t.copyLinkNamed(label) } });
     copy.addEventListener("click", async () => {
       notice.clear();
-      try {
-        const key = await ensureUnlocked();
-        const ok = await copyText(`${location.origin}/r/${r.id}#${encodeRequestFragment(key.publicKey)}`);
-        notice.status(ok ? t.requestCopied : t.copyFailed);
-      } catch (e) {
-        notice.error(e);
-      }
+      const ok = await copyText(`${location.origin}/r/${r.id}#${encodeRequestFragment(key.publicKey)}`);
+      notice.status(ok ? t.requestCopied : t.copyFailed);
     });
+    return copy;
+  }
+
+  async function revokeRequest(id: string): Promise<void> {
+    await api.deleteRequest(id);
+    // Best effort: a leftover record is pruned at the next listing.
+    await requestKeys.delete(id).catch(() => undefined);
+  }
+
+  function requestRow(r: RequestSummary, key: RequestKeyRecord | undefined): HTMLTableRowElement {
+    const label = t.requestLinkLabel(formatDate(r.created_at));
+    const tr = el("tr", { attrs: { "data-request-id": r.id } });
     tr.append(
       el("td", { class: "date", text: formatDate(r.created_at) }),
       el("td", { class: "expiry", text: formatExpiry(r.expires_at) }),
@@ -106,9 +115,9 @@ function init(): void {
       el(
         "td",
         { class: "actions" },
-        copy,
+        copyControl(r, key, label),
         " ",
-        revokeButton({ label, confirm: t.confirmRevokeRequest, done: t.requestRevoked }, () => api.deleteRequest(r.id), tr),
+        revokeButton({ label, confirm: t.confirmRevokeRequest, done: t.requestRevoked }, () => revokeRequest(r.id), tr),
       ),
     );
     return tr;
@@ -117,11 +126,17 @@ function init(): void {
   async function load(): Promise<void> {
     notice.status(t.loadingLinks);
     try {
+      const listedAt = nowSeconds();
       const [shares, requests] = await Promise.all([api.listShares(), api.listRequests()]);
+      // Without a key store the links are still listed (and revocable); the error says why none can be copied.
+      const keys = await requestKeys.prune(requests.map((r) => r.id), listedAt).catch((e: unknown) => {
+        notice.error(e, false);
+        return new Map<string, RequestKeyRecord>();
+      });
       byId("shares-list").replaceChildren(...shares.map(shareRow));
       byId("shares-table").hidden = shares.length === 0;
       byId("shares-empty").hidden = shares.length !== 0;
-      byId("requests-list").replaceChildren(...requests.map(requestRow));
+      byId("requests-list").replaceChildren(...requests.map((r) => requestRow(r, keys.get(r.id))));
       byId("requests-table").hidden = requests.length === 0;
       byId("requests-empty").hidden = requests.length !== 0;
       notice.status(t.linksSummary(shares.length, requests.length));
@@ -134,4 +149,5 @@ function init(): void {
   void load();
 }
 
-if (pageRoot("links") !== null) init();
+const main = pageRoot("links");
+if (main !== null) init(main);

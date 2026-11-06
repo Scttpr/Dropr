@@ -6,8 +6,8 @@
  * CK  = HKDF-SHA256(ikm = FK, salt = "", info = "dropr/v1 content", 32)
  * MK  = HKDF-SHA256(ikm = FK, salt = "", info = "dropr/v1 metadata", 32)
  * share link   : https://host/s/<shareId>#<b64url(FK)>
- * request link : https://host/r/<requestId>#<b64url(ownerPublicKey)>
- * wrapped_key  = enc(32) ‖ ct(48) = HPKE.Seal(pkOwner, info = "dropr/v1 request " ‖ requestId, aad = "", FK)
+ * request link : https://host/r/<requestId>#<b64url(linkPublicKey)>
+ * wrapped_key  = enc(32) ‖ ct(48) = HPKE.Seal(linkPublicKey, info = "dropr/v1 request " ‖ requestId, aad = "", FK)
  * ```
  *
  * @module
@@ -74,14 +74,14 @@ export function decodeShareFragment(fragment: string): Bytes {
   return fk;
 }
 
-/** Request-link fragment for the owner's 32-byte X25519 public key. */
+/** Request-link fragment for the link's 32-byte X25519 public key. */
 export function encodeRequestFragment(publicKey: Uint8Array): string {
   assertLength(publicKey, X25519_KEY_SIZE, "public key");
   return b64urlEncode(publicKey);
 }
 
 /**
- * Parse a request-link fragment into the owner's public key.
+ * Parse a request-link fragment into the link's public key.
  *
  * @throws {FormatError} unless it is the canonical encoding of 32 bytes.
  */
@@ -92,43 +92,49 @@ export function decodeRequestFragment(fragment: string): Bytes {
 }
 
 /**
- * HPKE `info` for a request: `"dropr/v1 request " ‖ requestId` (ASCII).
- * `requestId` must be a canonical 22-character base64url 128-bit ID.
+ * HPKE `info` bound to a request: `prefix ‖ requestId` (ASCII), where the
+ * prefix is `"dropr/v1 request "` (file keys) or `"dropr/v1 label "`
+ * (labels). `requestId` must be a canonical 22-character base64url 128-bit ID.
+ *
+ * @internal Not re-exported from the package index.
  */
-function requestInfo(requestId: string): Bytes {
+export function requestInfo(prefix: string, requestId: string): Bytes {
   if (typeof requestId !== "string" || requestId.length !== 22 || b64urlDecode(requestId).length !== 16) {
     throw new FormatError("invalid request id");
   }
-  return concat(utf8("dropr/v1 request "), utf8(requestId));
+  return concat(utf8(prefix), utf8(requestId));
 }
 
+const FILE_KEY_INFO = "dropr/v1 request ";
+
 /**
- * Seal FK to the request owner's public key (uploader side).
+ * Seal FK to the request link's public key (uploader side).
  *
  * Binding `requestId` into HPKE `info` means a wrapped key only opens in the
  * context of the request it was uploaded to: the server cannot move an inbox
  * entry to another request link unnoticed.
  *
- * @param ownerPublicKey - from {@link decodeRequestFragment} (never from the server).
+ * @param linkPublicKey - from {@link decodeRequestFragment} (never from the server).
  * @returns `wrapped_key`, exactly {@link WRAPPED_FILE_KEY_SIZE} (80) bytes.
  */
-export async function wrapFileKeyForRequest(ownerPublicKey: Uint8Array, requestId: string, fk: Uint8Array): Promise<Bytes> {
+export async function wrapFileKeyForRequest(linkPublicKey: Uint8Array, requestId: string, fk: Uint8Array): Promise<Bytes> {
   assertLength(fk, FILE_KEY_SIZE, "file key");
-  const { enc, ct } = await seal(ownerPublicKey, requestInfo(requestId), EMPTY, fk);
+  const { enc, ct } = await seal(linkPublicKey, requestInfo(FILE_KEY_INFO, requestId), EMPTY, fk);
   return concat(enc, ct);
 }
 
 /**
- * Open a request-flow `wrapped_key` with the owner's unlocked key pair.
+ * Open a request-flow `wrapped_key` with the link's key pair, which only
+ * the browser that created the link holds.
  *
  * @throws {FormatError} if `requestId` is malformed.
  * @throws {DecryptionError} if `wrapped` is not 80 bytes or does not open
- *   (wrong owner key, wrong request id, tampering).
+ *   (wrong key pair, wrong request id, tampering).
  */
-export async function unwrapFileKeyFromRequest(owner: HpkeRecipient, requestId: string, wrapped: Uint8Array): Promise<Bytes> {
-  const info = requestInfo(requestId);
+export async function unwrapFileKeyFromRequest(link: HpkeRecipient, requestId: string, wrapped: Uint8Array): Promise<Bytes> {
+  const info = requestInfo(FILE_KEY_INFO, requestId);
   if (!(wrapped instanceof Uint8Array) || wrapped.length !== WRAPPED_FILE_KEY_SIZE) throw new DecryptionError();
-  const fk = await open(owner, wrapped.subarray(0, HPKE_ENC_SIZE), info, EMPTY, wrapped.subarray(HPKE_ENC_SIZE));
+  const fk = await open(link, wrapped.subarray(0, HPKE_ENC_SIZE), info, EMPTY, wrapped.subarray(HPKE_ENC_SIZE));
   if (fk.length !== FILE_KEY_SIZE) throw new DecryptionError();
   return fk;
 }

@@ -82,7 +82,6 @@ describe("Api requests", () => {
 
   it("maps every endpoint to the documented method and path", async () => {
     const f = fakeFetch((req) => {
-      if (req.path === "/api/passkeys/unlock/finish") return jsonResponse(200, { wrapped_privkey: "w", credential_id: "c" });
       if (req.path === "/api/requests" && req.method === "POST") return jsonResponse(200, { request_id: "r" });
       if (req.path.endsWith("/files")) return jsonResponse(200, { upload_id: "u", upload_token: "t" });
       if (req.path.endsWith("/download")) return jsonResponse(200, { token: "t", size: 16, parts: 1, meta: "m" });
@@ -91,12 +90,6 @@ describe("Api requests", () => {
       return new Response(null, { status: 204 });
     });
     const api = new Api({ fetch: f });
-    await api.registerBegin();
-    await api.registerFinish({ credential: {}, wrapped_privkey: "w", pubkey: "p" });
-    await api.unlockBegin();
-    await api.unlockFinish({ credential: {} });
-    await api.listPasskeys();
-    await api.deletePasskey("k1");
     await api.deleteShare("s1");
     await api.listShares();
     await api.shareDownload("s1");
@@ -113,12 +106,6 @@ describe("Api requests", () => {
     assert.deepEqual(
       f.calls.map((c) => `${c.method} ${c.path}`),
       [
-        "POST /api/passkeys/register/begin",
-        "POST /api/passkeys/register/finish",
-        "POST /api/passkeys/unlock/begin",
-        "POST /api/passkeys/unlock/finish",
-        "GET /api/passkeys",
-        "DELETE /api/passkeys/k1",
         "DELETE /api/shares/s1",
         "GET /api/shares",
         "POST /api/s/s1/download",

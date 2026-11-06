@@ -1,5 +1,6 @@
 /**
- * Dashboard (`/`): share a file (flow A) and create a request link (flow B).
+ * Dashboard (`/`): share a file (flow A) and create a request link (flow B)
+ * whose key pair is generated and kept in this browser (lib/request-keys.ts).
  * DOM contract: docs/PAGES.md §Dashboard.
  *
  * @module
@@ -12,6 +13,7 @@ import {
   encodeRequestFragment,
   encodeShareFragment,
   generateFileKey,
+  generateRequestKeyPair,
   partCount,
   sealMeta,
 } from "./crypto/index.ts";
@@ -21,7 +23,7 @@ import { attachDropZone } from "./lib/dropzone.ts";
 import { expiryChoiceText, formatBytes, formatInteger } from "./lib/format.ts";
 import { t } from "./lib/i18n.ts";
 import { showLink } from "./lib/linkview.ts";
-import { ensureUnlocked } from "./lib/passkey.ts";
+import { requestKeysFor, requestPersistence } from "./lib/request-keys.ts";
 import { isAbortError } from "./lib/retry.ts";
 import { ProgressPanel, runUploadWithPanel } from "./lib/transfer-ui.ts";
 import { Uploader } from "./lib/uploader.ts";
@@ -163,6 +165,7 @@ function initRequest(main: HTMLElement): void {
   const submit = maybeId("request-create", HTMLButtonElement);
   const defaultExpiry = defaultExpiryOf(main);
   const maxBytes = dataInt(main, "maxRequestBytes", dataInt(main, "maxFileSize", 5_000_000_000));
+  const requestKeys = requestKeysFor(main);
 
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
@@ -171,6 +174,11 @@ function initRequest(main: HTMLElement): void {
 
   async function create(): Promise<void> {
     notice.clear();
+    if (requestKeys.ownerId === null) {
+      // Fail closed: without the account, the key could not be filed under it.
+      notice.error(t.ownerUnknown);
+      return;
+    }
     const maxFilesInput = maybeId("request-max-files", HTMLInputElement);
     const parsed = optionalPositiveInt(maxFilesInput);
     const maxFiles = parsed === undefined ? 10 : parsed;
@@ -183,16 +191,23 @@ function initRequest(main: HTMLElement): void {
     const singleUse = maybeId("request-single-use", HTMLInputElement)?.checked ?? false;
     if (submit) submit.disabled = true;
     try {
-      notice.status(t.unlocking);
-      const key = await ensureUnlocked();
       notice.status(t.creatingRequest);
+      const key = await generateRequestKeyPair();
       const { request_id } = await api.createRequest({
         expires_in: expiresIn,
         max_files: maxFiles,
         max_bytes: maxBytes,
         single_use: singleUse,
       });
-      // The public key comes from the authenticated, unwrapped JWK (FORMAT.md §8.8).
+      try {
+        await requestKeys.put(request_id, key);
+      } catch (e) {
+        // Never hand out a link whose files nobody could open.
+        void api.deleteRequest(request_id).catch(() => undefined);
+        throw e;
+      }
+      void requestPersistence();
+      // The fragment is the link's own public key, never a server value (FORMAT.md §8.8).
       const url = `${location.origin}/r/${request_id}#${encodeRequestFragment(key.publicKey)}`;
       notice.status(t.requestReady);
       bumpCount("link-count");

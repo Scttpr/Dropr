@@ -9,7 +9,7 @@ import { DecryptionError, FormatError } from "../crypto/index.ts";
 import { ApiError } from "./api.ts";
 import { DownloadError } from "./downloader.ts";
 import { t } from "./i18n.ts";
-import { PasskeyError, PrfUnsupportedError } from "./passkey.ts";
+import { KeyStoreError } from "./request-keys.ts";
 import { isAbortError } from "./retry.ts";
 import { UploadInterruptedError } from "./uploader.ts";
 
@@ -19,8 +19,7 @@ export function errorMessage(e: unknown): string {
   if (
     e instanceof ApiError ||
     e instanceof DownloadError ||
-    e instanceof PasskeyError ||
-    e instanceof PrfUnsupportedError ||
+    e instanceof KeyStoreError ||
     e instanceof UploadInterruptedError
   ) {
     return e.message;

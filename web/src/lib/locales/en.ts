@@ -6,10 +6,6 @@
  * @module
  */
 
-import type { AuthenticatorChoice } from "../webauthn.ts";
-
-type Device = "computer" | "phone" | "tablet";
-
 const s = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 const wasWere = (n: number): string => `${n} file${n === 1 ? " was" : "s were"}`;
 
@@ -35,12 +31,15 @@ export const en = {
   cancelled: "Cancelled.",
   storageFull: "Your disk or browser storage is full.",
   unexpected: "Something went wrong. Please reload the page and try again.",
+  keyStoreUnavailable:
+    "This browser cannot store the keys of your request links, so it cannot create links or open the files sent through them. " +
+    "Allow this site to store data (private browsing often blocks it), or use another browser.",
+  ownerUnknown: "Dropr could not tell which account is signed in, so it cannot use your request link keys. Please reload the page.",
   /** Translations of the server's API error messages, by error code. English uses the server's own text. */
   apiCodes: {} as Readonly<Record<string, string>>,
   statusExpired: "This link has expired.",
   statusExhausted: "This link has reached its download limit.",
   statusClosed: "This link has been revoked by its owner.",
-  statusLocked: "Unlock your inbox with your passkey first.",
   statusQuota: "There is not enough storage space left for this file.",
   statusTooLarge: "This file is too large.",
   statusNetwork: "Could not reach the server. Check your connection and try again.",
@@ -84,7 +83,6 @@ export const en = {
   maxFilesInvalid: "The number of files must be a whole number of at least 1.",
   uploadReady: "Upload complete. Your link is ready.",
   shareQrLabel: "QR code of the share link",
-  unlocking: "Unlocking with your passkey…",
   creatingRequest: "Creating the request link…",
   requestReady: "Your request link is ready.",
   requestQrLabel: "QR code of the request link",
@@ -108,9 +106,14 @@ export const en = {
 
   // ---- Inbox -----------------------------------------------------------
   loadingFiles: "Loading your files…",
-  filesReceived: (n: number, failed: number): string =>
-    `${n} file${n === 1 ? "" : "s"} received.` + (failed > 0 ? ` ${failed} could not be decrypted and may have been tampered with.` : ""),
+  filesReceived: (n: number, failed: number, foreign: number): string =>
+    `${n} file${n === 1 ? "" : "s"} received.` +
+    (failed > 0 ? ` ${failed} could not be decrypted and may have been tampered with.` : "") +
+    (foreign > 0 ? ` ${foreign} ${foreign === 1 ? "was" : "were"} sent through links created in another browser and can only be opened there.` : ""),
   unreadableFile: "Unreadable file",
+  foreignFile: "Sent through a link created in another browser",
+  /** Accessible name of a file without a local key, for {@link deleteNamed}. */
+  foreignFileNamed: (date: string): string => `the file received ${date} through a link created in another browser`,
   download: "Download",
   downloadNamed: (name: string): string => `Download ${name}`,
   delete: "Delete",
@@ -118,6 +121,8 @@ export const en = {
   anotherDownload: "Another download is in progress. Wait for it to finish or cancel it.",
   confirmDelete: (name: string): string => `Delete “${name}”? This cannot be undone.`,
   deleted: (name: string): string => `Deleted ${name}.`,
+  confirmDeleteForeign: (date: string): string => `Delete the file received ${date}? This cannot be undone.`,
+  deletedForeign: (date: string): string => `Deleted the file received ${date}.`,
 
   // ---- Links -----------------------------------------------------------
   revoke: "Revoke",
@@ -132,102 +137,13 @@ export const en = {
   singleUse: " (single use)",
   copyLink: "Copy link",
   copyLinkNamed: (label: string): string => `Copy link: ${label}`,
+  otherBrowser: "Other browser",
+  otherBrowserHint: "This link was created in another browser: copy it from there.",
   requestCopied: "Request link copied.",
   copyFailed: "Could not copy the link to the clipboard.",
   loadingLinks: "Loading your links…",
   linksSummary: (shares: number, requests: number): string =>
     `${shares} share link${shares === 1 ? "" : "s"}, ${requests} request link${requests === 1 ? "" : "s"}.`,
-
-  // ---- Passkeys (lib/passkey.ts) ---------------------------------------
-  prfUnsupported:
-    "The place where you tried to save this passkey can't keep your files private. " +
-    "Please choose another place: this computer, a security key, or your phone with " +
-    "Google Password Manager (Android) or Passwords / iCloud Keychain (iPhone). " +
-    "Microsoft Authenticator can't be used for Dropr.",
-  prfUnsupportedUnlock: "This passkey can't open your files. Please try again with another of your Dropr passkeys.",
-  browserNoPrf:
-    "This browser can't keep your files private with a passkey. " +
-    "Please open this page in another browser, such as a recent Chrome, Edge or Safari.",
-  noWebauthn: "This browser can't use passkeys. Please open this page in a recent Chrome, Edge, Safari or Firefox.",
-  passkeyNotSaved:
-    "The passkey wasn't saved. The window may have been closed, or it took too long. Please try again, or choose another place to save it.",
-  passkeyNotUsed: "Your passkey wasn't used. The window may have been closed, or it took too long. Please try again.",
-  passkeyDuplicate: "You already have a Dropr passkey there. Please choose another place, such as your phone or a security key.",
-  passkeyInvalidState: "This passkey can't be used here. Please try another of your passkeys.",
-  passkeyWrongOrigin: "Passkeys don't work on this web address. Please open Dropr from its usual link.",
-  passkeyCannotSave:
-    "This browser or device can't save this kind of passkey. Please choose another place, or try another browser such as Chrome, Edge or Safari.",
-  passkeyCannotUse: "This browser or device can't use your passkey. Please try another browser such as Chrome, Edge or Safari.",
-  passkeyAborted: "The passkey window closed before it finished. Please try again.",
-  passkeySaveFailed: "Something went wrong while saving the passkey. Please try again, or choose another place to save it.",
-  passkeyFailed: "Something went wrong with your passkey. Please try again.",
-  passkeyNoUser: "This passkey didn't say which account it belongs to. Please try another of your Dropr passkeys.",
-  passkeyCannotUnlock: "This passkey could not unlock your files. Please try another of your Dropr passkeys.",
-
-  // ---- Passkey setup ---------------------------------------------------
-  placeName: (c: AuthenticatorChoice, device: Device): string => {
-    switch (c) {
-      case "device":
-        return `this ${device}`;
-      case "phone":
-        return device === "computer" ? "your phone" : "another phone or tablet";
-      case "security-key":
-        return "a security key";
-      case "auto":
-        return "another way";
-    }
-  },
-  /** "This computer" / "This phone" / "This tablet" (option title). */
-  deviceTitle: (device: Device): string => `This ${device}`,
-  deviceDesc: (device: Device): string => `You'll unlock it with your fingerprint, your face, or the PIN of this ${device}.`,
-  otherDeviceTitle: "Another phone or tablet",
-  otherDeviceDesc: "You'll scan a QR code with the other device's camera.",
-  bluetoothBoth: "Turn on Bluetooth on both devices.",
-  during: (c: AuthenticatorChoice, otherDevice: boolean): string => {
-    switch (c) {
-      case "device":
-        return "Follow the steps on your screen. You may be asked for your fingerprint, your face or your PIN.";
-      case "phone":
-        return otherDevice
-          ? "Scan the QR code with the other device's camera, then follow the steps on it."
-          : "Scan the QR code with your phone's camera, then follow the steps on your phone.";
-      case "security-key":
-        return "Plug in or tap your security key, then touch it if it blinks.";
-      case "auto":
-        return "Follow the steps your browser shows.";
-    }
-  },
-  again: (c: AuthenticatorChoice): string => {
-    switch (c) {
-      case "device":
-        return "Almost done. Please confirm one more time, the same way. That's normal.";
-      case "phone":
-        return "Almost done. Your phone will ask you one more time to confirm. That's normal.";
-      case "security-key":
-        return "Almost done. Touch your security key one more time. That's normal.";
-      case "auto":
-        return "Almost done. You'll be asked to confirm one more time. That's normal.";
-    }
-  },
-  phoneFailed:
-    "Your phone couldn't save the passkey. Please check the list under “Your phone”: Bluetooth on, on both devices; " +
-    "internet on both; and on Android, Google Password Manager (Microsoft Authenticator can't be used). " +
-    "Then try again, or try another way.",
-  reauthStatus: "For your safety, please confirm with your first passkey before making the spare one.",
-  step1Title: "Step 1 of 2: your first passkey",
-  step2Title: "Step 2 of 2: your spare passkey",
-  tryAgain: "Try again",
-  createFirst: "Create my first passkey",
-  confirmFirst: "Confirm with my first passkey",
-  createSpare: "Create my spare passkey",
-  confirmingFirst: "First, confirm with the passkey you already made…",
-  thanksNowSpare: (during: string): string => `Thank you. Now create your spare passkey. ${during}`,
-  allDone: "All done! Both of your passkeys are ready.",
-  takingYou: "Taking you to Dropr…",
-  firstReady: "Your first passkey is ready.",
-  /** `ideas` are place names, already joined ("your phone or a security key"); empty when unknown. */
-  spareAdvice: (ideas: string): string =>
-    `Now make a spare one on a different device than the one you just used${ideas === "" ? "" : `, for example ${ideas}`}.`,
 };
 
 /** The shape every catalog implements. */
