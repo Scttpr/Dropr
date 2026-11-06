@@ -16,6 +16,7 @@ import (
 	"github.com/scttpr/dropr/internal/blob"
 	"github.com/scttpr/dropr/internal/config"
 	"github.com/scttpr/dropr/internal/httpx"
+	"github.com/scttpr/dropr/internal/i18n"
 	"github.com/scttpr/dropr/internal/seal"
 	"github.com/scttpr/dropr/internal/store"
 	"github.com/scttpr/dropr/internal/web"
@@ -210,6 +211,7 @@ func (s *Server) routes() *http.ServeMux {
 	// Pages.
 	s.handle(mux, "GET /{$}", s.handleHome, withSession())
 	s.handle(mux, "GET /login", s.handleLogin, withSession())
+	s.handle(mux, "POST /prefs", web.HandlePrefs)
 
 	// Auth.
 	s.handle(mux, "GET /auth/login", s.oidc.HandleLogin, withLimiter(s.authRL))
@@ -309,6 +311,6 @@ func (s *Server) csrfRejected(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, httpx.ErrCrossSite)
 		return
 	}
-	s.pages.Error(w, r, http.StatusForbidden, "Request blocked",
-		"This request was blocked because it did not come from this site. Go back and try again.", nil)
+	s.pages.Error(w, r, http.StatusForbidden, i18n.N("Request blocked"),
+		i18n.N("This request was blocked because it did not come from this site. Go back and try again."), nil)
 }

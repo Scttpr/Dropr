@@ -85,6 +85,12 @@ linters:
       - path: internal/auth/oidc/oidctest/
         linters:
           - gosec
+      # The French catalog: French words are not English misspellings, and
+      # "mot de passe" (password) in UI text is not a credential.
+      - path: internal/i18n/fr\.go
+        linters:
+          - misspell
+          - gosec
 
 formatters:
   enable:

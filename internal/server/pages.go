@@ -6,17 +6,19 @@ import (
 
 	"github.com/scttpr/dropr/internal/auth/session"
 	"github.com/scttpr/dropr/internal/blob"
+	"github.com/scttpr/dropr/internal/i18n"
 	"github.com/scttpr/dropr/internal/ids"
 	"github.com/scttpr/dropr/internal/store"
 	"github.com/scttpr/dropr/internal/web"
 )
 
-// Plain-language dead-link messages (PLAN.md §9).
-const (
-	msgLinkUnknown   = "This link does not exist or has been revoked."
-	msgLinkExpired   = "This link has expired."
-	msgLinkExhausted = "This link has reached its download limit."
-	msgLinkClosed    = "This link no longer accepts files."
+// Plain-language dead-link messages (PLAN.md §9), also the English API
+// messages; pages translate them.
+var (
+	msgLinkUnknown   = i18n.N("This link does not exist or has been revoked.")
+	msgLinkExpired   = i18n.N("This link has expired.")
+	msgLinkExhausted = i18n.N("This link has reached its download limit.")
+	msgLinkClosed    = i18n.N("This link no longer accepts files.")
 )
 
 // ownerPage loads the session of an owner-only page. It redirects to /login
@@ -42,8 +44,8 @@ func (s *Server) ownerPage(w http.ResponseWriter, r *http.Request, allowIncomple
 
 func (s *Server) serverError(w http.ResponseWriter, r *http.Request, what string, err error) {
 	s.log.ErrorContext(r.Context(), what, "err", err)
-	s.pages.Error(w, r, http.StatusInternalServerError, "Something went wrong",
-		"The server had a problem. Please try again in a moment.", nil)
+	s.pages.Error(w, r, http.StatusInternalServerError, i18n.N("Something went wrong"),
+		i18n.N("The server had a problem. Please try again in a moment."), nil)
 }
 
 // handleHome serves the login page to visitors and the dashboard to users
@@ -119,9 +121,9 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deadLink(w http.ResponseWriter, r *http.Request, status int, msg string) {
-	title := "Link not available"
+	title := i18n.N("Link not available")
 	if status == http.StatusNotFound {
-		title = "Link not found"
+		title = i18n.N("Link not found")
 	}
 	s.pages.Error(w, r, status, title, msg, nil)
 }
@@ -196,13 +198,9 @@ func (s *Server) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 		s.deadLink(w, r, http.StatusGone, msgLinkClosed)
 		return
 	}
-	name := owner.DisplayName
-	if name == "" {
-		name = "the owner of this link"
-	}
 	s.pages.Render(w, r, http.StatusOK, web.PageRequest, web.PageData{Title: "Send a file", View: &web.RequestView{
 		ID:             rq.ID,
-		OwnerName:      name,
+		OwnerName:      owner.DisplayName, // empty: the page names "the owner of this link"
 		ExpiresAt:      rq.ExpiresAt.Unix(),
 		MaxFiles:       files,
 		MaxBytes:       min(blob.MaxPlainFor(remaining), s.cfg.Limits.MaxFileSizeBytes),
@@ -212,7 +210,7 @@ func (s *Server) handleRequestPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDLFallback(w http.ResponseWriter, r *http.Request) {
-	s.pages.Error(w, r, http.StatusNotFound, "Download did not start", "The download could not start. Go back and try again.", nil)
+	s.pages.Error(w, r, http.StatusNotFound, i18n.N("Download did not start"), i18n.N("The download could not start. Go back and try again."), nil)
 }
 
 // inboxCount returns the number of received files, or -1 (hidden) unless the

@@ -1,9 +1,9 @@
-{{define "title"}}No access · Dropr{{end}}
+{{define "title"}}{{t "No access"}} · Dropr{{end}}
 {{define "content"}}
 <section class="card card-narrow center" role="alert">
-  <h1>You don't have access to Dropr</h1>
-  <p class="lead">You signed in successfully, but your account has not been given access to this service.</p>
-  <p class="muted">Ask your administrator to grant you access, then sign in again.</p>
-  <p><a class="button" href="/login">Back to sign-in</a></p>
+  <h1>{{t "You don't have access to Dropr"}}</h1>
+  <p class="lead">{{t "You signed in successfully, but your account has not been given access to this service."}}</p>
+  <p class="muted">{{t "Ask your administrator to grant you access, then sign in again."}}</p>
+  <p><a class="button" href="/login">{{t "Back to sign-in"}}</a></p>
 </section>
 {{end}}

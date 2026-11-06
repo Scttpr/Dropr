@@ -12,6 +12,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/scttpr/dropr/internal/auth/session"
+	"github.com/scttpr/dropr/internal/i18n"
 	"github.com/scttpr/dropr/internal/ids"
 )
 
@@ -41,7 +42,7 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, err := json.Marshal(st)
 	if err != nil {
-		p.fail(w, r, http.StatusInternalServerError, "Sign-in could not be started.", err)
+		p.fail(w, r, http.StatusInternalServerError, i18n.N("Sign-in could not be started."), err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -115,19 +116,19 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	st, err := p.readState(r)
 	if err != nil {
-		p.fail(w, r, http.StatusBadRequest, "Your sign-in attempt expired or was started in another window. Please sign in again.", err)
+		p.fail(w, r, http.StatusBadRequest, i18n.N("Your sign-in attempt expired or was started in another window. Please sign in again."), err)
 		return
 	}
 	q := r.URL.Query()
 	if subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(st.State)) != 1 {
-		p.fail(w, r, http.StatusBadRequest, "Your sign-in attempt expired or was started in another window. Please sign in again.",
+		p.fail(w, r, http.StatusBadRequest, i18n.N("Your sign-in attempt expired or was started in another window. Please sign in again."),
 			errors.New("state mismatch"))
 		return
 	}
 	// RFC 9207 mix-up defense: if the provider names itself, it must be ours.
 	if iss, present := q["iss"]; present || p.meta.AuthorizationResponseISSSupported {
 		if len(iss) != 1 || iss[0] != p.cfg.Issuer {
-			p.fail(w, r, http.StatusBadRequest, "The sign-in response came from an unexpected provider.", errors.New("iss parameter mismatch"))
+			p.fail(w, r, http.StatusBadRequest, i18n.N("The sign-in response came from an unexpected provider."), errors.New("iss parameter mismatch"))
 			return
 		}
 	}
@@ -137,12 +138,12 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			code = e
 		}
 		p.log.InfoContext(ctx, "provider returned an authorization error", "error_code", code)
-		p.pages.SignInError(w, r, http.StatusUnauthorized, "Sign-in was canceled or refused by your identity provider.")
+		p.pages.SignInError(w, r, http.StatusUnauthorized, i18n.N("Sign-in was canceled or refused by your identity provider."))
 		return
 	}
 	code := q.Get("code")
 	if code == "" || len(code) > 4096 {
-		p.fail(w, r, http.StatusBadRequest, "The sign-in response was incomplete. Please sign in again.", errors.New("missing code"))
+		p.fail(w, r, http.StatusBadRequest, i18n.N("The sign-in response was incomplete. Please sign in again."), errors.New("missing code"))
 		return
 	}
 
@@ -153,7 +154,7 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		"code_verifier": {st.Verifier},
 	})
 	if err != nil {
-		p.fail(w, r, http.StatusBadGateway, "Sign-in failed while contacting your identity provider. Please try again.", err)
+		p.fail(w, r, http.StatusBadGateway, i18n.N("Sign-in failed while contacting your identity provider. Please try again."), err)
 		return
 	}
 	id, err := p.verifyIDToken(ctx, tr.IDToken, st.Nonce, verifyLogin)
@@ -170,19 +171,19 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		p.pages.Forbidden(w, r)
 		return
 	case err != nil:
-		p.fail(w, r, http.StatusUnauthorized, "Your identity provider's response could not be verified.", err)
+		p.fail(w, r, http.StatusUnauthorized, i18n.N("Your identity provider's response could not be verified."), err)
 		return
 	}
 	if tr.RefreshToken == "" {
 		p.fail(w, r, http.StatusBadGateway,
-			"Your identity provider did not issue a refresh token, so your access cannot be kept up to date. Ask your administrator to check the provider setup.",
+			i18n.N("Your identity provider did not issue a refresh token, so your access cannot be kept up to date. Ask your administrator to check the provider setup."),
 			errors.New("no refresh token in token response"))
 		return
 	}
 
 	u, created, err := p.st.ProvisionUser(ctx, id.Issuer, id.Subject, id.DisplayName, p.now())
 	if err != nil {
-		p.fail(w, r, http.StatusInternalServerError, "Sign-in failed. Please try again.", err)
+		p.fail(w, r, http.StatusInternalServerError, i18n.N("Sign-in failed. Please try again."), err)
 		return
 	}
 	if u.DisabledAt != nil {
@@ -193,7 +194,7 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if _, err := p.sessions.Create(ctx, w, r, session.NewParams{
 		User: u, RefreshToken: tr.RefreshToken, OIDCSID: id.SID,
 	}); err != nil {
-		p.fail(w, r, http.StatusInternalServerError, "Sign-in failed. Please try again.", err)
+		p.fail(w, r, http.StatusInternalServerError, i18n.N("Sign-in failed. Please try again."), err)
 		return
 	}
 	p.log.InfoContext(ctx, "login", "user", u.ID, "new_account", created)

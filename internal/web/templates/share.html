@@ -1,19 +1,19 @@
-{{define "title"}}Download a file · Dropr{{end}}
+{{define "title"}}{{t "Download a file"}} · Dropr{{end}}
 {{define "main"}}{{with .View}}
 <main id="main" class="site-main" data-page="share" data-share-id="{{.ID}}" data-expires-at="{{.ExpiresAt}}">
   <section class="card card-narrow card-recipient center" aria-labelledby="file-name">
     <svg class="file-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Zm0 0v5h5"/></svg>
-    <h1 id="file-name" class="file-name">Someone shared a file with you</h1>
+    <h1 id="file-name" class="file-name">{{t "Someone shared a file with you"}}</h1>
     <p class="file-facts"><span id="file-size">{{bytes .PlainSize}}</span> · <span id="file-expiry">{{expiresIn .ExpiresAt}}</span></p>
-    <button type="button" id="download-button" class="button button-primary button-large button-block" data-js-only hidden>Download</button>
+    <button type="button" id="download-button" class="button button-primary button-large button-block" data-js-only hidden>{{t "Download"}}</button>
     <div id="download-panel" class="transfer" hidden>
-      <progress id="download-progress" max="100" value="0" aria-label="Download progress"></progress>
+      <progress id="download-progress" max="100" value="0" aria-label="{{t "Download progress"}}"></progress>
       <p id="download-status" class="transfer-status" role="status" aria-live="polite"></p>
-      <div class="button-row"><button type="button" id="download-cancel" class="button">Cancel</button></div>
+      <div class="button-row"><button type="button" id="download-cancel" class="button">{{t "Cancel"}}</button></div>
     </div>
     <div id="download-error" class="error" role="alert" tabindex="-1" hidden></div>
-    <p class="hint">The file is decrypted in your browser. The server never sees its contents or name.</p>
-    <noscript><p class="notice">This file is end-to-end encrypted and is decrypted in your browser, which needs JavaScript. Please enable it for this site to download the file.</p></noscript>
+    <p class="hint">{{t "The file is decrypted in your browser. The server never sees its contents or name."}}</p>
+    <noscript><p class="notice">{{t "This file is end-to-end encrypted and is decrypted in your browser, which needs JavaScript. Please enable it for this site to download the file."}}</p></noscript>
   </section>
 </main>
 {{end}}{{end}}

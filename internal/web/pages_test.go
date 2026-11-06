@@ -1,9 +1,11 @@
 package web
 
 import (
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -12,7 +14,8 @@ import (
 	"github.com/scttpr/dropr/internal/store"
 )
 
-// builtAssets mimics a web build: hashed page modules plus manifest.json.
+// builtAssets mimics a web build: hashed page modules, the display settings
+// module and manifest.json.
 func builtAssets(t *testing.T) *Assets {
 	t.Helper()
 	fsys := fstest.MapFS{
@@ -21,7 +24,7 @@ func builtAssets(t *testing.T) *Assets {
 		"sw.js":       {Data: []byte("self")},
 	}
 	manifest := `{"sw.js":"sw.js"`
-	for _, logical := range pageScripts {
+	for _, logical := range append(slices.Collect(maps.Values(pageScripts)), PrefsScriptName) {
 		file := strings.TrimSuffix(logical, ".js") + "-HASH.js"
 		fsys[file] = &fstest.MapFile{Data: []byte("export{}")}
 		manifest += `,"` + logical + `":"` + file + `"`
@@ -79,7 +82,7 @@ var pageCases = map[string]struct {
 		view:  &RequestView{ID: "BBBBBBBBBBBBBBBBBBBBBB", OwnerName: "Alice", MaxFiles: 10, MaxBytes: 5 << 30, ExpiresAt: future},
 		attrs: []string{`data-request-id="BBBBBBBBBBBBBBBBBBBBBB"`, `data-max-files="10"`, `data-max-bytes="5368709120"`},
 		ids:   []string{"drop-zone", "file-input", "upload-panel", "upload-progress", "upload-status", "upload-done", "upload-error"},
-		text:  []string{`Send a file to <span id="owner-name">Alice</span>`, "✓ Sent. You can close this page.", " multiple>"},
+		text:  []string{"Send a file to Alice", "✓ Sent. You can close this page.", " multiple>"},
 	},
 }
 
@@ -101,8 +104,9 @@ func TestPagesFollowDOMContract(t *testing.T) {
 			t.Errorf("%s: wrong <main>", page)
 		}
 		script := regexp.MustCompile(`<script type="module" src="/assets/` + page + `-HASH\.js" integrity="sha384-[A-Za-z0-9+/=]+"></script>`)
-		if n := strings.Count(body, "<script"); n != 1 || !script.MatchString(body) {
-			t.Errorf("%s: want exactly one module script with SRI, got %d", page, n)
+		prefsScript := regexp.MustCompile(`<script type="module" src="/assets/prefs-HASH\.js" integrity="sha384-[A-Za-z0-9+/=]+"></script>`)
+		if n := strings.Count(body, "<script"); n != 2 || !script.MatchString(body) || !prefsScript.MatchString(body) {
+			t.Errorf("%s: want the page module and prefs.js, both with SRI, got %d scripts", page, n)
 		}
 		for _, a := range c.attrs {
 			if !strings.Contains(body, a) {
@@ -169,7 +173,9 @@ func TestErrorPagesLoadNoScript(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	r.Error(w, httptest.NewRequest(http.MethodGet, "/s/x", nil), http.StatusGone, "Link not available", "This link has expired.", nil)
-	if strings.Contains(w.Body.String(), "<script") || strings.Contains(w.Body.String(), "data-share-id") ||
+	// Only the display settings module: no page module, no view model.
+	if strings.Count(w.Body.String(), "<script") != 1 || !strings.Contains(w.Body.String(), "/assets/prefs-HASH.js") ||
+		strings.Contains(w.Body.String(), "data-share-id") ||
 		!strings.Contains(w.Body.String(), "This link has expired.") {
 		t.Fatal(w.Body.String())
 	}
