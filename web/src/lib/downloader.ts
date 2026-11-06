@@ -42,6 +42,7 @@ import {
   segmentCipherOffset,
 } from "../crypto/index.ts";
 import { Api, ApiError } from "./api.ts";
+import { t } from "./i18n.ts";
 import { type Progress, RateMeter } from "./progress.ts";
 import { abortError, backoffDelay, isAbortError, sleep } from "./retry.ts";
 import { DL_SCOPE, type PageToSw, type PortToSw, type SwToPage } from "./swproto.ts";
@@ -160,7 +161,7 @@ export async function downloadToSink(opts: DownloadOptions): Promise<void> {
       let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | null = null;
       try {
         const res = await api.fetchCiphertext(token, start, opts.cipherSize, signal ? { signal } : {});
-        if (res.body === null) throw new ApiError(0, "bad_response", "Unexpected response from the server (no body).");
+        if (res.body === null) throw new ApiError(0, "bad_response", t.statusUnexpected("no body"));
         reader = res.body
           .pipeThrough(lengthGuard(opts.cipherSize - start))
           .pipeThrough(createDecryptStream(opts.contentKey, { startSegment: segments }))
@@ -192,14 +193,10 @@ export async function downloadToSink(opts: DownloadOptions): Promise<void> {
         if (signal?.aborted) throw abortError(signal.reason);
         if (e instanceof SinkFailure) {
           if (isAbortError(e.cause)) throw e.cause;
-          throw new DownloadError("sink", "The file could not be saved (the download was cancelled or the disk is full).", e.cause);
+          throw new DownloadError("sink", t.saveFailed, e.cause);
         }
         if (e instanceof DecryptionError) {
-          throw new DownloadError(
-            "damaged",
-            "The file could not be decrypted: it has been damaged or altered, or the link is wrong.",
-            e,
-          );
+          throw new DownloadError("damaged", t.damaged, e);
         }
         if (e instanceof ApiError && TOKEN_REJECTED.has(e.status) && opts.renewToken && renewedAt !== segments && start > 0) {
           renewedAt = segments;
@@ -208,7 +205,7 @@ export async function downloadToSink(opts: DownloadOptions): Promise<void> {
         }
         if (!isTransient(e)) throw e;
         if (++failures > maxRetries) {
-          throw new DownloadError("interrupted", "The download was interrupted repeatedly. Check your connection and try again.", e);
+          throw new DownloadError("interrupted", t.interrupted, e);
         }
         meter.reset(bytes, now());
         await sleep(
@@ -277,7 +274,7 @@ export function blobSink(name: string): DownloadSink {
     kind: "blob",
     write(c) {
       total += c.length;
-      if (total > BLOB_LIMIT) return Promise.reject(new DownloadError("too_large", "This file is too large to download in this browser."));
+      if (total > BLOB_LIMIT) return Promise.reject(new DownloadError("too_large", t.tooLargeForBrowser));
       chunks.push(c);
       return Promise.resolve();
     },
@@ -392,11 +389,11 @@ function randomId(): string {
 
 function waitFor(port: MessagePort, type: SwToPage["type"], timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new DownloadError("unsupported", "The download helper did not respond.")), timeoutMs);
+    const timer = setTimeout(() => reject(new DownloadError("unsupported", t.helperTimeout)), timeoutMs);
     const prev = port.onmessage;
     port.onmessage = (ev: MessageEvent<SwToPage>) => {
       if (ev.data.type === type) {
-        clearTimeout(t);
+        clearTimeout(timer);
         port.onmessage = prev;
         resolve();
       }
@@ -519,11 +516,8 @@ export async function openSink(name: string, plainSize: number): Promise<OpenedS
   if (plainSize <= BLOB_LIMIT) {
     return {
       sink: blobSink(name),
-      notice: "Your browser cannot save directly to disk, so the file is decrypted in memory and saved when complete.",
+      notice: t.inMemoryNotice,
     };
   }
-  throw new DownloadError(
-    "unsupported",
-    "This browser cannot download files this large securely. Please use a recent Chrome, Edge, Firefox or Safari.",
-  );
+  throw new DownloadError("unsupported", t.noSecureDownload);
 }

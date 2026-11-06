@@ -6,6 +6,7 @@
  */
 
 import { byId, copyText, focusTo, maybeId } from "./dom.ts";
+import { t } from "./i18n.ts";
 import { encodeQr, qrToSvg } from "./qr.ts";
 
 export interface LinkViewIds {
@@ -25,10 +26,10 @@ export function showLink(ids: LinkViewIds, url: string, expiryText: string, qrLa
   input.value = url;
   input.readOnly = true;
   input.addEventListener("focus", () => input.select());
-  const label = copy.textContent ?? "Copy";
+  const label = copy.textContent ?? "";
   copy.onclick = async () => {
     const ok = await copyText(url, input);
-    copy.textContent = ok ? "Copied" : "Press Ctrl+C to copy";
+    copy.textContent = ok ? t.copied : t.pressToCopy;
     setTimeout(() => (copy.textContent = label), 2500);
   };
   const exp = ids.expiry !== undefined ? maybeId(ids.expiry) : null;

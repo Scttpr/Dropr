@@ -107,6 +107,7 @@ base64url (22 chars). Anything not listed returns 404.
 | GET | `/assets/{hash-name}` | – | immutable, long cache |
 | GET | `/sw.js` | – | service worker (registered with scope `/_dl/`), `Cache-Control: no-cache` |
 | GET | `/_dl/{…}` | – | always 404 ("The download could not start"): only the service worker answers there |
+| POST | `/prefs` | – | display settings without JavaScript: `lang` (`en`, `fr`) and/or `theme` (`light`, `dark`, `system`) → cookies, 303 to `next` (same-origin path only, else `/`) |
 
 ### Auth
 | Method | Path | Notes |
@@ -117,6 +118,8 @@ base64url (22 chars). Anything not listed returns 404.
 | GET | `/auth/frontchannel-logout` | `iss` + `sid` → kill matching sessions |
 
 Session cookie: `__Host-dropr_session`, `Secure; HttpOnly; SameSite=Strict; Path=/`.
+
+Display settings: `__Host-dropr_lang` (`en`, `fr`) and `__Host-dropr_theme` (`light`, `dark`, `system`; default `light`), `Secure; SameSite=Lax; Path=/; Max-Age=1 year`. Not HttpOnly: `prefs.js` sets them so a change keeps the URL fragment. They carry no secret.
 
 ### Passkeys (session required)
 | Method | Path | Notes |

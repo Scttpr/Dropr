@@ -16,6 +16,7 @@ import { type DecryptedFile, openShare } from "./lib/decrypt-names.ts";
 import { Notice, byId, dataInt, maybeId, pageRoot, revealJsOnly, warnBeforeUnload } from "./lib/dom.ts";
 import { downloadToSink, openSink, prepareDownloadWorker } from "./lib/downloader.ts";
 import { formatBytes, formatExpiry } from "./lib/format.ts";
+import { t } from "./lib/i18n.ts";
 import { DAMAGED } from "./lib/messages.ts";
 import { isAbortError } from "./lib/retry.ts";
 import { ProgressPanel } from "./lib/transfer-ui.ts";
@@ -23,10 +24,10 @@ import { ProgressPanel } from "./lib/transfer-ui.ts";
 /** Plain-language message for share-link API errors. */
 export function shareErrorMessage(e: unknown): string | null {
   if (!(e instanceof ApiError)) return null;
-  if (e.code === "expired") return "This link has expired.";
-  if (e.code === "exhausted") return "This link has reached its download limit.";
-  if (e.status === 404) return "This link does not exist or has been revoked by its owner.";
-  if (e.status === 410) return "This link has expired or reached its download limit.";
+  if (e.code === "expired") return t.statusExpired;
+  if (e.code === "exhausted") return t.statusExhausted;
+  if (e.status === 404) return t.shareNotFound;
+  if (e.status === 410) return t.shareGone;
   return null;
 }
 
@@ -58,9 +59,7 @@ async function init(main: HTMLElement): Promise<void> {
     fk = decodeShareFragment(location.hash);
   } catch {
     fail(
-      location.hash.length <= 1
-        ? "This link is missing its key (the part after #). Ask the sender for the complete link."
-        : "This link is incomplete or damaged. Ask the sender for the complete link.",
+      location.hash.length <= 1 ? t.missingKey : t.incompleteLink,
     );
     return;
   }
@@ -69,13 +68,13 @@ async function init(main: HTMLElement): Promise<void> {
   let info: ShareDownload;
   let file: DecryptedFile;
   try {
-    panel.say("Checking the link…");
+    panel.say(t.checkingLink);
     info = await api.shareDownload(shareId);
     file = await openShare(fk, info.meta, info.size);
     fk.fill(0);
   } catch (e) {
     panel.say("");
-    if (e instanceof DecryptionError || e instanceof FormatError) fail("The key in this link is wrong or the file is damaged. Ask the sender for the complete link.");
+    if (e instanceof DecryptionError || e instanceof FormatError) fail(t.wrongKey);
     else fail(shareErrorMessage(e) ?? (e instanceof ApiError ? e.message : DAMAGED));
     return;
   }
@@ -96,7 +95,7 @@ async function init(main: HTMLElement): Promise<void> {
     button.disabled = true;
     try {
       const { sink, notice: sinkNotice } = await openSink(file.meta.name, file.meta.size); // first await: user gesture
-      panel.start(file.meta.name, "Downloading");
+      panel.start(file.meta.name, t.downloading);
       if (sinkNotice !== "") panel.say(sinkNotice);
       const signal = ctl.signal;
       let token = info.token;
@@ -106,17 +105,17 @@ async function init(main: HTMLElement): Promise<void> {
         contentKey: file.keys.content,
         sink,
         signal,
-        onProgress: (p) => panel.update(p, "Downloading"),
+        onProgress: (p) => panel.update(p, t.downloading),
         renewToken: async () => {
           token = (await api.shareDownload(shareId, { signal })).token;
           return token;
         },
       });
-      panel.finish(sink.kind === "sw" ? "Download complete. Check your browser's downloads." : "Download complete.");
+      panel.finish(sink.kind === "sw" ? t.downloadCompleteCheck : t.downloadComplete);
       // A token is single-file but may be reused for Range resumes only within its TTL; get a fresh one for a second click.
       info = await api.shareDownload(shareId).catch(() => info);
     } catch (e) {
-      if (isAbortError(e)) panel.finish("Download cancelled.");
+      if (isAbortError(e)) panel.finish(t.downloadCancelled);
       else {
         panel.hide();
         notice.error(shareErrorMessage(e) ?? e);

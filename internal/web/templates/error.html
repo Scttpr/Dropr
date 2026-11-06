@@ -1,8 +1,8 @@
-{{define "title"}}{{.Title}} · Dropr{{end}}
+{{define "title"}}{{t .Title}} · Dropr{{end}}
 {{define "content"}}
 <section class="card card-narrow center" role="alert">
-  <h1>{{.Title}}</h1>
-  <p class="lead">{{.Message}}</p>
-  <p><a class="button" href="/">{{if .User}}Back to Dropr{{else}}Go to the start page{{end}}</a></p>
+  <h1>{{t .Title}}</h1>
+  <p class="lead">{{t .Message}}</p>
+  <p><a class="button" href="/">{{if .User}}{{t "Back to Dropr"}}{{else}}{{t "Go to the start page"}}{{end}}</a></p>
 </section>
 {{end}}

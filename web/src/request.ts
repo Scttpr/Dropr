@@ -25,6 +25,7 @@ import { api } from "./lib/api.ts";
 import { Notice, byId, dataInt, el, focusTo, maybeId, pageRoot, revealJsOnly, warnBeforeUnload } from "./lib/dom.ts";
 import { attachDropZone } from "./lib/dropzone.ts";
 import { formatBytes } from "./lib/format.ts";
+import { t } from "./lib/i18n.ts";
 import { errorMessage } from "./lib/messages.ts";
 import { isAbortError } from "./lib/retry.ts";
 import { ProgressPanel, runUploadWithPanel } from "./lib/transfer-ui.ts";
@@ -55,7 +56,7 @@ function init(main: HTMLElement): void {
     ownerKey = decodeRequestFragment(location.hash);
   } catch {
     zoneEl.hidden = true;
-    notice.error("This link is incomplete or damaged. Ask the person who sent it for the complete link.", false);
+    notice.error(t.requestLinkDamaged, false);
     return;
   }
 
@@ -68,16 +69,12 @@ function init(main: HTMLElement): void {
     notice.clear();
     doneEl.hidden = true;
     if (files.length > filesLeft) {
-      notice.error(
-        filesLeft === 0
-          ? "This link does not accept more files."
-          : `This link accepts ${filesLeft} more file${filesLeft === 1 ? "" : "s"}. Please choose fewer files.`,
-      );
+      notice.error(filesLeft === 0 ? t.noMoreFiles : t.acceptsMore(filesLeft));
       return;
     }
     const total = files.reduce((n, f) => n + f.size, 0);
     if (total > bytesLeft) {
-      notice.error(`These files are too large (${formatBytes(total)}). This link accepts up to ${formatBytes(bytesLeft)} more.`);
+      notice.error(t.filesTooLarge(formatBytes(total), formatBytes(bytesLeft)));
       return;
     }
     busy = true;
@@ -89,15 +86,15 @@ function init(main: HTMLElement): void {
         sent++;
         filesLeft--;
         bytesLeft -= file.size;
-        list?.append(el("li", { text: `${file.name} (${formatBytes(file.size)}) — sent` }));
+        list?.append(el("li", { text: t.sentItem(file.name, formatBytes(file.size)) }));
       }
       panel.hide();
       doneEl.hidden = false;
       focusTo(doneEl);
     } catch (e) {
       panel.hide();
-      if (isAbortError(e)) notice.error(sent > 0 ? `Cancelled. ${sent} file${sent === 1 ? " was" : "s were"} sent before.` : "Cancelled.");
-      else notice.error(sent > 0 ? `${errorMessage(e)} ${sent} file${sent === 1 ? " was" : "s were"} sent before the error.` : e);
+      if (isAbortError(e)) notice.error(sent > 0 ? t.cancelledAfter(sent) : t.cancelled);
+      else notice.error(sent > 0 ? t.errorAfter(errorMessage(e), sent) : e);
     } finally {
       busy = false;
       zone.setEnabled(filesLeft > 0);
@@ -122,7 +119,7 @@ function init(main: HTMLElement): void {
         contentKey: keys.content,
         uploadId: created.upload_id,
         uploadToken: created.upload_token,
-        onProgress: (p) => panel.update(p, "Uploading"),
+        onProgress: (p) => panel.update(p, t.uploading),
       });
       await runUploadWithPanel(uploader, panel, file.name);
     } finally {

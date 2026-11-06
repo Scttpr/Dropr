@@ -1,8 +1,8 @@
-{{define "title"}}Sign in · Dropr{{end}}
+{{define "title"}}{{t "Sign in"}} · Dropr{{end}}
 {{define "content"}}
 <section class="card card-narrow center">
   <h1>Dropr</h1>
-  <p class="lead">Share files with end-to-end encryption.</p>
-  <a class="button button-primary button-large" href="/auth/login">{{.LoginLabel}}</a>
+  <p class="lead">{{t "Share files with end-to-end encryption."}}</p>
+  <a class="button button-primary button-large" href="/auth/login">{{t .LoginLabel}}</a>
 </section>
 {{end}}

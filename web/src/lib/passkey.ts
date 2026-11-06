@@ -47,6 +47,7 @@ import {
   wrapPrivateKey,
 } from "../crypto/index.ts";
 import { Api, type UnlockPurpose, type UnlockResult } from "./api.ts";
+import { t } from "./i18n.ts";
 import {
   type AuthenticatorChoice,
   type CredentialLike,
@@ -62,23 +63,16 @@ import {
 } from "./webauthn.ts";
 
 /** A new passkey was saved somewhere that cannot evaluate PRF (registration). */
-export const PRF_UNSUPPORTED_MESSAGE =
-  "The place where you tried to save this passkey can't keep your files private. " +
-  "Please choose another place: this computer, a security key, or your phone with " +
-  "Google Password Manager (Android) or Passwords / iCloud Keychain (iPhone). " +
-  "Microsoft Authenticator can't be used for Dropr.";
+export const PRF_UNSUPPORTED_MESSAGE = t.prfUnsupported;
 
 /** An existing passkey cannot evaluate PRF (unlock). */
-export const PRF_UNSUPPORTED_UNLOCK_MESSAGE = "This passkey can't open your files. Please try again with another of your Dropr passkeys.";
+export const PRF_UNSUPPORTED_UNLOCK_MESSAGE = t.prfUnsupportedUnlock;
 
 /** The browser itself reports no PRF support (`getClientCapabilities`). */
-export const BROWSER_NO_PRF_MESSAGE =
-  "This browser can't keep your files private with a passkey. " +
-  "Please open this page in another browser, such as a recent Chrome, Edge or Safari.";
+export const BROWSER_NO_PRF_MESSAGE = t.browserNoPrf;
 
 /** The browser has no passkey support at all. */
-export const NO_WEBAUTHN_MESSAGE =
-  "This browser can't use passkeys. Please open this page in a recent Chrome, Edge, Safari or Firefox.";
+export const NO_WEBAUTHN_MESSAGE = t.noWebauthn;
 
 /** The browser or authenticator cannot evaluate PRF. */
 export class PrfUnsupportedError extends Error {
@@ -110,25 +104,17 @@ export function passkeyErrorMessage(e: unknown, during: "create" | "get"): strin
   switch (name) {
     case "NotAllowedError":
       // Cancelled, timed out, or (phone) the connection did not work: browsers do not say which.
-      return create
-        ? "The passkey wasn't saved. The window may have been closed, or it took too long. Please try again, or choose another place to save it."
-        : "Your passkey wasn't used. The window may have been closed, or it took too long. Please try again.";
+      return create ? t.passkeyNotSaved : t.passkeyNotUsed;
     case "InvalidStateError":
-      return create
-        ? "You already have a Dropr passkey there. Please choose another place, such as your phone or a security key."
-        : "This passkey can't be used here. Please try another of your passkeys.";
+      return create ? t.passkeyDuplicate : t.passkeyInvalidState;
     case "SecurityError":
-      return "Passkeys don't work on this web address. Please open Dropr from its usual link.";
+      return t.passkeyWrongOrigin;
     case "NotSupportedError":
-      return create
-        ? "This browser or device can't save this kind of passkey. Please choose another place, or try another browser such as Chrome, Edge or Safari."
-        : "This browser or device can't use your passkey. Please try another browser such as Chrome, Edge or Safari.";
+      return create ? t.passkeyCannotSave : t.passkeyCannotUse;
     case "AbortError":
-      return "The passkey window closed before it finished. Please try again.";
+      return t.passkeyAborted;
     default:
-      return create
-        ? "Something went wrong while saving the passkey. Please try again, or choose another place to save it."
-        : "Something went wrong with your passkey. Please try again.";
+      return create ? t.passkeySaveFailed : t.passkeyFailed;
   }
 }
 
@@ -349,13 +335,13 @@ async function unlockRaw<T>(
         ? b64uToBytes(res.user_handle)
         : null;
     if (handle === null || handle.length === 0) {
-      throw new PasskeyError("This passkey didn't say which account it belongs to. Please try another of your Dropr passkeys.");
+      throw new PasskeyError(t.passkeyNoUser);
     }
     const kek = await deriveKek(prf, handle);
     try {
       return await unwrap(kek, b64uToBytes(res.wrapped_privkey));
     } catch (e) {
-      throw new PasskeyError("This passkey could not unlock your files. Please try another of your Dropr passkeys.", e);
+      throw new PasskeyError(t.passkeyCannotUnlock, e);
     }
   } finally {
     prf.fill(0);
