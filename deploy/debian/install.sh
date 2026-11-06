@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Install or upgrade Dropr on a Debian or Ubuntu server as a hardened systemd
-# service. Run as root from a checkout of the release tag:
+# Install or upgrade Dropr on a Debian 13 server as a hardened systemd
+# service. Run as root from a checkout of the release tag (after
+# deploy/debian/harden-host.sh on a fresh host):
 #
 #   sudo deploy/debian/install.sh --binary ./dropr          # a binary you built or downloaded
 #   sudo deploy/debian/install.sh --version v0.1.0          # download + verify the release binary
 #
-# First run: creates the dropr system user, /etc/dropr (config, root-only
-# credentials), the units, the admin wrapper and the daily backup timer, then
+# First run: creates the dropr system user, /etc/dropr (config, credentials
+# encrypted with systemd-creds and sealed to the TPM2 when there is one), the
+# units, the AppArmor profile, the admin wrapper and the daily backup timer, then
 # stops so you can edit /etc/dropr/dropr.toml. Run it again (or
 # `systemctl enable --now dropr`) once the config is filled in.
 #
@@ -28,6 +30,7 @@ version=""
 skip_signature=false
 gen_oidc_key=true
 start=true
+unsupported_os=false
 
 usage() {
   sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -40,6 +43,8 @@ Options:
                        verification (integrity only; not recommended)
   --no-oidc-key        do not generate the OIDC client key and certificate
   --no-start           install files only; do not start or restart the service
+  --unsupported-os     continue on a system other than Debian 13 (systemd >= 257
+                       is still required: older versions ignore part of the sandbox)
 EOF
 }
 
@@ -54,6 +59,7 @@ while [ $# -gt 0 ]; do
     --skip-signature) skip_signature=true; shift ;;
     --no-oidc-key) gen_oidc_key=false; shift ;;
     --no-start) start=false; shift ;;
+    --unsupported-os) unsupported_os=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "unknown argument: $1" ;;
   esac
@@ -65,22 +71,27 @@ done
 [ -z "$binary" ] || [ -z "$version" ] || die "--binary and --version are exclusive"
 command -v systemctl >/dev/null && [ -d /run/systemd/system ] || die "systemd is required"
 
+# shellcheck source=/dev/null
 . /etc/os-release
-case " ${ID:-} ${ID_LIKE:-} " in
-  *" debian "*|*" ubuntu "*) ;;
-  *) warn "untested distribution '${ID:-unknown}'; continuing" ;;
-esac
+if [ "${ID:-}" != debian ] || [ "${VERSION_ID%%.*}" -lt 13 ] 2>/dev/null; then
+  $unsupported_os || die "this kit targets Debian 13 (found ${PRETTY_NAME:-unknown}); use deploy/docker elsewhere, or pass --unsupported-os"
+  warn "unsupported system '${PRETTY_NAME:-unknown}'; continuing"
+fi
 
+# Older systemd ignores directives it does not know, which would silently
+# weaken the sandbox (PrivateTmp=disconnected, ProtectControlGroups=strict...).
 sd_version=$(systemctl --version | awk 'NR==1 {print $2}')
-[ "${sd_version%%.*}" -ge 247 ] 2>/dev/null \
-  || die "systemd >= 247 is required (found ${sd_version}); use Debian 11+ or Ubuntu 22.04+"
+[ "${sd_version%%.*}" -ge 257 ] 2>/dev/null \
+  || die "systemd >= 257 is required (found ${sd_version})"
+command -v systemd-creds >/dev/null || die "systemd-creds is required"
 
 for f in dropr.service dropr-backup.service dropr-backup.timer journald@dropr.conf \
-         dropr-admin run-with-credentials dropr.toml; do
+         dropr-admin run-with-credentials dropr.toml apparmor/usr.local.bin.dropr; do
   [ -f "$SRC_DIR/$f" ] || die "missing $SRC_DIR/$f (run from a Dropr checkout)"
 done
 
-workdir=$(mktemp -d)
+# On tmpfs and root-only: secrets pass through here before they are sealed.
+workdir=$(mktemp -d -p /run dropr-install.XXXXXX)
 trap 'rm -rf "$workdir"' EXIT
 
 # --- Obtain and check the binary ----------------------------------------------
@@ -135,22 +146,42 @@ install -d -o dropr -g dropr -m 0700 "$BACKUP_DIR"
 install -d -o root  -g root  -m 0755 "$PREFIX/lib/dropr"
 
 # --- Secrets ----------------------------------------------------------------------
-if [ ! -s "$CRED_DIR/refresh_key" ]; then
-  log "Generating $CRED_DIR/refresh_key"
-  (umask 077; head -c 32 /dev/urandom | base64 > "$CRED_DIR/refresh_key")
+# Encrypted with systemd-creds: --with-key=auto seals to the host key and the
+# TPM2 when the machine has one, so a copy of the disk cannot decrypt them.
+# Losing them is recoverable: a new refresh key only signs everyone out, a new
+# OIDC key needs its certificate uploaded to the IdP (operations.md "Key rotation").
+seal() { # seal NAME SOURCE: encrypt SOURCE as credential NAME
+  systemd-creds encrypt --with-key=auto --name="$1" "$2" "$CRED_DIR/$1.cred.new"
+  chmod 0600 "$CRED_DIR/$1.cred.new"
+  mv -f "$CRED_DIR/$1.cred.new" "$CRED_DIR/$1.cred"
+}
+if systemd-creds has-tpm2 >/dev/null 2>&1; then sealing="host key + TPM2"; else
+  sealing="host key only (no TPM2: a full disk copy can decrypt them)"
 fi
-if [ ! -s "$CRED_DIR/oidc_key.pem" ] && $gen_oidc_key; then
-  if command -v openssl >/dev/null; then
-    log "Generating the OIDC client key and a 2-year self-signed certificate"
-    (umask 077
-     openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 730 -subj "/CN=dropr" \
-       -keyout "$workdir/key.pem" -out "$workdir/cert.pem" 2>/dev/null
-     cat "$workdir/key.pem" "$workdir/cert.pem" > "$CRED_DIR/oidc_key.pem")
-    install -m 0644 "$workdir/cert.pem" "$CONF_DIR/oidc_cert.pem"
-    oidc_cert_new=true
-  else
-    warn "openssl not found: create $CRED_DIR/oidc_key.pem yourself (docs/setup-entra.md)"
+# Plaintext files from an older install: seal them, then remove them.
+for pair in refresh_key:refresh_key oidc_key:oidc_key.pem; do
+  name=${pair%%:*} plain=$CRED_DIR/${pair#*:}
+  if [ -s "$plain" ] && [ ! -s "$CRED_DIR/$name.cred" ]; then
+    log "Sealing $plain as $name.cred ($sealing)"
+    seal "$name" "$plain"
+    shred -u "$plain"
   fi
+done
+if [ ! -s "$CRED_DIR/refresh_key.cred" ]; then
+  log "Generating the refresh key ($sealing)"
+  head -c 32 /dev/urandom | base64 > "$workdir/refresh_key"
+  seal refresh_key "$workdir/refresh_key"
+fi
+if [ ! -s "$CRED_DIR/oidc_key.cred" ] && $gen_oidc_key; then
+  command -v openssl >/dev/null || die "openssl is required to generate the OIDC client key (apt install openssl), or pass --no-oidc-key"
+  log "Generating the OIDC client key and a 2-year self-signed certificate"
+  (umask 077
+   openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 730 -subj "/CN=dropr" \
+     -keyout "$workdir/key.pem" -out "$workdir/cert.pem" 2>/dev/null
+   cat "$workdir/key.pem" "$workdir/cert.pem" > "$workdir/oidc_key.pem")
+  seal oidc_key "$workdir/oidc_key.pem"
+  install -m 0644 "$workdir/cert.pem" "$CONF_DIR/oidc_cert.pem"
+  oidc_cert_new=true
 fi
 chown root:root "$CRED_DIR"/* 2>/dev/null || true
 chmod 0600 "$CRED_DIR"/* 2>/dev/null || true
@@ -173,6 +204,17 @@ install -m 0755 "$SRC_DIR/run-with-credentials" "$PREFIX/lib/dropr/run-with-cred
 install -m 0755 "$SRC_DIR/dropr-admin"          "$PREFIX/sbin/dropr-admin"
 systemctl daemon-reload
 
+# --- AppArmor (before any restart: profiles attach when the binary starts) ------
+if [ "$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null)" = Y ] && command -v apparmor_parser >/dev/null; then
+  install -m 0644 "$SRC_DIR/apparmor/usr.local.bin.dropr" /etc/apparmor.d/usr.local.bin.dropr
+  install -d /etc/apparmor.d/local
+  [ -e /etc/apparmor.d/local/usr.local.bin.dropr ] || install -m 0644 /dev/null /etc/apparmor.d/local/usr.local.bin.dropr
+  apparmor_parser -r -W /etc/apparmor.d/usr.local.bin.dropr || die "the AppArmor profile failed to load"
+  log "AppArmor profile loaded in enforce mode"
+else
+  warn "AppArmor is not enabled: dropr runs confined by the systemd sandbox only"
+fi
+
 # --- Binary (upgrade: back up first) -----------------------------------------------
 was_active=false
 systemctl is-active --quiet dropr.service && was_active=true
@@ -187,7 +229,7 @@ mv -f "$PREFIX/bin/dropr.new" "$PREFIX/bin/dropr"
 # After the binary is in place, or verify reports ExecStart as missing.
 if command -v systemd-analyze >/dev/null; then
   systemd-analyze verify /etc/systemd/system/dropr.service /etc/systemd/system/dropr-backup.service \
-    2>&1 | grep -v -e 'oidc_key.pem' -e 'refresh_key' >&2 || true
+    2>&1 | grep -v -e 'oidc_key' -e 'refresh_key' >&2 || true
 fi
 
 systemctl enable --quiet dropr-backup.timer
@@ -196,7 +238,7 @@ systemctl start dropr-backup.timer
 # --- Start ----------------------------------------------------------------------------
 ready=true
 grep -Eq '<tenant-id>|<application-id>|drop\.example\.com|admin@example\.com' "$CONF_DIR/dropr.toml" && ready=false
-[ -s "$CRED_DIR/oidc_key.pem" ] || ready=false
+[ -s "$CRED_DIR/oidc_key.cred" ] || ready=false
 
 if ! $start; then
   log "Files installed (--no-start)"
@@ -204,11 +246,12 @@ elif ! $ready; then
   log "Installed. Before starting:"
   cat <<EOF
   1. Register Dropr at your identity provider (docs/setup-entra.md or
-     docs/setup-keycloak.md).$( [ "${oidc_cert_new:-false}" = true ] && printf '\n     Upload the public certificate %s/oidc_cert.pem as the client credential.' "$CONF_DIR")
+     docs/setup-keycloak.md).$( [ "${oidc_cert_new:-false}" = true ] && printf '\n     Upload the public certificate %s/oidc_cert.pem as the client credential.' "$CONF_DIR")$( [ -s "$CRED_DIR/oidc_key.cred" ] || printf '\n     Seal your client key (PEM): systemd-creds encrypt --with-key=auto \\\n       --name=oidc_key key.pem %s/oidc_key.cred' "$CRED_DIR")
   2. Edit $CONF_DIR/dropr.toml: public_url, acme_email and every <...> value.
-  3. Point DNS at this host, open TCP 443 (and 80 for the redirect), set a
-     CAA record: 0 issue "letsencrypt.org".
-  4. sudo systemctl enable --now dropr && journalctl --namespace=dropr -f
+  3. Point DNS at this host, set a CAA record: 0 issue "letsencrypt.org".
+     harden-host.sh already opens TCP 80 and 443.
+  4. sudo deploy/debian/install.sh again (or systemctl enable --now dropr),
+     then: journalctl --namespace=dropr -f
 EOF
   exit 0
 else

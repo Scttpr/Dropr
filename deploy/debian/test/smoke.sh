@@ -128,8 +128,9 @@ if [ ! -x /usr/local/bin/dropr ]; then
   check "service not started" test "$(systemctl is-active dropr || true)" != active
   check "dropr system user exists" getent passwd dropr
   check "/etc/dropr/credentials is root 0700" test "$(stat -c %U:%a /etc/dropr/credentials)" = root:700
-  check "refresh_key is root 0600" test "$(stat -c %U:%a /etc/dropr/credentials/refresh_key)" = root:600
-  check "OIDC client key generated" test -s /etc/dropr/credentials/oidc_key.pem
+  check "refresh_key.cred is root 0600" test "$(stat -c %U:%a /etc/dropr/credentials/refresh_key.cred)" = root:600
+  check "OIDC client key generated and sealed" test -s /etc/dropr/credentials/oidc_key.cred
+  check "no plaintext secrets left" test -z "$(find /etc/dropr/credentials -type f ! -name '*.cred')"
   check "dropr.toml is root:dropr 0640" test "$(stat -c %U:%G:%a /etc/dropr/dropr.toml)" = root:dropr:640
   check "backup timer enabled" systemctl is-enabled dropr-backup.timer
 
@@ -157,7 +158,8 @@ display_claim   = "name"
 EOF
   # As docs/deploy-debian.md "Behind nginx or Caddy" says.
   install -d /etc/systemd/system/dropr.service.d
-  printf '[Service]\nCapabilityBoundingSet=\nAmbientCapabilities=\n' > /etc/systemd/system/dropr.service.d/proxy.conf
+  printf '[Service]\nCapabilityBoundingSet=\nAmbientCapabilities=\nSocketBindAllow=tcp:8080\n' \
+    > /etc/systemd/system/dropr.service.d/proxy.conf
   systemctl daemon-reload
 
   step "Second run (must start and report healthy)"
@@ -194,7 +196,13 @@ check "dropr-admin user list" dropr-admin user list
 before=$(backups)
 systemctl start dropr-backup.service || true
 check "dropr-backup.service writes a backup" test "$(backups)" -gt "$before"
-check "dropr user cannot read the credentials" bash -c '! runuser -u dropr -- cat /etc/dropr/credentials/refresh_key'
+check "dropr user cannot read the credentials" bash -c '! runuser -u dropr -- cat /etc/dropr/credentials/refresh_key.cred'
+pid=$(systemctl show -P MainPID dropr)
+check "confined by the AppArmor profile (enforce)" grep -qx 'dropr (enforce)' "/proc/$pid/attr/apparmor/current"
+denials=$(journalctl -k -q -o cat -g 'apparmor="DENIED".*profile="dropr"' --no-pager 2>/dev/null || true)
+if [ -z "$denials" ]; then ok "no AppArmor denials for dropr"; else
+  bad "AppArmor denials for dropr:"; sort -u <<<"$denials" | tail -n 15 | sed 's/^/        /'
+fi
 check "logs land in the dropr journal namespace" test -n "$(journalctl --namespace=dropr -q -n 1 -o cat)"
 echo "        $(systemd-analyze security dropr.service --no-pager 2>/dev/null | tail -n 1)"
 

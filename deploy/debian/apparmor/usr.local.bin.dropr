@@ -1,0 +1,69 @@
+# AppArmor profile for Dropr (Debian 13, AppArmor 4). Installed by
+# deploy/debian/install.sh as /etc/apparmor.d/usr.local.bin.dropr and
+# attached by path, so it confines every `dropr` process: the service, the
+# backup unit and dropr-admin. A second wall behind the systemd sandbox: even
+# with a code execution bug, dropr cannot read the credential store, write
+# outside its data, or run any program.
+#
+# Denials: journalctl -k -g apparmor. To debug, switch to complain mode:
+#   aa-complain /etc/apparmor.d/usr.local.bin.dropr   (apparmor-utils)
+# and back with aa-enforce. Local additions go in
+# /etc/apparmor.d/local/usr.local.bin.dropr (kept across upgrades).
+
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile dropr /usr/local/bin/dropr {
+  include <abstractions/base>
+  include <abstractions/nameservice-strict>
+  include <abstractions/ssl_certs>
+
+  # :443 and :80 in ACME mode (granted by systemd only to dropr.service).
+  capability net_bind_service,
+
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  # A unix: listen socket behind a reverse proxy.
+  network unix stream,
+
+  # systemd stops and reloads it; the Go runtime signals its own threads
+  # (SIGURG for preemption).
+  signal (receive) set=(term, int, quit, hup, kill) peer=unconfined,
+  signal (send, receive) peer=dropr,
+
+  /usr/local/bin/dropr mr,
+
+  # Config: the real one, and the per-unit copies run-with-credentials writes.
+  /etc/dropr/dropr.toml r,
+  /run/dropr-admin/dropr.toml r,
+  /run/dropr-backup/dropr.toml r,
+  /etc/mime.types r,
+
+  # Decrypted credentials, as systemd exposes them to each unit. The sealed
+  # originals are never readable.
+  /run/credentials/{dropr,dropr-admin,dropr-backup}.service/ r,
+  /run/credentials/{dropr,dropr-admin,dropr-backup}.service/* r,
+  deny /etc/dropr/credentials/** rwklx,
+  deny /var/lib/systemd/credential.secret rwklx,
+
+  # Data: SQLite database (with WAL and locks), blobs, ACME cache.
+  owner /var/lib/dropr/ rw,
+  owner /var/lib/dropr/** rwk,
+  # Backups (dropr backup --out).
+  owner /var/backups/dropr/ r,
+  owner /var/backups/dropr/* rw,
+  owner /tmp/** rw,
+
+  # Go runtime: huge page size, CPU quota for GOMAXPROCS.
+  /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,
+  /sys/fs/cgroup/** r,
+  @{PROC}/sys/net/core/somaxconn r,
+  owner @{PROC}/@{pid}/cgroup r,
+  owner @{PROC}/@{pid}/mountinfo r,
+  owner @{PROC}/@{pid}/stat r,
+
+  include if exists <local/usr.local.bin.dropr>
+}

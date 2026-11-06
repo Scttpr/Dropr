@@ -63,9 +63,11 @@ curl -fsS "https://$KC:$PORT/realms/dropr/.well-known/openid-configuration" >/de
   || die "Keycloak not reachable from the VM through https://$KC:$PORT (is the host container up?)"
 
 log "Dropr: dev realm, client dropr-pkjwt (TEST-ONLY key)"
-cred=/etc/dropr/credentials/oidc_key.pem
-[ -e "$cred.generated" ] || cp -p "$cred" "$cred.generated"
-install -o root -g root -m 0600 "$key" "$cred"
+cred=/etc/dropr/credentials/oidc_key.cred
+[ -e "${cred%.cred}.generated.cred" ] || cp -p "$cred" "${cred%.cred}.generated.cred"
+systemd-creds encrypt --with-key=auto --name=oidc_key "$key" "$cred"
+chmod 0600 "$cred"
+shred -u "$key"
 cat > /etc/dropr/dropr.toml <<EOF
 # Written by deploy/debian/test/browse.sh (dev Keycloak realm, TEST-ONLY key).
 public_url       = "https://$DROP:$PORT"
