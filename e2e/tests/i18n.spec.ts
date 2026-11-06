@@ -64,13 +64,20 @@ test("display settings work without JavaScript", async ({ browser, dropr }) => {
 test("the French dashboard and the open settings popover pass axe", async ({ alice, browserName, dropr }) => {
   test.skip(browserName !== "chromium", "owner pages run in Chromium");
   const p = alice.page;
-  await alice.context.addCookies([{ name: "__Host-dropr_lang", value: "fr", url: dropr.origin, secure: true }]);
+  // Switch through the popover: Playwright forces Secure=false on a cookie
+  // added by http:// URL, and Chromium rejects that for a __Host- name.
   await p.goto(dropr.origin + "/");
-  await expect(p.locator("#share-heading")).toHaveText("Partager un fichier");
-  await p.getByRole("button", { name: "Affichage" }).click();
-  await expect(p.locator("#prefs")).toBeVisible();
-  const res = await new AxeBuilder({ page: p }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
-  const bad = res.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
-  expect(bad.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`)).toEqual([]);
-  await alice.context.clearCookies({ name: "__Host-dropr_lang" });
+  try {
+    await p.getByRole("button", { name: "Display settings" }).click();
+    await p.getByRole("button", { name: "Français" }).click();
+    await expect(p.locator("#share-heading")).toHaveText("Partager un fichier");
+    await p.getByRole("button", { name: "Affichage" }).click();
+    await expect(p.locator("#prefs")).toBeVisible();
+    const res = await new AxeBuilder({ page: p }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
+    const bad = res.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+    expect(bad.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`)).toEqual([]);
+  } finally {
+    // alice is shared across the worker; later tests expect English.
+    await alice.context.clearCookies({ name: "__Host-dropr_lang" });
+  }
 });
