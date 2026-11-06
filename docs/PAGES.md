@@ -76,6 +76,7 @@ The login page, error pages and the OIDC landing page load no page module
   `qr` (the SVG), `name`/`size`/`date`/`expiry`/`downloads`/`files`/`actions`
   (table cells), `unreadable` (inbox name that failed to decrypt), `foreign`
   (inbox row of a file received through a link created in another browser).
+  Server-rendered tables carry `class="data-table"` (style only).
 
 ### 1.4 Owner pages
 
@@ -472,20 +473,31 @@ noscript:
 In addition to ARCHITECTURE.md §3 (all `size` values are ciphertext bytes,
 times Unix seconds, binary values unpadded base64url):
 
-- `GET /api/shares` → array (or `{"shares": [...]}`) of
-  `{id, size, expires_at, max_downloads: int|null, download_count, created_at}`.
-- `GET /api/requests` → array (or `{"requests": [...]}`) of
-  `{id, expires_at, max_files, max_bytes, single_use: bool, files_received, bytes_received, created_at}`.
-- `GET /api/inbox` → array (or `{"inbox": [...]}`) of
-  `{id, request_id, size, created_at, meta, wrapped_key}`.
+The server wraps every list in an object (`{"shares": [...]}`); the client
+also accepts a bare array. Fields beyond those listed are ignored.
+
+- `GET /api/shares` → `{"shares": [...]}` of
+  `{id, size, parts, expires_at, max_downloads: int|null, download_count, created_at}`.
+- `GET /api/requests` → `{"requests": [...]}` of
+  `{id, expires_at, max_files, max_bytes, single_use: bool, files_received,
+  bytes_received, closed: bool, label_meta: string|null, created_at}`.
+  The pages do not set or show request labels yet: `PUT
+  /api/requests/{id}/label` and `sealRequestLabel` (web/src/crypto) exist
+  for a future label field.
+- `GET /api/inbox` → `{"inbox": [...]}` of
+  `{id, request_id, size, parts, created_at, meta, wrapped_key}`.
 - `GET /upload/{id}` is called with the `Authorization: Bearer` upload token.
 - `GET /dl/{token}` with `Range: bytes=N-` must answer `206` with
   `Content-Range: bytes N-(size-1)/size`; without Range, `200`. Anything else
   is treated as a broken server.
-- Errors: `{"error": code, "message": text}`. Codes the pages recognise:
-  `expired`, `exhausted`, `token_used` (download token byte budget spent: the
-  downloader fetches a new token), `revoked`, `quota_exceeded`, `too_large`. `message` is shown verbatim (as text) when
-  present and ≤ 300 characters.
+- Errors: `{"error": code, "message": text}`. In English, `message` is shown
+  verbatim (as text) when present and ≤ 300 characters; other languages show
+  the catalog's text for the code (`apiCodes` in `web/src/lib/locales/`),
+  never the English message. Without either, the text comes from the code
+  (`expired`, `exhausted`, `quota_exceeded`, `too_large`) or else the HTTP
+  status. Automatic retries: network errors, timeouts, 408, 429 and 5xx. A
+  download token rejected on a resume (401, 403, 404, 410, e.g. `token_used`
+  when its byte budget is spent) is renewed once and the download resumes.
 
 ## 8. Service worker (`/sw.js`)
 
