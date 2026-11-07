@@ -3,12 +3,14 @@ package session
 import (
 	"bytes"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/scttpr/dropr/internal/httpx"
 	"github.com/scttpr/dropr/internal/ids"
 	"github.com/scttpr/dropr/internal/store"
 	"github.com/scttpr/dropr/internal/store/storetest"
@@ -247,6 +249,26 @@ func TestMiddleware(t *testing.T) {
 	}
 	if cl := sessionCookie(t, w); cl.MaxAge >= 0 {
 		t.Error("stale cookie not cleared")
+	}
+}
+
+// The request log line names the session's user (audit 2026-11b L-9).
+func TestMiddlewareLogsUser(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, Config{})
+	_, c := e.login(t, nil)
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	noop := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	h := httpx.Chain(noop, httpx.RealIP(httpx.IPResolver{}, nil), httpx.Logger(log, httpx.NewIPHasher(make([]byte, 32))), e.m.Middleware)
+	h.ServeHTTP(httptest.NewRecorder(), reqWith(c))
+	if !bytes.Contains(buf.Bytes(), []byte(`"user":"`+e.user.ID+`"`)) {
+		t.Errorf("request line lacks the user: %s", buf.String())
+	}
+	buf.Reset()
+	h.ServeHTTP(httptest.NewRecorder(), reqWith(nil))
+	if bytes.Contains(buf.Bytes(), []byte(`"user"`)) {
+		t.Errorf("anonymous request names a user: %s", buf.String())
 	}
 }
 

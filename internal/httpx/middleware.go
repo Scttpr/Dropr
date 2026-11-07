@@ -58,10 +58,12 @@ func Deadlines(read, write time.Duration) func(http.Handler) http.Handler {
 	}
 }
 
-// routeInfo carries the matched route pattern up to the logging middleware.
-// ServeMux sets Request.Pattern on the request it receives, which may be a
-// copy made by an inner middleware, so the pattern is recorded explicitly.
-type routeInfo struct{ pattern string }
+// routeInfo carries the matched route pattern and the authenticated user up
+// to the logging middleware. ServeMux sets Request.Pattern on the request it
+// receives, which may be a copy made by an inner middleware, so the pattern is
+// recorded explicitly; the user is filled in by the session layer through
+// SetUser.
+type routeInfo struct{ pattern, user string }
 
 type routeKey struct{}
 
@@ -77,12 +79,51 @@ func Route(h http.Handler) http.Handler {
 	})
 }
 
+// SetUser records the authenticated user of the request so the request log
+// line names who acted (audit 2026-11b L-9). It is a no-op outside Logger.
+func SetUser(ctx context.Context, userID string) {
+	if ri, ok := ctx.Value(routeKey{}).(*routeInfo); ok {
+		ri.user = userID
+	}
+}
+
 type requestIDKey struct{}
 
 // RequestID returns the request's log correlation ID.
 func RequestID(ctx context.Context) string {
 	s, _ := ctx.Value(requestIDKey{}).(string)
 	return s
+}
+
+// ContextHandler wraps h so every record logged with a request context
+// carries that request's ID ("rid"), tying security events such as login or
+// logout to the request log line (audit 2026-11b L-9). Records that already
+// have a top-level "rid" are left alone.
+func ContextHandler(h slog.Handler) slog.Handler { return ctxHandler{h} }
+
+type ctxHandler struct{ slog.Handler }
+
+func (h ctxHandler) Handle(ctx context.Context, r slog.Record) error {
+	if rid := RequestID(ctx); rid != "" {
+		has := false
+		r.Attrs(func(a slog.Attr) bool {
+			has = a.Key == "rid"
+			return !has
+		})
+		if !has {
+			r = r.Clone()
+			r.AddAttrs(slog.String("rid", rid))
+		}
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h ctxHandler) WithAttrs(as []slog.Attr) slog.Handler {
+	return ctxHandler{h.Handler.WithAttrs(as)}
+}
+
+func (h ctxHandler) WithGroup(name string) slog.Handler {
+	return ctxHandler{h.Handler.WithGroup(name)}
 }
 
 // statusWriter records the status and size. Unwrap lets
@@ -112,7 +153,8 @@ func (s *statusWriter) Write(b []byte) (int, error) {
 func (s *statusWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // Logger logs one line per request: method, route pattern, status, size,
-// duration, a keyed-hash prefix of the client IP and a request ID. It never
+// duration, a keyed-hash prefix of the client IP, a request ID and, when the
+// request carried a session, the user ID (audit 2026-11b L-9). It never
 // logs paths, query strings, headers, cookies or plaintext IPs. It must run
 // inside RealIP.
 func Logger(log *slog.Logger, hasher *IPHasher) func(http.Handler) http.Handler {
@@ -132,7 +174,7 @@ func Logger(log *slog.Logger, hasher *IPHasher) func(http.Handler) http.Handler 
 				if status == 0 {
 					status = http.StatusOK
 				}
-				log.LogAttrs(ctx, slog.LevelInfo, "request",
+				attrs := []slog.Attr{
 					slog.String("method", sanitizeMethod(r.Method)),
 					slog.String("route", route),
 					slog.Int("status", status),
@@ -140,7 +182,11 @@ func Logger(log *slog.Logger, hasher *IPHasher) func(http.Handler) http.Handler 
 					slog.Duration("dur", time.Since(start)),
 					slog.String("ip", hasher.Short(ClientIP(ctx))),
 					slog.String("rid", rid),
-				)
+				}
+				if ri.user != "" {
+					attrs = append(attrs, slog.String("user", ri.user))
+				}
+				log.LogAttrs(ctx, slog.LevelInfo, "request", attrs...)
 			}()
 			next.ServeHTTP(sw, r.WithContext(ctx))
 		})

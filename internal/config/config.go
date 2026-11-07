@@ -310,6 +310,10 @@ func (c *Config) validate() error {
 	return joinErrs(errs)
 }
 
+// minProductionHeadroom is the smallest explicit disk_headroom accepted
+// without a warning in production (audit 2026-11 I5).
+const minProductionHeadroom = 256 * MiB
+
 func (c *Config) validateLimits(fail func(string, ...any)) {
 	l := &c.Limits
 	var err error
@@ -331,12 +335,16 @@ func (c *Config) validateLimits(fail func(string, ...any)) {
 	if l.DiskHeadroom != "" {
 		if l.DiskHeadroomBytes, err = ParseSize(l.DiskHeadroom); err != nil {
 			fail("limits.disk_headroom: %v", err)
+		} else if c.Production() && l.DiskHeadroomBytes > 0 && l.DiskHeadroomBytes < minProductionHeadroom {
+			c.Warnings = append(c.Warnings, "limits.disk_headroom is below 256MB: uploads can fill the disk the database and logs need")
 		}
 	}
 	if l.MinTransferRateBytes, err = ParseSize(l.MinTransferRate); err != nil {
 		fail("limits.min_transfer_rate: %v", err)
 	} else if l.MinTransferRateBytes > 10*MiB {
 		fail("limits.min_transfer_rate must be at most 10MB (per second)")
+	} else if l.MinTransferRateBytes == 0 && c.Production() {
+		c.Warnings = append(c.Warnings, "limits.min_transfer_rate = 0 disables the slow-transfer cutoff: stalled clients can hold transfer slots indefinitely")
 	}
 	if l.MaxTransfers < 1 || l.MaxTransfersPerIP < 1 || l.MaxTransfersPerIP > l.MaxTransfers {
 		fail("limits.max_transfers and limits.max_transfers_per_ip must be positive, the latter at most the former")
@@ -447,6 +455,10 @@ func (c *Config) loadSecrets() error {
 		return fmt.Errorf("config: refresh_key_file: %w", err)
 	}
 	c.RefreshKey = key
+	if looksLikePassphrase(key) {
+		c.Warnings = append(c.Warnings, "refresh_key_file holds 32 printable characters, used as the raw key: it looks like a passphrase or hex string, not random bytes; "+
+			"generate a key with: openssl rand -base64 32 (replacing it ends all sessions)")
+	}
 
 	o := &c.OIDC
 	switch o.ClientAuth {
@@ -456,6 +468,9 @@ func (c *Config) loadSecrets() error {
 			return fmt.Errorf("config: oidc.client_key_file: %w", err)
 		}
 		o.ClientKey, o.ClientCert, o.ClientChain = ck.Key, ck.Cert, ck.Chain
+		if c.Production() && isTestOnlyKey(ck.Key) {
+			c.Warnings = append(c.Warnings, "oidc.client_key_file is the public TEST-ONLY key committed in dev/keycloak/test-keys: anyone can sign client assertions with it; generate your own key pair")
+		}
 		if err := checkAlgForKey(o.ClientAssertionAlg, o.ClientKey); err != nil {
 			return fmt.Errorf("config: oidc.client_assertion_alg: %w", err)
 		}

@@ -138,6 +138,9 @@ func (m *Manager) Create(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return nil, fmt.Errorf("session: create: %w", err)
 	}
 	m.setCookie(w, id, rec)
+	// The login request's log line names the new session's user (audit
+	// 2026-11 L-9).
+	httpx.SetUser(ctx, p.User.ID)
 	return &Session{rec: rec, User: p.User}, nil
 }
 
@@ -318,12 +321,14 @@ func FromContext(ctx context.Context) *Session {
 
 // Middleware loads the session (if any) into the request context. It never
 // rejects a request: handlers decide whether a session is required. A cookie
-// that does not resolve to a live session is cleared.
+// that does not resolve to a live session is cleared. The session's user is
+// recorded for the request log line (audit 2026-11b L-9).
 func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s, err := m.Load(r.Context(), r)
 		switch {
 		case err == nil:
+			httpx.SetUser(r.Context(), s.UserID())
 			r = r.WithContext(NewContext(r.Context(), s))
 		case errors.Is(err, ErrNoSession):
 			if len(r.CookiesNamed(CookieName)) > 0 {
