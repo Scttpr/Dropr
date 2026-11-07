@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -60,8 +61,13 @@ type Server struct {
 	linkRL   *httpx.RateLimiter // /s, /r, /api/s/.../download, /api/r/.../files
 	uploadRL *httpx.RateLimiter // /upload/*
 	dlRL     *httpx.RateLimiter // /dl/*
-	// Concurrent part uploads and downloads (total and per IP).
-	streams *httpx.StreamLimiter
+	// Concurrent part uploads and downloads (total and per IP), and per
+	// upload or download token (audit 2026-11b M-1).
+	streams    *httpx.StreamLimiter
+	capStreams *httpx.StreamLimiter
+	parts      partClaims
+	// Per-user limit of the owner write API (audit 2026-11b M-3).
+	ownerRL *httpx.RateLimiter
 	handler http.Handler
 }
 
@@ -105,6 +111,10 @@ func New(ctx context.Context, d Deps) (*Server, error) {
 	s.uploadRL = httpx.NewRateLimiter(s.hasher, 900, 200, 100_000)
 	s.dlRL = httpx.NewRateLimiter(s.hasher, 120, 60, 100_000)
 	s.streams = httpx.NewStreamLimiter(s.hasher, cfg.Limits.MaxTransfers, cfg.Limits.MaxTransfersPerIP)
+	s.capStreams = httpx.NewStreamLimiter(s.hasher, cfg.Limits.MaxTransfers, maxStreamsPerCapability)
+	// Far above what a person clicking through the dashboard does; it only
+	// slows scripted creation (with the store's object caps behind it).
+	s.ownerRL = httpx.NewRateLimiter(s.hasher, 300, 100, 100_000)
 
 	if s.blobs, err = blob.New(BlobDir(cfg), blob.Options{Headroom: cfg.Limits.DiskHeadroomBytes, Usage: d.DiskUsage}); err != nil {
 		return nil, err
@@ -156,6 +166,7 @@ type routeOpts struct {
 	read      time.Duration
 	write     time.Duration
 	limiter   *httpx.RateLimiter
+	owner     bool // per-user limit of owner writes (needs session)
 	streams   bool // count against the concurrent transfer caps
 }
 
@@ -164,6 +175,7 @@ type routeOpt func(*routeOpts)
 func withSession() routeOpt                      { return func(o *routeOpts) { o.session = true } }
 func withLimiter(rl *httpx.RateLimiter) routeOpt { return func(o *routeOpts) { o.limiter = rl } }
 func withStreamCap() routeOpt                    { return func(o *routeOpts) { o.streams = true } }
+func withOwnerLimit() routeOpt                   { return func(o *routeOpts) { o.owner = true } }
 func withBodyLimit(n int64) routeOpt             { return func(o *routeOpts) { o.bodyLimit = n } }
 func withDeadlines(read, write time.Duration) routeOpt {
 	return func(o *routeOpts) { o.read, o.write = read, write }
@@ -175,6 +187,9 @@ func (s *Server) handle(mux *http.ServeMux, pattern string, h http.HandlerFunc, 
 		f(&o)
 	}
 	var handler http.Handler = h
+	if o.owner {
+		handler = s.ownerLimit(handler)
+	}
 	if o.session {
 		handler = s.sessions.Middleware(s.oidc.RevalidateMiddleware(handler))
 	}
@@ -186,6 +201,22 @@ func (s *Server) handle(mux *http.ServeMux, pattern string, h http.HandlerFunc, 
 	}
 	handler = httpx.Chain(handler, httpx.Deadlines(o.read, o.write), httpx.LimitBody(o.bodyLimit))
 	mux.Handle(pattern, httpx.Route(handler))
+}
+
+// ownerLimit applies the per-user limit of owner writes. It runs inside the
+// session middleware; requests without a session pass on to the handler,
+// which answers 401.
+func (s *Server) ownerLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sess := session.FromContext(r.Context()); sess != nil {
+			if ok, wait := s.ownerRL.AllowKey(sha256.Sum256([]byte("owner\x00" + sess.UserID()))); !ok {
+				httpx.SetRetryAfter(w, wait)
+				httpx.Fail(w, r, httpx.ErrRateLimited)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // routes registers the HTTP surface (ARCHITECTURE.md §3). Anything not
@@ -222,20 +253,20 @@ func (s *Server) routes() *http.ServeMux {
 	s.handle(mux, "GET /_dl/{path...}", s.handleDLFallback)
 
 	// Shares (flow A).
-	s.handle(mux, "POST /api/shares", s.handleCreateShare, withSession())
+	s.handle(mux, "POST /api/shares", s.handleCreateShare, withSession(), withOwnerLimit())
 	s.handle(mux, "GET /api/shares", s.handleListShares, withSession())
-	s.handle(mux, "DELETE /api/shares/{id}", s.handleDeleteShare, withSession())
+	s.handle(mux, "DELETE /api/shares/{id}", s.handleDeleteShare, withSession(), withOwnerLimit())
 	s.handle(mux, "POST /api/s/{id}/download", s.handleShareDownload, withLimiter(s.linkRL))
 
 	// Requests (flow B) and the inbox.
-	s.handle(mux, "POST /api/requests", s.handleCreateRequest, withSession())
+	s.handle(mux, "POST /api/requests", s.handleCreateRequest, withSession(), withOwnerLimit())
 	s.handle(mux, "GET /api/requests", s.handleListRequests, withSession())
-	s.handle(mux, "DELETE /api/requests/{id}", s.handleDeleteRequest, withSession())
-	s.handle(mux, "PUT /api/requests/{id}/label", s.handleSetRequestLabel, withSession())
+	s.handle(mux, "DELETE /api/requests/{id}", s.handleDeleteRequest, withSession(), withOwnerLimit())
+	s.handle(mux, "PUT /api/requests/{id}/label", s.handleSetRequestLabel, withSession(), withOwnerLimit())
 	s.handle(mux, "POST /api/r/{id}/files", s.handleCreateRequestFile, withLimiter(s.linkRL))
 	s.handle(mux, "GET /api/inbox", s.handleListInbox, withSession())
-	s.handle(mux, "POST /api/inbox/{id}/download", s.handleInboxDownload, withSession())
-	s.handle(mux, "DELETE /api/inbox/{id}", s.handleDeleteInbox, withSession())
+	s.handle(mux, "POST /api/inbox/{id}/download", s.handleInboxDownload, withSession(), withOwnerLimit())
+	s.handle(mux, "DELETE /api/inbox/{id}", s.handleDeleteInbox, withSession(), withOwnerLimit())
 
 	// Uploads (shared by both flows). A part body is one ciphertext part;
 	// the read deadline slides while it arrives.

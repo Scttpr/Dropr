@@ -270,6 +270,130 @@ func TestRequestLinkClosedWhenOwnerLosesRole(t *testing.T) {
 	}
 }
 
+// userID returns the ID of the env's only account.
+func (e *testEnv) userID() string {
+	e.t.Helper()
+	users, err := e.s.store.ListUsers(e.t.Context())
+	if err != nil || len(users) != 1 {
+		e.t.Fatalf("users: %d %v", len(users), err)
+	}
+	return users[0].ID
+}
+
+// dueForRevalidation makes every session due for revalidation.
+func (e *testEnv) dueForRevalidation() {
+	e.t.Helper()
+	if _, err := e.s.store.DB().W.ExecContext(e.t.Context(), `UPDATE sessions SET revalidated_at = revalidated_at - 3600`); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// 2026-11b L-2: when revalidation finds the owner's role withdrawn, their
+// share links expire at once (page, download token, uploads in progress)
+// and stay expired after the owner signs in again.
+func TestSharesExpireWhenOwnerLosesRole(t *testing.T) {
+	t.Parallel()
+	e := newTestEnv(t)
+	e.newOwner()
+	anon := &http.Client{Transport: e.client.Transport}
+	done := e.createShare(e.client, smallSize, nil)
+	e.uploadAll(done, randBytes(int(smallSize)))
+	pending := e.createShare(e.client, smallSize, nil)
+	if resp, b := e.apiWith(anon, http.MethodPost, "/api/s/"+done.ShareID+"/download", map[string]any{}, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("download token while active: %d %s", resp.StatusCode, b)
+	}
+
+	e.op.Set(func(k *oidctest.Knobs) { k.RefreshClaims = map[string]any{"name": "Alice Example", "roles": []any{}} })
+	e.dueForRevalidation()
+	if resp, _ := e.api(http.MethodGet, "/api/shares", nil, nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("revalidation without the role kept the session: %d", resp.StatusCode)
+	}
+	expired := func(when string) {
+		t.Helper()
+		if resp, page := e.do(http.MethodGet, "/s/"+done.ShareID, nil); resp.StatusCode != http.StatusGone || strings.Contains(page, "data-share-id") {
+			t.Errorf("share page %s: %d", when, resp.StatusCode)
+		}
+		if resp, b := e.apiWith(anon, http.MethodPost, "/api/s/"+done.ShareID+"/download", map[string]any{}, nil); resp.StatusCode != http.StatusGone || errCode(b) != "expired" {
+			t.Errorf("download token %s: %d %s", when, resp.StatusCode, b)
+		}
+		if resp, b := e.putPart(pending, 0, randBytes(int(smallSize))); resp.StatusCode != http.StatusGone || errCode(b) != "expired" {
+			t.Errorf("part upload %s: %d %s", when, resp.StatusCode, b)
+		}
+		if resp, b := e.finalize(pending, 1); resp.StatusCode != http.StatusGone || errCode(b) != "expired" {
+			t.Errorf("finalize %s: %d %s", when, resp.StatusCode, b)
+		}
+	}
+	expired("after the owner lost the role")
+	var tokens int
+	if err := e.s.store.DB().R.QueryRowContext(t.Context(), `SELECT count(*) FROM dl_tokens`).Scan(&tokens); err != nil || tokens != 0 {
+		t.Errorf("download tokens left: %d %v", tokens, err)
+	}
+
+	// Signing in again does not bring the shares back; new ones work.
+	e.op.Set(func(k *oidctest.Knobs) { k.RefreshClaims = nil })
+	e.login()
+	expired("after the owner signed in again")
+	e.createShare(e.client, smallSize, nil)
+}
+
+// 2026-11b L-2: a transient failure of the provider ends the session but
+// is not a loss of access: share links keep serving.
+func TestSharesSurviveTransientRevalidationFailure(t *testing.T) {
+	t.Parallel()
+	e := newTestEnv(t)
+	e.newOwner()
+	anon := &http.Client{Transport: e.client.Transport}
+	u := e.createShare(e.client, smallSize, nil)
+	e.uploadAll(u, randBytes(int(smallSize)))
+
+	e.op.Set(func(k *oidctest.Knobs) { k.TokenEndpointDown = true })
+	e.dueForRevalidation()
+	if resp, _ := e.api(http.MethodGet, "/api/shares", nil, nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("revalidation against a down provider kept the session: %d", resp.StatusCode)
+	}
+	if resp, _ := e.do(http.MethodGet, "/s/"+u.ShareID, nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("share page after a transient failure: %d", resp.StatusCode)
+	}
+	if resp, b := e.apiWith(anon, http.MethodPost, "/api/s/"+u.ShareID+"/download", map[string]any{}, nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("download token after a transient failure: %d %s", resp.StatusCode, b)
+	}
+	if active, err := e.s.store.AccountActive(t.Context(), e.userID()); err != nil || !active {
+		t.Errorf("account marked inactive by a transient failure: %v %v", active, err)
+	}
+}
+
+// 2026-11b L-3: a disabled owner cannot sign in, and their request links
+// stay closed until `dropr user enable`.
+func TestDisabledOwner(t *testing.T) {
+	t.Parallel()
+	e := newTestEnv(t)
+	o := e.newOwner()
+	id := o.createRequest(map[string]any{"max_files": 5, "max_bytes": 5 * smallSize})
+	uid := e.userID()
+	if _, _, err := e.s.store.DisableUser(t.Context(), uid, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if resp, _ := e.api(http.MethodGet, "/api/requests", nil, nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("session of a disabled user: %d", resp.StatusCode)
+	}
+	if resp, _ := e.do(http.MethodGet, "/auth/login", nil); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("login of a disabled user: %d", resp.StatusCode)
+	}
+	if resp, _ := e.createRequestFile(id, smallSize); resp.StatusCode != http.StatusGone {
+		t.Errorf("request upload while disabled: %d", resp.StatusCode)
+	}
+	if resp, _ := e.do(http.MethodGet, "/r/"+id, nil); resp.StatusCode != http.StatusGone {
+		t.Errorf("request page while disabled: %d", resp.StatusCode)
+	}
+	if _, err := e.s.store.EnableUser(t.Context(), uid); err != nil {
+		t.Fatal(err)
+	}
+	e.login()
+	if resp, _ := e.createRequestFile(id, smallSize); resp.StatusCode != http.StatusCreated {
+		t.Errorf("request upload after enable: %d", resp.StatusCode)
+	}
+}
+
 // I-8: responses ServeMux generates itself (path-cleaning redirects) carry
 // the security headers, since the mux runs inside the header middleware.
 // Only answers net/http writes before any handler runs (malformed request
@@ -287,5 +411,177 @@ func TestMuxGeneratedResponsesHaveHeaders(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode/100 != 3 || resp.Header.Get("Content-Security-Policy") == "" || resp.Header.Get("X-Content-Type-Options") != "nosniff" {
 		t.Errorf("mux redirect: %d %v", resp.StatusCode, resp.Header)
+	}
+}
+
+// Regression tests for the findings of the 2026-11b audit.
+
+// waitFor polls cond for up to 5 s.
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not reached")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func (e *testEnv) partClaims() int {
+	e.s.parts.mu.Lock()
+	defer e.s.parts.mu.Unlock()
+	return len(e.s.parts.m)
+}
+
+// M-1: a newer PUT of a part stops the one still receiving it (a client
+// retry after a dropped connection), so one part never holds two slots.
+func TestPartPutSupersedesOlderPut(t *testing.T) {
+	t.Parallel()
+	e := newTestEnv(t)
+	e.newOwner()
+	u := e.createShare(e.client, smallSize, nil)
+	pw, done := e.pendingPut(u, 0, smallSize)
+	if _, err := pw.Write(randBytes(int(smallSize / 2))); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return e.partClaims() == 1 })
+	data := randBytes(int(smallSize))
+	if resp, b := e.putPart(u, 0, data); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("newer put: %d %s", resp.StatusCode, b)
+	}
+	_ = pw.Close()
+	if resp := <-done; resp != nil && resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("superseded put: %d", resp.StatusCode)
+	}
+	got, err := os.ReadFile(filepath.Join(e.blobDir(u.UploadID), "part00000"))
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatal("the newer part was not stored")
+	}
+	waitFor(t, func() bool { return e.partClaims() == 0 && e.s.capStreams.Active() == 0 })
+}
+
+// M-1: one upload holds at most maxStreamsPerCapability transfer slots,
+// whatever the per-address cap allows.
+func TestStreamCapPerUpload(t *testing.T) {
+	t.Parallel()
+	e := newTestEnvWith(t, testOpts{diskUsage: func(string) (uint64, uint64, error) { return 1 << 50, 1 << 51, nil }})
+	e.newOwner()
+	parts := maxStreamsPerCapability + 1
+	u := e.createShare(e.client, blob.CipherSize(int64(parts)*blob.PartPlainSize), nil)
+	var writers []*io.PipeWriter
+	var dones []<-chan *http.Response
+	for n := range maxStreamsPerCapability {
+		w, d := e.pendingPut(u, n, blob.PartCipherSize)
+		_, _ = w.Write([]byte{1})
+		writers, dones = append(writers, w), append(dones, d)
+	}
+	waitFor(t, func() bool { return e.s.capStreams.Active() == maxStreamsPerCapability })
+	w, d := e.pendingPut(u, parts-1, blob.PartCipherSize)
+	if resp := <-d; resp == nil || resp.StatusCode != http.StatusTooManyRequests || resp.Header.Get("Retry-After") == "" {
+		t.Fatalf("one stream past the per-upload cap: %v", resp)
+	}
+	_ = w.Close()
+	// Another upload from the same address is not affected.
+	v := e.createShare(e.client, smallSize, nil)
+	if resp, b := e.putPart(v, 0, randBytes(int(smallSize))); resp.StatusCode != http.StatusNoContent {
+		t.Errorf("other upload: %d %s", resp.StatusCode, b)
+	}
+	for i, w := range writers {
+		_ = w.CloseWithError(errors.New("client gone"))
+		<-dones[i]
+	}
+}
+
+// I6: the space check runs only for a live request link, so an unknown link
+// answers 404 whatever the disk state.
+func TestRequestFileSpaceCheckAfterLink(t *testing.T) {
+	t.Parallel()
+	e := newTestEnvWith(t, testOpts{diskUsage: func(string) (uint64, uint64, error) { return 0, 1 << 40, nil }})
+	e.newOwner()
+	if resp, _ := e.createRequestFile("AAAAAAAAAAAAAAAAAAAAAA", smallSize); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown link on a full disk: %d", resp.StatusCode)
+	}
+	// Creating the link itself is refused below the headroom (M-3)...
+	if resp, b := e.api(http.MethodPost, "/api/requests", map[string]any{"max_files": 1, "max_bytes": smallSize}, nil); resp.StatusCode != http.StatusInsufficientStorage || errCode(b) != "disk_full" {
+		t.Errorf("request link on a full disk: %d %s", resp.StatusCode, b)
+	}
+	// ...so make one directly to check the upload answer.
+	id := "BBBBBBBBBBBBBBBBBBBBBB"
+	if _, err := e.s.store.DB().W.ExecContext(t.Context(), `INSERT INTO requests (id, owner_id, expires_at, max_files, max_bytes, created_at)
+		SELECT ?, id, ?, 1, ?, ? FROM users`, id, time.Now().Add(time.Hour).Unix(), smallSize, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if resp, _ := e.createRequestFile(id, smallSize); resp.StatusCode != http.StatusInsufficientStorage {
+		t.Errorf("live link on a full disk: %d", resp.StatusCode)
+	}
+}
+
+// M-3: the owner write API is rate limited per user, with JSON 429 and
+// Retry-After; reads are not.
+func TestOwnerWritesRateLimited(t *testing.T) {
+	t.Parallel()
+	e := newTestEnv(t)
+	o := e.newOwner()
+	id := o.createRequest(map[string]any{"max_files": 1, "max_bytes": smallSize})
+	label := map[string]any{"label_meta": b64t.EncodeToString(randBytes(176))}
+	var resp *http.Response
+	var b []byte
+	for range 400 {
+		resp, b = e.api(http.MethodPut, "/api/requests/"+id+"/label", label, nil)
+		if resp.StatusCode != http.StatusNoContent {
+			break
+		}
+	}
+	if resp.StatusCode != http.StatusTooManyRequests || errCode(b) != "rate_limited" || resp.Header.Get("Retry-After") == "" {
+		t.Fatalf("owner writes not limited: %d %s", resp.StatusCode, b)
+	}
+	if resp, _ := e.api(http.MethodGet, "/api/requests", nil, nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("read after the write limit: %d", resp.StatusCode)
+	}
+}
+
+// A01-2: an inbox token used without the owner's session spends nothing,
+// and I1: a share download that serves nothing (416) does not count.
+func TestDownloadChecksBeforeSpending(t *testing.T) {
+	t.Parallel()
+	e := newTestEnv(t)
+	o := e.newOwner()
+	anon := &http.Client{Transport: e.client.Transport}
+	id := o.createRequest(map[string]any{"max_files": 1, "max_bytes": smallSize})
+	_, u := e.createRequestFile(id, smallSize)
+	data := randBytes(int(smallSize))
+	e.uploadAll(u, data)
+	_, b := e.api(http.MethodGet, "/api/inbox", nil, nil)
+	var inbox struct{ Inbox []struct{ ID string } }
+	mustJSON(t, b, &inbox)
+	_, b = e.api(http.MethodPost, "/api/inbox/"+inbox.Inbox[0].ID+"/download", map[string]any{}, nil)
+	var g struct{ Token string }
+	mustJSON(t, b, &g)
+	for range 5 {
+		if resp, _ := e.download(anon, g.Token, nil); resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("inbox token without a session: %d", resp.StatusCode)
+		}
+	}
+	if resp, got := e.download(e.client, g.Token, nil); resp.StatusCode != http.StatusOK || !bytes.Equal(got, data) {
+		t.Fatalf("owner after refused uses: %d", resp.StatusCode)
+	}
+
+	s := e.createShare(e.client, smallSize, map[string]any{"max_downloads": 1})
+	e.uploadAll(s, data)
+	token := func() string {
+		resp, b := e.apiWith(anon, http.MethodPost, "/api/s/"+s.ShareID+"/download", map[string]any{}, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("share token: %d %s", resp.StatusCode, b)
+		}
+		var g struct{ Token string }
+		mustJSON(t, b, &g)
+		return g.Token
+	}
+	if resp, _ := e.download(anon, token(), map[string]string{"Range": "bytes=99999999-"}); resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("unsatisfiable range: %d", resp.StatusCode)
+	}
+	if resp, got := e.download(anon, token(), nil); resp.StatusCode != http.StatusOK || !bytes.Equal(got, data) {
+		t.Fatalf("the single download after a 416: %d", resp.StatusCode)
 	}
 }

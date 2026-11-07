@@ -45,7 +45,9 @@ type upload struct {
 	UploadToken string `json:"upload_token"`
 }
 
-func meta() string { return b64t.EncodeToString(randBytes(40)) }
+// meta is a sealed-metadata stand-in on the smallest padded length (audit
+// 2026-11b L-8).
+func meta() string { return b64t.EncodeToString(randBytes(padMin + blob.TagSize)) }
 
 // smallSize is the ciphertext of a 1000-byte file (one part).
 var smallSize = blob.CipherSize(1000)
@@ -309,7 +311,7 @@ func TestRequestFlow(t *testing.T) {
 	o := e.newOwner()
 	reqBody := map[string]any{"expires_in": "7d", "max_files": 5, "max_bytes": 10 * smallSize, "single_use": false}
 	id := o.createRequest(reqBody)
-	label := b64t.EncodeToString(randBytes(100))
+	label := b64t.EncodeToString(randBytes(minLabel))
 	if resp, b := e.api(http.MethodPut, "/api/requests/"+id+"/label", map[string]any{"label_meta": label}, nil); resp.StatusCode != http.StatusNoContent {
 		t.Errorf("label: %d %s", resp.StatusCode, b)
 	}
@@ -494,7 +496,8 @@ func TestUploadValidation(t *testing.T) {
 		{"parts mismatch", "POST", "/api/shares", map[string]any{"size": smallSize, "parts": 2, "meta": meta()}, nil, 400, "invalid_size"},
 		{"too large", "POST", "/api/shares", map[string]any{"size": blob.CipherSize(6 << 30), "parts": blob.PartsFor(blob.CipherSize(6 << 30)), "meta": meta()}, nil, 413, "too_large"},
 		{"over cap", "POST", "/api/shares", map[string]any{"size": blob.MaxCipherSize + 1, "parts": 3201, "meta": meta()}, nil, 413, "too_large"},
-		{"meta too long", "POST", "/api/shares", map[string]any{"size": smallSize, "parts": 1, "meta": b64t.EncodeToString(make([]byte, 4097))}, nil, 400, "bad_request"},
+		{"meta too long", "POST", "/api/shares", map[string]any{"size": smallSize, "parts": 1, "meta": b64t.EncodeToString(make([]byte, 2*maxMetaPadded+blob.TagSize))}, nil, 400, "bad_request"},
+		{"meta not padded", "POST", "/api/shares", map[string]any{"size": smallSize, "parts": 1, "meta": b64t.EncodeToString(make([]byte, 200+blob.TagSize))}, nil, 400, "bad_request"},
 		{"meta too short", "POST", "/api/shares", map[string]any{"size": smallSize, "parts": 1, "meta": b64t.EncodeToString(make([]byte, 16))}, nil, 400, "bad_request"},
 		{"bad expiry", "POST", "/api/shares", map[string]any{"size": smallSize, "parts": 1, "meta": meta(), "expires_in": "2d"}, nil, 400, "bad_request"},
 		{"max_downloads 0", "POST", "/api/shares", map[string]any{"size": smallSize, "parts": 1, "meta": meta(), "max_downloads": 0}, nil, 400, "bad_request"},
@@ -571,7 +574,7 @@ func TestOwnerIsolation(t *testing.T) {
 			t.Errorf("bob %s %s: %d %s", c.method, c.path, resp.StatusCode, b)
 		}
 	}
-	if resp, _ := e.apiWith(bob, http.MethodPut, "/api/requests/"+reqID+"/label", map[string]any{"label_meta": b64t.EncodeToString(randBytes(60))}, nil); resp.StatusCode != http.StatusNotFound {
+	if resp, _ := e.apiWith(bob, http.MethodPut, "/api/requests/"+reqID+"/label", map[string]any{"label_meta": b64t.EncodeToString(randBytes(minLabel))}, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("bob label: %d", resp.StatusCode)
 	}
 	for _, p := range []string{"/api/shares", "/api/requests", "/api/inbox"} {

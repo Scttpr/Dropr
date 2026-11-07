@@ -29,7 +29,46 @@ var (
 	ErrTokenSpent = errors.New("store: download token used up")
 	// ErrComplete means the upload is already finalized.
 	ErrComplete = errors.New("store: upload already complete")
+	// ErrTooMany means an owner or a request link holds as many live links
+	// or uploads in progress as allowed (see the Max* limits).
+	ErrTooMany = errors.New("store: too many links or uploads in progress")
 )
+
+// Object caps (audit 2026-11b M-2, M-3). They are far above what a person
+// or the shipped client uses (one upload at a time per page), and only bound
+// what a script, a stolen session or one public request link can pile up in
+// the database and the disk reservation.
+const (
+	// MaxLiveShares is how many unexpired share links an owner may have.
+	MaxLiveShares = 5000
+	// MaxLiveRequests is how many unexpired request links an owner may have.
+	MaxLiveRequests = 5000
+	// MaxOpenUploadsPerOwner is how many incomplete uploads (shares being
+	// uploaded and files arriving through their request links) an owner may
+	// have at once.
+	MaxOpenUploadsPerOwner = 500
+	// MaxOpenUploadsPerRequest is how many incomplete uploads one request
+	// link may have at once.
+	MaxOpenUploadsPerRequest = 100
+)
+
+// countAtMost fails with ErrTooMany if query (a count) is at least limit.
+func countAtMost(ctx context.Context, tx *sql.Tx, limit int, query string, args ...any) error {
+	var n int
+	if err := tx.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
+		return err
+	}
+	if n >= limit {
+		return ErrTooMany
+	}
+	return nil
+}
+
+// openUploadsCheck fails with ErrTooMany if the owner already has
+// MaxOpenUploadsPerOwner incomplete uploads.
+func openUploadsCheck(ctx context.Context, tx *sql.Tx, ownerID string) error {
+	return countAtMost(ctx, tx, MaxOpenUploadsPerOwner, `SELECT count(*) FROM blobs WHERE owner_id = ? AND complete = 0`, ownerID)
+}
 
 // Blob is the database row of an upload.
 type Blob struct {
@@ -55,6 +94,9 @@ type Share struct {
 	DownloadCount int64
 	CreatedAt     time.Time
 	Complete      bool
+	// OwnerActive is false once the owner is disabled or lost access: the
+	// link is then served as expired (audit 2026-11b L-2).
+	OwnerActive bool
 }
 
 // Request is a request link (flow B).
@@ -128,11 +170,28 @@ type NewShare struct {
 }
 
 // CreateShare creates a share link and its (empty, incomplete) blob after
-// checking the owner's quota. The share stays invisible until the blob is
-// complete.
+// checking the owner's quota and object caps (ErrTooMany). The share stays
+// invisible until the blob is complete.
 func (s *Store) CreateShare(ctx context.Context, n *NewShare, now time.Time) (shareID, blobID string, err error) {
 	shareID, blobID = ids.New(), ids.New()
 	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+		// An owner who lost access has no session left; a request already in
+		// flight when it ended must not leave a live share behind (audit
+		// 2026-11b L-2).
+		var active bool
+		if err := tx.QueryRowContext(ctx, `SELECT `+ownerActive+` FROM users u WHERE u.id = ?`, n.OwnerID).Scan(&active); err != nil {
+			return notFound(err)
+		}
+		if !active {
+			return ErrNotFound
+		}
+		if err := countAtMost(ctx, tx, MaxLiveShares, `SELECT count(*) FROM shares WHERE owner_id = ? AND expires_at > ?`,
+			n.OwnerID, unix(now)); err != nil {
+			return err
+		}
+		if err := openUploadsCheck(ctx, tx, n.OwnerID); err != nil {
+			return err
+		}
 		if err := quotaCheck(ctx, tx, n.OwnerID, n.Size, n.DefaultQuota); err != nil {
 			return err
 		}
@@ -154,7 +213,8 @@ func (s *Store) CreateShare(ctx context.Context, n *NewShare, now time.Time) (sh
 	return shareID, blobID, nil
 }
 
-const shareCols = `s.id, s.owner_id, s.blob_id, s.size, b.parts, s.meta, s.expires_at, s.max_downloads, s.download_count, s.created_at, b.complete`
+const shareCols = `s.id, s.owner_id, s.blob_id, s.size, b.parts, s.meta, s.expires_at, s.max_downloads, s.download_count, s.created_at, b.complete,
+	(SELECT ` + ownerActive + ` FROM users u WHERE u.id = s.owner_id)`
 
 func scanShare(r scanner) (*Share, error) {
 	var (
@@ -163,7 +223,7 @@ func scanShare(r scanner) (*Share, error) {
 		maxDL            sql.NullInt64
 	)
 	if err := r.Scan(&sh.ID, &sh.OwnerID, &sh.BlobID, &sh.Size, &sh.Parts, &sh.Meta, &expires, &maxDL,
-		&sh.DownloadCount, &created, &sh.Complete); err != nil {
+		&sh.DownloadCount, &created, &sh.Complete, &sh.OwnerActive); err != nil {
 		return nil, notFound(err)
 	}
 	sh.ExpiresAt = fromUnix(expires)
@@ -236,12 +296,24 @@ func scanRequest(r scanner) (*Request, error) {
 	return &rq, nil
 }
 
-// CreateRequest inserts a request link (r.ID is assigned).
+// CreateRequest inserts a request link (r.ID is assigned). It fails with
+// ErrTooMany if the owner already has MaxLiveRequests unexpired links.
 func (s *Store) CreateRequest(ctx context.Context, r *Request) error {
-	r.ID = ids.New()
-	_, err := s.db.W.ExecContext(ctx, `INSERT INTO requests (id, owner_id, expires_at, max_files, max_bytes, single_use, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, r.ID, r.OwnerID, unix(r.ExpiresAt), r.MaxFiles, r.MaxBytes, r.SingleUse, unix(r.CreatedAt))
-	return err
+	id := ids.New()
+	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
+		if err := countAtMost(ctx, tx, MaxLiveRequests, `SELECT count(*) FROM requests WHERE owner_id = ? AND expires_at > ?`,
+			r.OwnerID, unix(r.CreatedAt)); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO requests (id, owner_id, expires_at, max_files, max_bytes, single_use, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, id, r.OwnerID, unix(r.ExpiresAt), r.MaxFiles, r.MaxBytes, r.SingleUse, unix(r.CreatedAt))
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	r.ID = id
+	return nil
 }
 
 // RequestByID returns a request link (whatever its state; callers decide).
@@ -334,7 +406,8 @@ type NewRequestFile struct {
 // row and its incomplete blob, atomically: the file and byte counters are
 // incremented here (inside the single write transaction), so concurrent
 // uploads can never exceed max_files or max_bytes. Abandoned uploads give
-// their reservation back when they are garbage-collected.
+// their reservation back when they are garbage-collected. The link and its
+// owner may each hold only so many uploads in progress (ErrTooMany).
 func (s *Store) CreateRequestFile(ctx context.Context, n *NewRequestFile, now time.Time) (blobID string, err error) {
 	blobID = ids.New()
 	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
@@ -353,11 +426,20 @@ func (s *Store) CreateRequestFile(ctx context.Context, n *NewRequestFile, now ti
 		// The owner lost access (role withdrawn, revoked, disabled): the link
 		// stops accepting files until they sign in again (audit I-3).
 		var active bool
-		if err := tx.QueryRowContext(ctx, `SELECT disabled_at IS NULL AND access_lost_at IS NULL FROM users WHERE id = ?`, rq.OwnerID).Scan(&active); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT `+ownerActive+` FROM users u WHERE u.id = ?`, rq.OwnerID).Scan(&active); err != nil {
 			return notFound(err)
 		}
 		if !active {
 			return ErrClosed
+		}
+		// Reserving costs the uploader nothing until GC: bound how many
+		// reservations one link and one owner can hold (audit 2026-11b M-2).
+		if err := countAtMost(ctx, tx, MaxOpenUploadsPerRequest, `SELECT count(*) FROM inbox i JOIN blobs b ON b.id = i.blob_id
+			WHERE i.request_id = ? AND b.complete = 0`, rq.ID); err != nil {
+			return err
+		}
+		if err := openUploadsCheck(ctx, tx, rq.OwnerID); err != nil {
+			return err
 		}
 		if err := quotaCheck(ctx, tx, rq.OwnerID, n.Size, n.DefaultQuota); err != nil {
 			return err
@@ -387,6 +469,9 @@ type Upload struct {
 	RequestID string // set for request uploads
 	SingleUse bool
 	ExpiresAt time.Time // of the link
+	// OwnerActive is false once the owner is disabled or lost access; share
+	// uploads are then refused as expired (audit 2026-11b L-2).
+	OwnerActive bool
 }
 
 // UploadByID returns the upload with blob ID id. Blobs not attached to any
@@ -400,13 +485,14 @@ func (s *Store) UploadByID(ctx context.Context, id string) (*Upload, error) {
 		singleUse          sql.NullBool
 	)
 	err := s.db.R.QueryRowContext(ctx, `SELECT b.id, b.owner_id, b.parts, b.size, b.complete, b.upload_token_hash, b.created_at,
-			s.id, s.expires_at, i.request_id, r.expires_at, r.single_use
+			s.id, s.expires_at, i.request_id, r.expires_at, r.single_use,
+			(SELECT `+ownerActive+` FROM users u WHERE u.id = b.owner_id)
 		FROM blobs b
 		LEFT JOIN shares s ON s.blob_id = b.id
 		LEFT JOIN inbox i ON i.blob_id = b.id
 		LEFT JOIN requests r ON r.id = i.request_id
 		WHERE b.id = ?`, id).Scan(&u.ID, &u.OwnerID, &u.Parts, &u.Size, &u.Complete, &u.UploadTokenHash, &created,
-		&shareID, &shareExp, &requestID, &reqExp, &singleUse)
+		&shareID, &shareExp, &requestID, &reqExp, &singleUse, &u.OwnerActive)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -435,10 +521,25 @@ func (u *Upload) CheckToken(hash []byte) bool {
 // entry visible. The upload token is kept (hashed) so a retried finalize can
 // be authenticated and answered idempotently; it no longer authorizes part
 // writes. A single-use request link closes on its first completed file. It
-// returns ErrComplete if the blob was already complete and ErrNotFound if
-// its row is gone.
+// returns ErrComplete if the blob was already complete, ErrNotFound if its
+// row is gone, and ErrExpired for a share upload whose link expired or whose
+// owner lost access meanwhile (audit 2026-11b L-2).
 func (s *Store) CompleteUpload(ctx context.Context, u *Upload, now time.Time) error {
 	return s.db.Tx(ctx, func(tx *sql.Tx) error {
+		if u.ShareID != "" {
+			var live bool
+			err := tx.QueryRowContext(ctx, `SELECT s.expires_at > ? AND `+ownerActive+`
+				FROM blobs b JOIN shares s ON s.blob_id = b.id JOIN users u ON u.id = b.owner_id
+				WHERE b.id = ? AND b.complete = 0`, unix(now), u.ID).Scan(&live)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				// Complete or deleted: answered below.
+			case err != nil:
+				return err
+			case !live:
+				return ErrExpired
+			}
+		}
 		res, err := tx.ExecContext(ctx, `UPDATE blobs SET complete = 1 WHERE id = ? AND complete = 0`, u.ID)
 		if err != nil {
 			return err
@@ -561,7 +662,9 @@ func (s *Store) CreateShareToken(ctx context.Context, shareID string, tokenHash 
 		if err != nil {
 			return err
 		}
-		if !sh.ExpiresAt.After(now) {
+		// An owner who lost access or was disabled publishes nothing more,
+		// even if a share escaped expireOwnerShares (audit 2026-11b L-2).
+		if !sh.ExpiresAt.After(now) || !sh.OwnerActive {
 			return ErrExpired
 		}
 		if sh.MaxDownloads != nil && sh.DownloadCount >= *sh.MaxDownloads {
@@ -612,35 +715,46 @@ type DownloadTarget struct {
 // (audit L-2).
 func TokenByteBudget(size int64) int64 { return 2*size + min(size, 1<<20) }
 
-// UseDownloadToken resolves a download token. When count is set and the
-// token was never used, the share's download_count is incremented exactly
-// once (refused with ErrExhausted if it already reached max_downloads);
-// later uses of the same token, such as Range requests resuming a download,
-// never count again. Every use slides the token's expiry, never past its
+// UseDownloadToken resolves a download token. An inbox token resolves only
+// for its owner: for any other viewer (the session's user ID, empty without
+// one) it is ErrNotFound, before anything is written (audit 2026-11b A01-2).
+// When count is set and the token was never used, the share's
+// download_count is incremented exactly once (refused with ErrExhausted if
+// it already reached max_downloads); a use that will serve no bytes (an
+// unsatisfiable Range) does not count, and later uses of the same token,
+// such as Range requests resuming a download, never count again. Every use slides the token's expiry, never past its
 // share's or request link's expiry (ErrExpired after it). plan (if non-nil)
 // returns how many bytes this use will serve given the blob size; they are
 // reserved against TokenByteBudget (ErrTokenSpent once it would be
 // exceeded) and returned in DownloadTarget.Reserved, so the caller can give
 // back what it did not send (RefundDownloadToken).
-func (s *Store) UseDownloadToken(ctx context.Context, tokenHash []byte, count bool, plan func(size int64) int64, now time.Time) (*DownloadTarget, error) {
+func (s *Store) UseDownloadToken(ctx context.Context, tokenHash []byte, viewer string, count bool, plan func(size int64) int64, now time.Time) (*DownloadTarget, error) {
 	var t DownloadTarget
 	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
 		var (
 			shareID           sql.NullString
 			expires, created  int64
 			counted, complete bool
+			active            bool
 			shareExp, reqExp  sql.NullInt64
 			maxDL, downloads  sql.NullInt64
 			served            int64
 		)
 		err := tx.QueryRowContext(ctx, `SELECT t.blob_id, t.share_id, t.expires_at, t.created_at, t.counted, t.served_bytes,
-				b.owner_id, b.size, b.parts, b.complete, s.expires_at, s.max_downloads, s.download_count, r.expires_at
-			FROM dl_tokens t JOIN blobs b ON b.id = t.blob_id LEFT JOIN shares s ON s.id = t.share_id
+				b.owner_id, b.size, b.parts, b.complete, s.expires_at, s.max_downloads, s.download_count, r.expires_at,
+				`+ownerActive+`
+			FROM dl_tokens t JOIN blobs b ON b.id = t.blob_id JOIN users u ON u.id = b.owner_id LEFT JOIN shares s ON s.id = t.share_id
 				LEFT JOIN inbox i ON i.blob_id = t.blob_id LEFT JOIN requests r ON r.id = i.request_id
 			WHERE t.token_hash = ?`, tokenHash).Scan(&t.BlobID, &shareID, &expires, &created, &counted, &served,
-			&t.OwnerID, &t.Size, &t.Parts, &complete, &shareExp, &maxDL, &downloads, &reqExp)
+			&t.OwnerID, &t.Size, &t.Parts, &complete, &shareExp, &maxDL, &downloads, &reqExp, &active)
 		if err != nil {
 			return notFound(err)
+		}
+		if !shareID.Valid && (viewer == "" || viewer != t.OwnerID) {
+			return ErrNotFound
+		}
+		if plan != nil {
+			t.Reserved = max(plan(t.Size), 0)
 		}
 		n := unix(now)
 		if expires <= n || created+int64(TokenMaxAge/time.Second) <= n || !complete {
@@ -652,11 +766,13 @@ func (s *Store) UseDownloadToken(ctx context.Context, tokenHash []byte, count bo
 			if !shareExp.Valid {
 				return ErrNotFound
 			}
-			if shareExp.Int64 <= n {
+			// expireOwnerShares deletes these tokens; this covers a token
+			// issued in a race with it (audit 2026-11b L-2).
+			if shareExp.Int64 <= n || !active {
 				return ErrExpired
 			}
 			limit = min(limit, shareExp.Int64)
-			if count && !counted {
+			if count && !counted && (plan == nil || t.Reserved > 0) {
 				res, err := tx.ExecContext(ctx, `UPDATE shares SET download_count = download_count + 1
 					WHERE id = ? AND (max_downloads IS NULL OR download_count < max_downloads)`, t.ShareID)
 				if err != nil {
@@ -679,11 +795,8 @@ func (s *Store) UseDownloadToken(ctx context.Context, tokenHash []byte, count bo
 			}
 			limit = min(limit, reqExp.Int64)
 		}
-		if plan != nil {
-			t.Reserved = max(plan(t.Size), 0)
-			if served+t.Reserved > TokenByteBudget(t.Size) {
-				return ErrTokenSpent
-			}
+		if plan != nil && served+t.Reserved > TokenByteBudget(t.Size) {
+			return ErrTokenSpent
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE dl_tokens SET expires_at = ?, served_bytes = served_bytes + ? WHERE token_hash = ?`,
 			min(n+int64(TokenIdle/time.Second), limit), t.Reserved, tokenHash)

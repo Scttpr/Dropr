@@ -90,6 +90,7 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "create share", err)
 		return
 	}
+	s.log.InfoContext(r.Context(), "share created", "user", sess.UserID())
 	httpx.WriteJSON(w, http.StatusCreated, createdUpload{ShareID: shareID, UploadID: blobID, UploadToken: token})
 }
 
@@ -141,6 +142,7 @@ func (s *Server) handleDeleteShare(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "delete share", err)
 		return
 	}
+	s.log.InfoContext(r.Context(), "share deleted", "user", sess.UserID())
 	s.removeBlobs(r, blobID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -172,6 +174,7 @@ func (s *Server) handleShareDownload(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "share token", err)
 		return
 	}
+	s.log.InfoContext(r.Context(), "download token issued", "link", "share")
 	httpx.WriteJSON(w, http.StatusOK, downloadGrant{Token: token, Size: sh.Size, Parts: sh.Parts, Meta: b64.EncodeToString(sh.Meta)})
 }
 
@@ -189,13 +192,28 @@ func (s *Server) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, e)
 		return
 	}
+	// A request link holds no blob, but its row still takes disk: refuse it
+	// once the free space is below the headroom (audit 2026-11b M-3). Upload
+	// reservations are not counted: they are no reason to refuse a link.
+	if err := s.blobs.CheckSpace(0); errors.Is(err, blob.ErrNoSpace) {
+		httpx.WriteError(w, errDiskFull)
+		return
+	} else if err != nil {
+		s.apiError(w, r, "disk space", err)
+		return
+	}
 	now := s.now()
 	rq := &store.Request{OwnerID: sess.UserID(), ExpiresAt: now.Add(v.ttl), MaxFiles: v.maxFiles, MaxBytes: v.maxBytes,
 		SingleUse: v.singleUse, CreatedAt: now}
-	if err := s.store.CreateRequest(r.Context(), rq); err != nil {
+	err := s.store.CreateRequest(r.Context(), rq)
+	if e := storeError(err); e != nil {
+		httpx.WriteError(w, e)
+		return
+	} else if err != nil {
 		s.apiError(w, r, "create request", err)
 		return
 	}
+	s.log.InfoContext(r.Context(), "request link created", "user", sess.UserID())
 	httpx.WriteJSON(w, http.StatusCreated, map[string]string{"request_id": rq.ID})
 }
 
@@ -256,6 +274,7 @@ func (s *Server) handleDeleteRequest(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "delete request", err)
 		return
 	}
+	s.log.InfoContext(r.Context(), "request link deleted", "user", sess.UserID(), "files", len(blobs))
 	s.removeBlobs(r, blobs...)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -307,7 +326,10 @@ func (s *Server) handleCreateRequestFile(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, e)
 		return
 	}
-	if !s.checkSpace(w, r, v.geo.Size) {
+	// Only a live link gets as far as the space check, so other callers
+	// learn nothing of the disk state (audit 2026-11b I6). CreateRequestFile
+	// checks the link again, atomically.
+	if !s.requestOpen(w, r, id) || !s.checkSpace(w, r, v.geo.Size) {
 		return
 	}
 	token := ids.NewSecret()
@@ -323,6 +345,25 @@ func (s *Server) handleCreateRequestFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, createdUpload{UploadID: blobID, UploadToken: token})
+}
+
+// requestOpen answers and returns false unless request link id exists, is
+// unexpired and not closed.
+func (s *Server) requestOpen(w http.ResponseWriter, r *http.Request, id string) bool {
+	rq, err := s.store.RequestByID(r.Context(), id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		httpx.WriteError(w, errLinkUnknown)
+	case err != nil:
+		s.apiError(w, r, "load request", err)
+	case !rq.ExpiresAt.After(s.now()):
+		httpx.WriteError(w, errExpired)
+	case rq.ClosedAt != nil:
+		httpx.WriteError(w, errClosed)
+	default:
+		return true
+	}
+	return false
 }
 
 type inboxEntry struct {
@@ -383,6 +424,7 @@ func (s *Server) handleInboxDownload(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "inbox token", err)
 		return
 	}
+	s.log.InfoContext(ctx, "download token issued", "link", "inbox", "user", sess.UserID())
 	httpx.WriteJSON(w, http.StatusOK, downloadGrant{Token: token, Size: f.Size, Parts: f.Parts})
 }
 
@@ -404,6 +446,7 @@ func (s *Server) handleDeleteInbox(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "delete inbox file", err)
 		return
 	}
+	s.log.InfoContext(r.Context(), "inbox file deleted", "user", sess.UserID())
 	s.removeBlobs(r, blobID)
 	w.WriteHeader(http.StatusNoContent)
 }

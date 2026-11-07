@@ -84,9 +84,13 @@ func TestUserCommands(t *testing.T) {
 	if code != 0 || !strings.Contains(out, u.ID) || strings.Contains(out, "\x1b") {
 		t.Fatalf("list: %d %q", code, out)
 	}
-	code, out, _ = runCLI(t, "", "user", "revoke", "alice-sub", "--config", cfgPath)
-	if code != 0 || !strings.Contains(out, "Ended 1 session") {
+	code, out, errOut := runCLI(t, "", "user", "revoke", "alice-sub", "--config", cfgPath)
+	if code != 0 || !strings.Contains(out, "Ended 1 session") || !strings.Contains(out, "expired their share links") {
 		t.Fatalf("revoke: %d %q", code, out)
+	}
+	// Admin actions leave a JSON audit line on stderr (audit 2026-11b L-9).
+	if !strings.Contains(errOut, `"action":"user revoke"`) || !strings.Contains(errOut, `"user":"`+u.ID+`"`) {
+		t.Errorf("revoke audit line: %q", errOut)
 	}
 	if code, _, _ = runCLI(t, "no\n", "user", "purge", "--config", cfgPath, u.ID); code == 0 {
 		t.Fatal("purge without confirmation succeeded")
@@ -94,13 +98,22 @@ func TestUserCommands(t *testing.T) {
 
 	mapFile := filepath.Join(t.TempDir(), "map.csv")
 	_ = os.WriteFile(mapFile, []byte("old_subject,new_subject\n# comment\nalice-sub,alice-new\n"), 0o600)
-	code, out, errOut := runCLI(t, "", "user", "migrate", "--config", cfgPath, "--from-issuer", cfg.OIDC.Issuer,
+	code, out, errOut = runCLI(t, "", "user", "migrate", "--config", cfgPath, "--from-issuer", cfg.OIDC.Issuer,
 		"--to-issuer", "https://login.example/v2.0", "--map", mapFile, "--yes")
 	if code != 0 || !strings.Contains(out, "Relinked 1") {
 		t.Fatalf("migrate: %d %q %q", code, out, errOut)
 	}
-	if code, _, _ = runCLI(t, "yes\n", "user", "purge", "--config", cfgPath, "alice-new"); code != 0 {
+	for _, want := range []string{`"action":"user migrate"`, `"user":"` + u.ID + `"`, `"old_subject":"alice-sub"`,
+		`"new_subject":"alice-new"`, `"new_issuer":"https://login.example/v2.0"`} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("migrate audit line lacks %s: %q", want, errOut)
+		}
+	}
+	if code, _, errOut = runCLI(t, "yes\n", "user", "purge", "--config", cfgPath, "alice-new"); code != 0 {
 		t.Fatal("purge failed")
+	}
+	if !strings.Contains(errOut, `"action":"user purge"`) || !strings.Contains(errOut, `"user":"`+u.ID+`"`) {
+		t.Errorf("purge audit line: %q", errOut)
 	}
 	if code, _, _ = runCLI(t, "", "user", "revoke", "--config", cfgPath, "nobody"); code != 1 {
 		t.Fatal("unknown user not reported")
@@ -120,8 +133,17 @@ func TestGCBackupVersion(t *testing.T) {
 	if code, _, e := runCLI(t, "", "backup", "--config", cfgPath, "--out", dest); code != 0 {
 		t.Fatal(e)
 	}
-	if _, err := os.Stat(dest); err != nil {
+	if st, err := os.Stat(dest); err != nil {
 		t.Fatal(err)
+	} else if st.Mode().Perm() != 0o600 {
+		t.Errorf("backup mode %#o", st.Mode().Perm())
+	}
+	if code, _, _ := runCLI(t, "", "backup", "--config", cfgPath, "--out", dest); code != 1 {
+		t.Error("backup overwrote an existing file")
+	}
+	// No temporary directory is left next to the destination.
+	if ents, _ := os.ReadDir(filepath.Dir(dest)); len(ents) != 1 {
+		t.Errorf("leftovers next to the backup: %v", ents)
 	}
 	if code, out, _ := runCLI(t, "", "version"); code != 0 || !strings.Contains(out, "dropr dev") {
 		t.Fatal(out)
@@ -198,6 +220,85 @@ func TestHealthcheck(t *testing.T) {
 	_ = resp.Body.Close()
 	if target, _ := healthTarget(&config.Config{Listen: ":8443", TLS: config.TLSACME, Public: &url.URL{Scheme: "https", Host: "drop.example.com"}}); target != "https://127.0.0.1:8443/healthz" {
 		t.Error(target)
+	}
+}
+
+// TestUserDisableEnable covers `dropr user disable|enable` (audit 2026-11b
+// L-3) and the share expiry they share with revoke (L-2).
+func TestUserDisableEnable(t *testing.T) {
+	cfgPath, cfg := writeConfig(t)
+	u := seed(t, cfg)
+	ctx := context.Background()
+	open := func() (*db.DB, *store.Store) {
+		d, err := db.Open(ctx, server.DBPath(cfg))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d, store.New(d)
+	}
+	d, st := open()
+	now := time.Now()
+	shareID, _, err := st.CreateShare(ctx, &store.NewShare{OwnerID: u.ID, Size: 16, Parts: 1, Meta: make([]byte, 20),
+		ExpiresAt: now.Add(time.Hour), TokenHash: make([]byte, 32), DefaultQuota: 1 << 30}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = d.Close()
+
+	code, out, errOut := runCLI(t, "", "user", "disable", "alice-sub", "--config", cfgPath)
+	if code != 0 || !strings.Contains(out, "Disabled "+u.ID) || !strings.Contains(out, "ended 1 session") {
+		t.Fatalf("disable: %d %q %q", code, out, errOut)
+	}
+	if !strings.Contains(errOut, `"action":"user disable"`) || !strings.Contains(errOut, `"user":"`+u.ID+`"`) ||
+		!strings.Contains(errOut, `"msg":"admin action"`) {
+		t.Errorf("disable audit line: %q", errOut)
+	}
+	d, st = open()
+	got, err := st.UserByID(ctx, u.ID)
+	if err != nil || got.DisabledAt == nil {
+		t.Fatalf("disabled_at not set: %+v %v", got, err)
+	}
+	var exp int64
+	if err := d.R.QueryRowContext(ctx, `SELECT expires_at FROM shares WHERE id = ?`, shareID).Scan(&exp); err != nil || exp > time.Now().Unix() {
+		t.Errorf("share not expired by disable: %d %v", exp, err)
+	}
+	_ = d.Close()
+	if code, out, _ = runCLI(t, "", "user", "list", "--config", cfgPath); code != 0 || !strings.Contains(out, "DISABLED") ||
+		!strings.Contains(out, got.DisabledAt.Format(time.DateOnly)) {
+		t.Errorf("list does not show the disable: %q", out)
+	}
+	// Idempotent.
+	if code, out, _ = runCLI(t, "", "user", "disable", u.ID, "--config", cfgPath); code != 0 || !strings.Contains(out, "already disabled") {
+		t.Errorf("disable again: %d %q", code, out)
+	}
+
+	code, out, errOut = runCLI(t, "", "user", "enable", u.ID, "--config", cfgPath)
+	if code != 0 || !strings.Contains(out, "Enabled "+u.ID) {
+		t.Fatalf("enable: %d %q", code, out)
+	}
+	if !strings.Contains(errOut, `"action":"user enable"`) || !strings.Contains(errOut, `"user":"`+u.ID+`"`) {
+		t.Errorf("enable audit line: %q", errOut)
+	}
+	d, st = open()
+	if got, err := st.UserByID(ctx, u.ID); err != nil || got.DisabledAt != nil {
+		t.Errorf("disabled_at not cleared: %+v %v", got, err)
+	}
+	// Enabling does not bring the share back.
+	if err := d.R.QueryRowContext(ctx, `SELECT expires_at FROM shares WHERE id = ?`, shareID).Scan(&exp); err != nil || exp > time.Now().Unix() {
+		t.Errorf("share live again after enable: %d %v", exp, err)
+	}
+	_ = d.Close()
+	if code, out, _ = runCLI(t, "", "user", "enable", u.ID, "--config", cfgPath); code != 0 || !strings.Contains(out, "not disabled") {
+		t.Errorf("enable again: %d %q", code, out)
+	}
+
+	for _, sub := range []string{"disable", "enable"} {
+		if code, _, errOut = runCLI(t, "", "user", sub, "nobody", "--config", cfgPath); code != 1 || !strings.Contains(errOut, `no user matches "nobody"`) {
+			t.Errorf("%s of an unknown user: %d %q", sub, code, errOut)
+		}
+		if code, _, _ = runCLI(t, "", "user", sub, "--config", cfgPath); code != 2 {
+			t.Errorf("%s without a user: %d", sub, code)
+		}
 	}
 }
 

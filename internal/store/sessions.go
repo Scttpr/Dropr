@@ -77,7 +77,16 @@ func (s *Store) DeleteSession(ctx context.Context, idHash []byte) error {
 
 // DeleteUserSessions removes all sessions of a user.
 func (s *Store) DeleteUserSessions(ctx context.Context, userID string) (int64, error) {
-	res, err := s.db.W.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
+	return deleteUserSessions(ctx, s.db.W, userID)
+}
+
+// execer is what *sql.DB and *sql.Tx share for writes.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func deleteUserSessions(ctx context.Context, x execer, userID string) (int64, error) {
+	res, err := x.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
 	if err != nil {
 		return 0, err
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/scttpr/dropr/internal/ids"
 )
@@ -48,17 +49,60 @@ func scanUser(r scanner) (*User, error) {
 // maxDisplayName bounds the provider-supplied display name.
 const maxDisplayName = 200
 
+// cleanDisplayName makes the provider-supplied name safe to show to anyone
+// holding a request link. It uses the character class of the web client's
+// file-name sanitizer (web/src/crypto/meta.ts, audit I-4): controls (C0,
+// DEL, C1) and default-ignorable code points (bidi marks, embeddings,
+// overrides and isolates, zero-width and invisible separators, BOM, soft
+// hyphen, Hangul fillers…) are removed, as are U+061C, U+2028/2029 and the
+// Braille blank U+2800. ZWJ/ZWNJ, variation selectors and emoji tag
+// characters are kept. Runs of spaces of any width collapse to one ASCII
+// space (audit 2026-11 A03-1). Unlike the client, no NFC normalization is
+// applied: the server has no Unicode normalization tables.
 func cleanDisplayName(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
+	var b strings.Builder
+	space := false
+	for _, r := range s {
+		switch {
+		case stripInName(r):
+			continue
+		case unicode.Is(unicode.Zs, r):
+			space = true
+			continue
 		}
-		return r
-	}, strings.TrimSpace(s))
+		if space && b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		space = false
+		b.WriteRune(r)
+	}
+	s = b.String()
 	if len(s) > maxDisplayName {
-		s = strings.ToValidUTF8(s[:maxDisplayName], "")
+		s = strings.TrimSpace(strings.ToValidUTF8(s[:maxDisplayName], ""))
 	}
 	return s
+}
+
+// stripInName reports whether r is removed from display names: \p{Cc},
+// \p{Default_Ignorable_Code_Point} (derived as in DerivedCoreProperties.txt:
+// Other_Default_Ignorable_Code_Point + Cf + Variation_Selector − White_Space −
+// U+FFF9..FFFB − U+13430..1343F − Prepended_Concatenation_Mark), U+061C,
+// U+2028, U+2029 and U+2800, minus the exceptions kept by the web client.
+func stripInName(r rune) bool {
+	switch {
+	case r == 0x200c || r == 0x200d, // ZWNJ, ZWJ
+		unicode.Is(unicode.Variation_Selector, r),
+		r >= 0xe0020 && r <= 0xe007f: // emoji tag characters
+		return false
+	case unicode.Is(unicode.Cc, r),
+		r == 0x061c, r == 0x2028, r == 0x2029, r == 0x2800,
+		unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r):
+		return true
+	case unicode.Is(unicode.Cf, r):
+		return !(r >= 0xfff9 && r <= 0xfffb) && !(r >= 0x13430 && r <= 0x1343f) &&
+			!unicode.Is(unicode.Prepended_Concatenation_Mark, r)
+	}
+	return false
 }
 
 // ProvisionUser returns the user for (issuer, subject), creating it just in
@@ -262,26 +306,120 @@ func requireOne(res sql.Result) error {
 }
 
 // MarkAccessLost records that the account (issuer, subject) lost access at
-// the identity provider (role or required claim withdrawn) or was revoked by
-// an administrator. Its request links refuse uploads until the next
-// successful login clears the mark (ProvisionUser). Unknown identities are
-// ignored.
+// the identity provider (role or required claim withdrawn). Its request links
+// refuse uploads until the next successful login clears the mark
+// (ProvisionUser); its share links expire for good (loseAccess). Unknown
+// identities are ignored.
 func (s *Store) MarkAccessLost(ctx context.Context, issuer, subject string, now time.Time) error {
-	_, err := s.db.W.ExecContext(ctx, `UPDATE users SET access_lost_at = ? WHERE issuer = ? AND subject = ? AND access_lost_at IS NULL`,
-		unix(now), issuer, subject)
+	return s.db.Tx(ctx, func(tx *sql.Tx) error {
+		var uid string
+		err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE issuer = ? AND subject = ?`, issuer, subject).Scan(&uid)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		return loseAccess(ctx, tx, uid, now)
+	})
+}
+
+// RevokeUser is `dropr user revoke`: it ends every session of the user and
+// marks the account as having lost access, as MarkAccessLost does, in one
+// transaction. It returns the number of sessions ended.
+func (s *Store) RevokeUser(ctx context.Context, userID string, now time.Time) (sessions int64, err error) {
+	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+		if sessions, err = deleteUserSessions(ctx, tx, userID); err != nil {
+			return err
+		}
+		return loseAccess(ctx, tx, userID, now)
+	})
+	return sessions, err
+}
+
+// DisableUser is `dropr user disable` (audit 2026-11b L-3): a local lockout
+// that a login does not undo. It sets disabled_at (kept if already set),
+// ends every session of the user and expires their share links
+// (expireOwnerShares). Login, session load and request links all refuse a
+// disabled account. wasDisabled reports whether it already was.
+func (s *Store) DisableUser(ctx context.Context, userID string, now time.Time) (sessions int64, wasDisabled bool, err error) {
+	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+		var disabled sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `SELECT disabled_at FROM users WHERE id = ?`, userID).Scan(&disabled); err != nil {
+			return notFound(err)
+		}
+		wasDisabled = disabled.Valid
+		if !wasDisabled {
+			if _, err := tx.ExecContext(ctx, `UPDATE users SET disabled_at = ? WHERE id = ?`, unix(now), userID); err != nil {
+				return err
+			}
+		}
+		if sessions, err = deleteUserSessions(ctx, tx, userID); err != nil {
+			return err
+		}
+		return expireOwnerShares(ctx, tx, userID, now)
+	})
+	return sessions, wasDisabled, err
+}
+
+// EnableUser is `dropr user enable` (audit 2026-11b L-3): it clears
+// disabled_at and nothing else. Share links expired by DisableUser stay
+// expired. wasDisabled reports whether the account was disabled.
+func (s *Store) EnableUser(ctx context.Context, userID string) (wasDisabled bool, err error) {
+	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+		var disabled sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `SELECT disabled_at FROM users WHERE id = ?`, userID).Scan(&disabled); err != nil {
+			return notFound(err)
+		}
+		wasDisabled = disabled.Valid
+		if !wasDisabled {
+			return nil
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE users SET disabled_at = NULL WHERE id = ?`, userID)
+		return err
+	})
+	return wasDisabled, err
+}
+
+// loseAccess sets access_lost_at (kept if already set) and expires the
+// owner's share links. It is the one place every "access lost" path goes
+// through: role or claim withdrawn at login or revalidation, and `dropr user
+// revoke`.
+func loseAccess(ctx context.Context, tx *sql.Tx, userID string, now time.Time) error {
+	res, err := tx.ExecContext(ctx, `UPDATE users SET access_lost_at = COALESCE(access_lost_at, ?) WHERE id = ?`, unix(now), userID)
+	if err != nil {
+		return err
+	}
+	if err := requireOne(res); err != nil {
+		return err
+	}
+	return expireOwnerShares(ctx, tx, userID, now)
+}
+
+// expireOwnerShares ends every live share link of an owner who lost access
+// (audit 2026-11b L-2): expires_at is brought down to now, so the links are
+// dead at once, a later login does not bring them back, and the cleanup job
+// deletes their files. The download tokens of those links are deleted, and
+// share uploads still in progress die with their link (part writes and
+// finalize check its expiry). Request links are left alone: they pause on
+// the owner's state and resume at the next login.
+func expireOwnerShares(ctx context.Context, tx *sql.Tx, userID string, now time.Time) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE shares SET expires_at = ? WHERE owner_id = ? AND expires_at > ?`,
+		unix(now), userID, unix(now)); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM dl_tokens WHERE share_id IN (SELECT id FROM shares WHERE owner_id = ?)`, userID)
 	return err
 }
 
-// MarkAccessLostByID is MarkAccessLost by user ID (`dropr user revoke`).
-func (s *Store) MarkAccessLostByID(ctx context.Context, userID string, now time.Time) error {
-	_, err := s.db.W.ExecContext(ctx, `UPDATE users SET access_lost_at = COALESCE(access_lost_at, ?) WHERE id = ?`, unix(now), userID)
-	return err
-}
+// ownerActive is the SQL predicate, on a users row u, of an account that may
+// still publish and receive files: not disabled and not marked as having
+// lost access (audit I-3, 2026-11b L-2).
+const ownerActive = `u.disabled_at IS NULL AND u.access_lost_at IS NULL`
 
 // AccountActive reports whether the account may still receive files: not
 // disabled and not marked as having lost access (audit I-3).
 func (s *Store) AccountActive(ctx context.Context, userID string) (bool, error) {
 	var ok bool
-	err := s.db.R.QueryRowContext(ctx, `SELECT disabled_at IS NULL AND access_lost_at IS NULL FROM users WHERE id = ?`, userID).Scan(&ok)
+	err := s.db.R.QueryRowContext(ctx, `SELECT `+ownerActive+` FROM users u WHERE u.id = ?`, userID).Scan(&ok)
 	return ok, notFound(err)
 }

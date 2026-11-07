@@ -16,13 +16,19 @@ import (
 
 var b64 = base64.RawURLEncoding.Strict()
 
-// Opaque field bounds (FORMAT.md §5, §8.6; ARCHITECTURE.md §2).
+// Opaque field bounds (FORMAT.md §5, §7, §8.6; ARCHITECTURE.md §2). Sealed
+// metadata and labels are padded to a power of two from padMin up to their
+// max (audit 2026-11b L-8): any other length is an unpadded blob.
 const (
-	minMeta       = blob.TagSize + 1 // sealed JSON: at least one byte plus the tag
-	maxMeta       = 4096             // decoded, tag included
-	wrappedKeyLen = 80               // HPKE enc(32) || ct(48)
-	minLabel      = 32 + blob.TagSize + 1
-	maxLabel      = 512
+	padMin        = 128
+	maxMetaPadded = 512
+	minMeta       = padMin + blob.TagSize        // decoded, tag included
+	maxMeta       = maxMetaPadded + blob.TagSize // decoded, tag included
+	wrappedKeyLen = 80                           // HPKE enc(32) || ct(48)
+	labelOverhead = 32 + blob.TagSize            // HPKE enc(32) and tag
+	maxLabelPad   = 256
+	minLabel      = labelOverhead + padMin
+	maxLabel      = labelOverhead + maxLabelPad
 	// Request link caps.
 	maxRequestFiles  = 1000
 	maxShareDownload = 999_999
@@ -140,6 +146,20 @@ func fileGeometry(size int64, parts int, l limits) (blob.Geometry, *httpx.APIErr
 	return g, nil
 }
 
+// padded decodes a sealed field whose plaintext is padded to a power of two
+// in [padMin, maxPadded], overhead bytes added by the sealing (audit
+// 2026-11b L-8).
+func padded(s string, overhead, maxPadded int) ([]byte, bool) {
+	b, ok := opaque(s, overhead+padMin, overhead+maxPadded)
+	if !ok {
+		return nil, false
+	}
+	if n := len(b) - overhead; n&(n-1) != 0 {
+		return nil, false
+	}
+	return b, true
+}
+
 func opaque(s string, minLen, maxLen int) ([]byte, bool) {
 	if len(s) > base64.RawURLEncoding.EncodedLen(maxLen) {
 		return nil, false
@@ -172,7 +192,7 @@ func (b *shareRequest) validate(l limits) (*validShare, *httpx.APIError) {
 	if e != nil {
 		return nil, e
 	}
-	meta, ok := opaque(b.Meta, minMeta, maxMeta)
+	meta, ok := padded(b.Meta, blob.TagSize, maxMetaPadded)
 	if !ok {
 		return nil, errBadRequest
 	}
@@ -237,7 +257,7 @@ func (b *requestFileRequest) validate(l limits) (*validRequestFile, *httpx.APIEr
 	if e != nil {
 		return nil, e
 	}
-	meta, ok := opaque(b.Meta, minMeta, maxMeta)
+	meta, ok := padded(b.Meta, blob.TagSize, maxMetaPadded)
 	if !ok {
 		return nil, errBadRequest
 	}
@@ -254,7 +274,7 @@ type labelRequest struct {
 }
 
 func (b *labelRequest) validate() ([]byte, *httpx.APIError) {
-	l, ok := opaque(b.LabelMeta, minLabel, maxLabel)
+	l, ok := padded(b.LabelMeta, labelOverhead, maxLabelPad)
 	if !ok {
 		return nil, errBadRequest
 	}
@@ -283,6 +303,8 @@ func storeError(err error) *httpx.APIError {
 		return errFull
 	case errors.Is(err, store.ErrQuota):
 		return errQuota
+	case errors.Is(err, store.ErrTooMany):
+		return httpx.ErrRateLimited
 	}
 	return nil
 }

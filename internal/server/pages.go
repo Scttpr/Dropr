@@ -116,7 +116,9 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		s.serverError(w, r, "share page", err)
 		return
-	case !sh.ExpiresAt.After(s.now()):
+	case !sh.ExpiresAt.After(s.now()), !sh.OwnerActive:
+		// An owner who is disabled or lost access publishes nothing more
+		// (audit 2026-11b L-2).
 		s.deadLink(w, r, http.StatusGone, msgLinkExpired)
 		return
 	case sh.MaxDownloads != nil && sh.DownloadCount >= *sh.MaxDownloads:
