@@ -1,193 +1,261 @@
+# Build, lint and test.
+#
+#   pull_request   only the jobs whose inputs changed (see `changes`);
+#                  e2e in every browser when browser code (web/, e2e/) or CI
+#                  changed, else Chromium only
+#   push to main   every job, e2e in every browser, fuzz smoke; saves caches
+#
+# Branch protection requires `ci-ok` (and security.yml's `security-ok`):
+# it fails when any job failed and accepts jobs the path filter skipped.
+# release.yml requires both to be green on the tagged commit.
+#
+# Run the same checks locally: make check, make lint-ci, make e2e.
+# Actions are pinned by commit SHA (version in the trailing comment); Dependabot
+# keeps them current.
 name: ci
 
 on:
+  pull_request:
   push:
     branches: [main]
-    tags: ["v*"]
-  pull_request:
+  workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
+# One run per PR (a new push cancels the old run); every main commit gets its
+# own run, since releases need a green ci-ok on the exact tagged commit.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
-
-# Actions are pinned by commit SHA (version in the trailing comment).
-# Refresh with: gh api repos/<owner>/<repo>/commits/<tag> --jq .sha
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 jobs:
-  flake-check:
-    name: nix flake check
+  changes:
+    name: Detect changes
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter lists the PR's files through the API
+    # Pushes and manual runs test everything; so does any change to CI or Nix.
+    outputs:
+      workflows: ${{ github.event_name != 'pull_request' || steps.filter.outputs.all == 'true' || steps.filter.outputs.workflows == 'true' }}
+      go: ${{ github.event_name != 'pull_request' || steps.filter.outputs.all == 'true' || steps.filter.outputs.go == 'true' }}
+      build: ${{ github.event_name != 'pull_request' || steps.filter.outputs.all == 'true' || steps.filter.outputs.go == 'true' || steps.filter.outputs.web == 'true' }}
+      e2e: ${{ github.event_name != 'pull_request' || steps.filter.outputs.all == 'true' || steps.filter.outputs.go == 'true' || steps.filter.outputs.web == 'true' || steps.filter.outputs.e2e == 'true' }}
+      all-browsers: ${{ github.event_name != 'pull_request' || steps.filter.outputs.all == 'true' || steps.filter.outputs.web == 'true' || steps.filter.outputs.e2e == 'true' }}
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - if: github.event_name == 'pull_request'
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            all:
+              - .github/workflows/ci.yml
+              - .github/actions/**
+              - scripts/ci/**
+              - flake.nix
+              - flake.lock
+              - nix/**
+              - Makefile
+            workflows:
+              - .github/**
+              - scripts/**
+            go:
+              - go.mod
+              - go.sum
+              - cmd/**
+              - internal/**
+              - dev/**
+              - .golangci.yml
+            web:
+              - web/**
+            e2e:
+              - e2e/**
+
+  lint-workflows:
+    name: Lint workflows and scripts (actionlint, zizmor, shellcheck)
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
-      - run: nix flake check -L
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: ci-shell }
+      - env:
+          GH_TOKEN: ${{ github.token }} # zizmor's online audits (impostor commits, known-vulnerable actions)
+        run: nix develop .#ci -c make lint-ci
+
+  go-lint:
+    name: Go lint (golangci-lint)
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: ci-shell }
+      - uses: ./.github/actions/go-cache
+        with: { cache-key: lint }
+      - run: nix develop .#ci -c make lint
+
+  go-test:
+    name: Go tests (race detector, coverage)
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: ci-shell }
+      - uses: ./.github/actions/go-cache
+        with: { cache-key: test }
+      - run: nix develop .#ci -c make cover
+      - name: Coverage summary
+        run: |
+          {
+            echo '### Go coverage'
+            echo '```'
+            nix develop .#ci -c go tool cover -func=coverage.out | tail -1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  nix-build:
+    name: Nix build (binary, web assets and web tests, flake eval)
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: nix-build }
+      - name: Evaluate every output on every system
+        run: nix flake check --no-build --all-systems
+      # checks.go-test is left out: go-test runs the same tests with -race.
+      - name: Build the binary and web assets, run the web tests
+        run: |
+          nix build -L --no-link \
+            .#checks.x86_64-linux.dropr .#checks.x86_64-linux.web-assets .#checks.x86_64-linux.web
+      - if: failure()
+        run: echo "::error::If the failure is a hash mismatch, run 'make hashes' and commit nix/hashes.nix."
       - name: Reproducibility (web assets build twice, identical)
-        run: |
-          nix build .#web-assets
-          nix build --rebuild .#web-assets
+        if: github.event_name == 'push'
+        run: nix build --no-link --rebuild .#web-assets
 
-  checks:
-    name: make check, fuzz smoke, web tests
+  integration:
+    name: Go integration tests (Keycloak)
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
-      - name: Web dependencies
-        run: nix develop -c bash -c 'cd web && npm ci'
-      - name: Web typecheck, tests, build
-        run: nix develop -c bash -c 'cd web && npm run typecheck && npm test && npm run build'
-      - name: Build, lint, race tests, govulncheck
-        run: nix develop -c make check
-      - name: Fuzz smoke
-        run: nix develop -c make fuzz FUZZTIME=10s
-
-  audit:
-    name: govulncheck and npm audit
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
-      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
-      - run: nix develop -c govulncheck ./...
-      - run: nix develop -c bash -c 'cd web && npm audit --audit-level=high'
-
-  keycloak-integration:
-    name: Go integration tests against Keycloak
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
-      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
-      - name: Start Keycloak (image pinned in dev/compose.yaml)
-        run: |
-          image=$(grep -oE 'quay.io/keycloak/keycloak:[^ ]+' dev/compose.yaml | head -1)
-          docker run -d --name keycloak -p 127.0.0.1:8180:8180 \
-            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
-            -v "$PWD/dev/keycloak/dropr-realm.json:/opt/keycloak/data/import/dropr-realm.json:ro" \
-            "$image" start-dev --import-realm --http-port=8180
-          for i in $(seq 1 90); do
-            curl -fsS http://localhost:8180/realms/dropr/.well-known/openid-configuration >/dev/null && exit 0
-            sleep 2
-          done
-          docker logs keycloak; exit 1
-      - run: nix develop -c make test-keycloak
+      - uses: ./.github/actions/keycloak
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: ci-shell }
+      - uses: ./.github/actions/go-cache
+        with: { cache-key: test }
+      - run: nix develop .#ci -c make test-keycloak
 
   e2e:
-    name: Playwright E2E
+    name: E2E (${{ matrix.browser }})
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: ${{ fromJSON(needs.changes.outputs.all-browsers == 'true' && '["chromium", "firefox", "webkit"]' || '["chromium"]') }}
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
-      - name: Start Keycloak
-        run: |
-          image=$(grep -oE 'quay.io/keycloak/keycloak:[^ ]+' dev/compose.yaml | head -1)
-          docker run -d --name keycloak -p 127.0.0.1:8180:8180 \
-            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
-            -v "$PWD/dev/keycloak/dropr-realm.json:/opt/keycloak/data/import/dropr-realm.json:ro" \
-            "$image" start-dev --import-realm --http-port=8180
-          for i in $(seq 1 90); do
-            curl -fsS http://localhost:8180/realms/dropr/.well-known/openid-configuration >/dev/null && exit 0
-            sleep 2
-          done
-          docker logs keycloak; exit 1
-      # Ubuntu 24.04 denies unprivileged user namespaces through AppArmor;
-      # WebKit's web processes sandbox with bubblewrap and die without them
-      # ("Target page, context or browser has been closed" on newPage).
-      - name: Allow unprivileged user namespaces (WebKit sandbox)
+      - uses: ./.github/actions/keycloak
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: e2e, store-size: 6G } # dev shell with browsers, plus mesa
+      - uses: ./.github/actions/go-cache
+        with: { cache-key: e2e }
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor;
+      # WebKit's sandbox needs them.
+      - if: matrix.browser == 'webkit'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # Browsers come from nixpkgs (PLAYWRIGHT_BROWSERS_PATH in the dev shell);
-      # the npm @playwright/test version must equal $PLAYWRIGHT_VERSION.
-      # Pull requests run Chromium only; main and tags run every browser.
       - env:
-          PROJECTS: ${{ github.event_name == 'pull_request' && '--project=chromium' || '' }}
-          # Temporary: print browser stderr to find why WebKit pages die on newPage.
-          DEBUG: pw:browser
-        run: nix develop -c bash -c "cd e2e && npm ci && npx playwright test $PROJECTS"
+          BROWSER: ${{ matrix.browser }}
+        run: nix develop -c scripts/ci/e2e.sh "$BROWSER"
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.browser }}
           path: e2e/playwright-report
+          retention-days: 14
           if-no-files-found: ignore
 
-  release:
-    name: release (binaries, asset hashes, signature)
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [flake-check, checks, audit, keycloak-integration]
+  fuzz-smoke:
+    name: Fuzz smoke (10 s per target)
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
-      contents: write     # create the GitHub release
-      id-token: write     # keyless cosign signing
+      contents: read
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false, fetch-depth: 0 }
-      # Fails closed: no release from a tag that is unsigned, signed by a key
-      # not listed below, or not pointing at the commit being built (audit
-      # 2026-11b L-6). Tags are SSH-signed; the maintainers' public keys are
-      # listed here and in SECURITY.md. Add a line per maintainer key.
-      - name: Verify the tag signature
-        run: |
-          # checkout may leave the tag lightweight; fetch the annotated object.
-          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
-          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
-          test "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" = "$GITHUB_SHA"
-          cat > "$RUNNER_TEMP/allowed_signers" <<'KEYS'
-          git.reformer354@passmail.net namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDZjQZiLBUTB+CxltkP0SER456htd7hruQMHmsWlGTMA
-          KEYS
-          git -c gpg.ssh.allowedSignersFile="$RUNNER_TEMP/allowed_signers" tag -v "$GITHUB_REF_NAME"
-      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      # No magic-nix-cache here: the release job holds id-token and
-      # contents:write, and must not substitute store paths that other jobs
-      # (which run npm ci outside the sandbox) could have pushed to the shared
-      # Actions cache (audit 2026-11b L-6). Everything comes from
-      # cache.nixos.org or is built locally.
-      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: ci-shell }
+      - uses: ./.github/actions/go-cache
+        with: { cache-key: test }
+      - run: nix develop .#ci -c make fuzz FUZZTIME=10s
 
-      - name: Build and hash the web assets
-        run: |
-          nix build -o web-assets .#web-assets
-          { (cd web-assets && sha256sum *); (cd internal/web/static && sha256sum app.css favicon.svg); } \
-            | sort -k2 > "dropr-assets-${GITHUB_REF_NAME}.sha256"
-          cat "dropr-assets-${GITHUB_REF_NAME}.sha256"
-
-      # Static binaries. They embed exactly the web assets hashed above.
-      - name: Build the release binaries
-        run: |
-          cp -r web-assets/. internal/web/static/
-          for arch in amd64 arm64; do
-            nix develop -c env CGO_ENABLED=0 GOOS=linux GOARCH="$arch" GOFLAGS=-mod=readonly \
-              go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
-              -o "dropr-${GITHUB_REF_NAME}-linux-${arch}" ./cmd/dropr
-          done
-          sha256sum "dropr-${GITHUB_REF_NAME}-linux-"* > "dropr-${GITHUB_REF_NAME}-SHA256SUMS"
-          cat "dropr-${GITHUB_REF_NAME}-SHA256SUMS"
-
-      # Both hash lists are signed: SECURITY.md's "check a running instance"
-      # procedure trusts the asset hashes (audit 2026-11b L-6).
-      - name: Sign the binary checksums and the asset hashes (keyless)
-        run: |
-          for f in "dropr-${GITHUB_REF_NAME}-SHA256SUMS" "dropr-assets-${GITHUB_REF_NAME}.sha256"; do
-            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
-          done
-
-      - name: Publish the GitHub release
+  ci-ok:
+    name: ci-ok
+    needs: [changes, lint-workflows, go-lint, go-test, nix-build, integration, e2e, fuzz-smoke]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job passed or was skipped by the path filter
         env:
-          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          printf 'Verify: see SECURITY.md.\n' > notes.md
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
-            --notes-file notes.md \
-            "dropr-assets-${GITHUB_REF_NAME}.sha256" "dropr-assets-${GITHUB_REF_NAME}.sha256.sigstore.json" \
-            "dropr-${GITHUB_REF_NAME}-linux-amd64" "dropr-${GITHUB_REF_NAME}-linux-arm64" \
-            "dropr-${GITHUB_REF_NAME}-SHA256SUMS" "dropr-${GITHUB_REF_NAME}-SHA256SUMS.sigstore.json"
+          echo "results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*) exit 1 ;;
+          esac

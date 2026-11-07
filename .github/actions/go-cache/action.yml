@@ -1,0 +1,30 @@
+name: Go build cache
+description: >
+  Restore the Go module and build caches, keyed on go.sum and the toolchain
+  (flake.lock). Like the Nix store cache, only pushes to main save them.
+
+inputs:
+  cache-key:
+    description: Name of this job's Go cache.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: go-${{ inputs.cache-key }}-${{ runner.os }}-${{ hashFiles('go.sum', 'flake.lock') }}
+        restore-keys: go-${{ inputs.cache-key }}-${{ runner.os }}-
+
+    - if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: go-${{ inputs.cache-key }}-${{ runner.os }}-${{ hashFiles('go.sum', 'flake.lock') }}
+        restore-keys: go-${{ inputs.cache-key }}-${{ runner.os }}-

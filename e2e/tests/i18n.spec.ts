@@ -11,7 +11,7 @@ import { expect, makeFile, shareFile, test } from "../m6.ts";
 test.describe.configure({ mode: "serial" });
 test.use({ droprConfig: {} });
 
-test("a French visitor gets the French interface and can switch theme and language", async ({ alice, browser, filesDir }) => {
+test("a French visitor gets the French interface and can switch theme and language", async ({ alice, browser, browserName, filesDir }) => {
   const file = await makeFile(filesDir, "rapport-annuel.bin", 200_000);
   const url = await shareFile(alice, file);
 
@@ -31,6 +31,13 @@ test("a French visitor gets the French interface and can switch theme and langua
   await dark.click();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(dark).toHaveAttribute("aria-pressed", "true");
+  // The rest needs the __Host- preference cookies to survive a reload, and
+  // Playwright's WebKit drops Secure cookies on http://localhost
+  // (test-environment limitation; production is https-only).
+  if (browserName === "webkit") {
+    await context.close();
+    return;
+  }
   await page.reload();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(page.locator('meta[name="color-scheme"]')).toHaveAttribute("content", "dark");
@@ -45,7 +52,8 @@ test("a French visitor gets the French interface and can switch theme and langua
   await context.close();
 });
 
-test("display settings work without JavaScript", async ({ browser, dropr }) => {
+test("display settings work without JavaScript", async ({ browser, browserName, dropr }) => {
+  test.skip(browserName === "webkit", "WebKit drops Secure (__Host-) cookies on http://localhost (test-environment limitation)");
   const context = await browser.newContext({ javaScriptEnabled: false, locale: "en-US" });
   const page = await context.newPage();
   await page.goto(dropr.origin + "/login");

@@ -1,0 +1,140 @@
+# Security scanning. Findings appear under the repository's Security tab.
+#
+#   CodeQL             static analysis of Go and TypeScript (security-extended)
+#   dependency-review  PRs only: blocks new dependencies that are vulnerable
+#                      or under a non-permissive licence
+#   vulnerabilities    govulncheck (reachable Go vulns), npm audit, OSV-Scanner
+#
+# Runs on every PR and main push (branch protection requires `security-ok`),
+# and daily: new advisories appear without any code change. A failed daily
+# run opens a `ci-failure` issue. Workflow linting (zizmor, actionlint) is in
+# ci.yml; Scorecard in scorecard.yml.
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # upload results
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          allow-licenses: >-
+            MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD,
+            MPL-2.0, BlueOak-1.0.0, CC0-1.0, Unlicense
+          show-openssf-scorecard: true
+
+  vulnerabilities:
+    name: Known vulnerabilities (govulncheck, npm audit, OSV)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write # upload OSV results
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: ci-shell }
+      - uses: ./.github/actions/go-cache
+        with: { cache-key: test }
+      # Fails only on vulnerabilities the code can actually reach.
+      - name: govulncheck
+        run: nix develop .#ci -c make vuln
+      - name: npm audit (web, e2e)
+        run: |
+          nix develop .#ci -c npm audit --prefix web --audit-level=high
+          nix develop .#ci -c npm audit --prefix e2e --audit-level=high
+      # Every lockfile (go.sum, both package-lock.json). Results go to the
+      # Security tab rather than failing the job: OSV also lists unreachable
+      # vulnerabilities, which govulncheck above already judged.
+      - name: OSV-Scanner
+        run: nix develop .#ci -c osv-scanner scan source --recursive --format sarif --output-file osv.sarif . || true
+      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: osv.sarif
+          category: osv-scanner
+
+  security-ok:
+    name: security-ok
+    needs: [codeql, dependency-review, vulnerabilities]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*) exit 1 ;;
+          esac
+
+  report:
+    name: Report a failed scheduled run
+    needs: [security-ok]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci/report-failure.sh security

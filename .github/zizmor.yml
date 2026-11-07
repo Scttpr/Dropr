@@ -1,0 +1,6 @@
+# zizmor configuration (https://docs.zizmor.sh/configuration/).
+rules:
+  # Suggests `uses: $/.github/actions/...` for local actions; actionlint
+  # (make lint-ci) does not parse that syntax yet. Revisit when it does.
+  self-repository:
+    disable: true

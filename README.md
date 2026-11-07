@@ -1,5 +1,9 @@
 # Dropr
 
+[![ci](https://github.com/Scttpr/Dropr/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Scttpr/Dropr/actions/workflows/ci.yml)
+[![security](https://github.com/Scttpr/Dropr/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/Scttpr/Dropr/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Scttpr/Dropr/badge)](https://scorecard.dev/viewer/?uri=github.com/Scttpr/Dropr)
+
 Self-hosted, end-to-end encrypted file drop. One Go binary, your domain, and
 your existing OIDC identity provider for accounts.
 

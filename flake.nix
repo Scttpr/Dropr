@@ -127,36 +127,54 @@
       packages = forAll mkPackages;
       checks = forAll mkChecks;
 
-      devShells = forAll (pkgs: {
-        default = pkgs.mkShell {
-          packages = with pkgs; [
+      devShells = forAll (pkgs:
+        let
+          # What CI's lint, test, scan and release jobs need. No browsers: the
+          # Playwright bundle is ~1 GB and only the e2e jobs use it.
+          ciPackages = with pkgs; [
             go
-            gopls
-            gotools
             golangci-lint
             govulncheck
-            delve
             nodejs_24
             esbuild
             typescript
-            sqlite
-            openssl
             jq
             gnumake
             curl
-            podman-compose
-            playwright-driver
+            gh
+            actionlint
+            shellcheck
+            zizmor
+            osv-scanner
+            cyclonedx-gomod
           ];
-          env = {
-            CGO_ENABLED = "0";
-            # Playwright on NixOS: use the browsers packaged by nixpkgs. The npm
-            # @playwright/test version MUST equal pkgs.playwright-driver.version.
-            PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
-            PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
-            PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
-            PLAYWRIGHT_VERSION = pkgs.playwright-driver.version;
+        in
+        {
+          ci = pkgs.mkShell {
+            packages = ciPackages;
+            env.CGO_ENABLED = "0";
           };
-        };
-      });
+
+          default = pkgs.mkShell {
+            packages = ciPackages ++ (with pkgs; [
+              gopls
+              gotools
+              delve
+              sqlite
+              openssl
+              podman-compose
+              playwright-driver
+            ]);
+            env = {
+              CGO_ENABLED = "0";
+              # Playwright on NixOS: use the browsers packaged by nixpkgs. The npm
+              # @playwright/test version MUST equal pkgs.playwright-driver.version.
+              PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+              PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
+              PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
+              PLAYWRIGHT_VERSION = pkgs.playwright-driver.version;
+            };
+          };
+        });
     };
 }

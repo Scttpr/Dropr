@@ -1,0 +1,93 @@
+# Nightly long fuzzing: every native Go fuzz target runs in its own job, in
+# parallel. Each target's corpus (the inputs that found new coverage) is kept
+# in the Actions cache, so every night continues where the last one stopped.
+# A crasher is uploaded as an artifact (testdata/fuzz/...: commit it as a
+# regression test) and a `ci-failure` issue is opened.
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: Fuzzing time per target (Go duration)
+        default: 5m
+
+permissions: {}
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  targets:
+    name: List fuzz targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: ci-shell }
+      - id: list
+        run: echo "matrix=$(nix develop .#ci -c scripts/ci/fuzz-targets.sh)" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    needs: targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: ci-shell }
+      # Go keeps the generated corpus in $GOCACHE/fuzz/<package>/<target>.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build/fuzz/${{ matrix.pkg }}/${{ matrix.target }}
+          key: fuzz-${{ matrix.pkg }}-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-${{ matrix.pkg }}-${{ matrix.target }}-
+      - env:
+          PKG: ${{ matrix.pkg }}
+          TARGET: ${{ matrix.target }}
+          FUZZTIME: ${{ inputs.fuzztime || '5m' }}
+        run: nix develop .#ci -c go test -run '^$' -fuzz "^${TARGET}\$" -fuzztime "$FUZZTIME" "$PKG"
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crasher-${{ matrix.target }}
+          path: "**/testdata/fuzz/${{ matrix.target }}/"
+          retention-days: 30
+          if-no-files-found: ignore
+
+  report:
+    name: Report a failed scheduled run
+    needs: [targets, fuzz]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci/report-failure.sh nightly

@@ -8,7 +8,7 @@ COMPOSE  ?= $(NIX) podman-compose -f dev/compose.yaml
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 FUZZTIME ?= 20s
 
-.PHONY: build build-go web web-deps test test-race lint vuln fuzz check dev keycloak-up keycloak-down \
+.PHONY: build build-go web web-deps test test-race cover lint lint-ci vuln fuzz check dev keycloak-up keycloak-down \
 	test-keycloak e2e e2e-deps hashes nix-build clean
 
 # Browser bundles: content-hashed page modules, sw.js and manifest.json are
@@ -33,8 +33,20 @@ test:
 test-race:
 	$(NIX) env CGO_ENABLED=1 go test -race ./...
 
+# Race tests with a coverage profile in coverage.out (what CI runs).
+cover:
+	$(NIX) env CGO_ENABLED=1 go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
 lint:
 	$(NIX) golangci-lint run ./...
+
+# GitHub workflows and shell scripts. actionlint also runs shellcheck on every
+# `run:` block; zizmor audits the workflows' security (set GH_TOKEN for its
+# online checks).
+lint-ci:
+	$(NIX) actionlint
+	$(NIX) zizmor .github
+	$(NIX) shellcheck scripts/*.sh scripts/ci/*.sh
 
 vuln:
 	$(NIX) govulncheck ./...

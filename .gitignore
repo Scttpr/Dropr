@@ -12,3 +12,5 @@ coverage.out
 /internal/web/static/*.js
 /internal/web/static/manifest.json
 .claude/
+/dist/
+/web-assets

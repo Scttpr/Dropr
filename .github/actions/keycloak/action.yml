@@ -1,0 +1,21 @@
+name: Start Keycloak
+description: >
+  Start the dev Keycloak (image and realm from dev/compose.yaml) on
+  127.0.0.1:8180 and wait until the dropr realm answers.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        image=$(grep -oE 'quay.io/keycloak/keycloak:[^ ]+' dev/compose.yaml | head -1)
+        docker run -d --name keycloak -p 127.0.0.1:8180:8180 \
+          -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+          -v "$PWD/dev/keycloak/dropr-realm.json:/opt/keycloak/data/import/dropr-realm.json:ro" \
+          "$image" start-dev --import-realm --http-port=8180
+        for _ in $(seq 1 90); do
+          curl -fsS http://localhost:8180/realms/dropr/.well-known/openid-configuration >/dev/null && exit 0
+          sleep 2
+        done
+        docker logs keycloak
+        exit 1

@@ -31,7 +31,12 @@ the browser bundle is built reproducibly and its hashes are published.
 ### What a release contains
 
 * Static Linux binaries `dropr-<version>-linux-amd64` and `-arm64`, with the
-  web assets embedded.
+  web assets embedded. The release job builds each one twice from clean
+  caches and refuses to publish unless both builds are identical.
+* A CycloneDX SBOM per binary, `dropr-<version>-linux-<arch>.cdx.json`.
+* GitHub attestations: SLSA build provenance for the binaries and the asset
+  hashes, and an SBOM attestation per binary. They tie each file to the
+  workflow run and commit that built it.
 * `dropr-<version>-SHA256SUMS`, the binaries' checksums, and its keyless
   cosign bundle `dropr-<version>-SHA256SUMS.sigstore.json` (signed with the
   GitHub OIDC identity of the release workflow).
@@ -55,11 +60,22 @@ the browser bundle is built reproducibly and its hashes are published.
 ```sh
 V=v0.1.0
 cosign verify-blob --bundle dropr-$V-SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/ci\.yml@refs/tags/v' \
+  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   dropr-$V-SHA256SUMS
 sha256sum -c --ignore-missing dropr-$V-SHA256SUMS
 ```
+
+Or check a binary's provenance attestation with the GitHub CLI, which also
+proves which workflow, commit and tag built it:
+
+```sh
+gh attestation verify dropr-$V-linux-amd64 --repo Scttpr/Dropr \
+  --signer-workflow Scttpr/Dropr/.github/workflows/release.yml
+```
+
+Releases up to v1.0.0 were signed by `ci.yml` instead of `release.yml`: use
+`ci\.yml` in the identity above, and they have no attestations or SBOMs.
 
 ### Verify the asset hashes
 
@@ -68,7 +84,7 @@ Do this before using `dropr-assets-<version>.sha256` in the checks below:
 ```sh
 V=v0.1.0
 cosign verify-blob --bundle dropr-assets-$V.sha256.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/ci\.yml@refs/tags/v' \
+  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   dropr-assets-$V.sha256
 ```
