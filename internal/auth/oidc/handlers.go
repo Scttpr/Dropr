@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,9 @@ type statePayload struct {
 	Nonce    string `json:"n"`
 	Verifier string `json:"v"`
 	IssuedAt int64  `json:"t"`
+	// PrevSession is the ID hash of the session the browser presented at
+	// /auth/login, ended once the callback succeeds (audit 2026-11 A07-3).
+	PrevSession []byte `json:"p,omitempty"`
 }
 
 // HandleLogin starts the Authorization Code + PKCE flow.
@@ -39,6 +43,13 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Nonce:    ids.NewSecret(),
 		Verifier: oauth2.GenerateVerifier(),
 		IssuedAt: p.now().Unix(),
+	}
+	// The SameSite=Strict session cookie reaches this same-site navigation
+	// but not the callback, which ends a redirect chain through the
+	// provider, so session.Create cannot see it there. Its hash travels in
+	// the sealed state instead.
+	if cs := r.CookiesNamed(session.CookieName); len(cs) == 1 && ids.ValidSecret(cs[0].Value) {
+		st.PrevSession = ids.Hash(cs[0].Value)
 	}
 	raw, err := json.Marshal(st)
 	if err != nil {
@@ -103,6 +114,9 @@ func (p *Provider) readState(r *http.Request) (*statePayload, error) {
 	if st.State == "" || st.Nonce == "" || st.Verifier == "" {
 		return nil, errors.New("incomplete state payload")
 	}
+	if len(st.PrevSession) != 0 && len(st.PrevSession) != sha256.Size {
+		return nil, errors.New("malformed state payload")
+	}
 	return &st, nil
 }
 
@@ -163,7 +177,8 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		p.log.InfoContext(ctx, "login refused: not authorized", "reason", err.Error())
 		if id != nil {
 			// An existing account that lost the role: its request links stop
-			// accepting uploads (audit I-3).
+			// accepting uploads (audit I-3) and its share links expire (audit
+			// 2026-11b L-2).
 			if lerr := p.st.MarkAccessLost(ctx, id.Issuer, id.Subject, p.now()); lerr != nil {
 				p.log.ErrorContext(ctx, "record lost access", "err", lerr)
 			}
@@ -191,11 +206,26 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		p.pages.Forbidden(w, r)
 		return
 	}
+	// Signing in again ends the session this browser held before, so a
+	// stolen copy of its cookie dies too (audit 2026-11 A07-3).
+	if st.PrevSession != nil {
+		if err := p.st.DeleteSession(ctx, st.PrevSession); err != nil {
+			p.fail(w, r, http.StatusInternalServerError, i18n.N("Sign-in failed. Please try again."), err)
+			return
+		}
+	}
 	if _, err := p.sessions.Create(ctx, w, r, session.NewParams{
 		User: u, RefreshToken: tr.RefreshToken, OIDCSID: id.SID,
 	}); err != nil {
 		p.fail(w, r, http.StatusInternalServerError, i18n.N("Sign-in failed. Please try again."), err)
 		return
+	}
+	if id.SID == "" {
+		// Front-channel logout matches sessions by sid (audit 2026-11b L-4).
+		p.noSIDOnce.Do(func() {
+			p.log.WarnContext(ctx, "ID token has no sid claim: front-channel logout cannot match sessions for this provider; "+
+				"configure the provider to include sid in ID tokens")
+		})
 	}
 	p.log.InfoContext(ctx, "login", "user", u.ID, "new_account", created)
 	p.pages.CallbackLanding(w, r)
@@ -203,6 +233,8 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 // HandleLogout ends the local session, then sends the browser to the
 // provider's end_session_endpoint (RP-initiated logout) when there is one.
+// When the provider advertises a revocation_endpoint, the session's refresh
+// token is also revoked there in the background (RFC 7009, best effort).
 //
 // The request carries client_id and post_logout_redirect_uri rather than
 // id_token_hint, so Dropr never stores ID tokens; providers may then ask the
@@ -210,6 +242,11 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 func (p *Provider) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	s := session.FromContext(ctx)
+	if s != nil && p.meta.RevocationEndpoint != "" {
+		if rt, err := p.sessions.RefreshToken(s); err == nil && rt != "" {
+			p.revokeRefreshToken(ctx, rt)
+		}
+	}
 	if err := p.sessions.Destroy(ctx, w, s); err != nil {
 		p.log.ErrorContext(ctx, "logout: destroy session", "err", err)
 	}

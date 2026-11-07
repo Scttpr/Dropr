@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -204,6 +205,13 @@ func TestBackup(t *testing.T) {
 	if err := d.Backup(ctx, dest); err == nil {
 		t.Error("overwrote existing backup")
 	}
+	// Owner-only, and no temporary directory left behind (audit 2026-11b L-10).
+	if st, err := os.Stat(dest); err != nil || st.Mode().Perm() != 0o600 {
+		t.Errorf("backup mode: %v %v", st, err)
+	}
+	if ents, _ := os.ReadDir(filepath.Dir(dest)); len(ents) != 1 {
+		t.Errorf("leftovers next to the backup: %v", ents)
+	}
 	b, err := Open(ctx, dest)
 	if err != nil {
 		t.Fatal(err)
@@ -212,6 +220,32 @@ func TestBackup(t *testing.T) {
 	var n int
 	if err := b.R.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("backup content: %d %v", n, err)
+	}
+}
+
+func TestPlaceNewKeepsExisting(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "src"), filepath.Join(dir, "dst")
+	for _, p := range []string{src, dst} {
+		if err := os.WriteFile(p, []byte(p), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := placeNew(src, dst); err == nil {
+		t.Fatal("replaced an existing destination")
+	}
+	if b, _ := os.ReadFile(dst); string(b) != dst {
+		t.Error("destination changed")
+	}
+	if err := os.Remove(dst); err != nil {
+		t.Fatal(err)
+	}
+	if err := placeNew(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(src); !errors.Is(err, os.ErrNotExist) {
+		t.Error("source left in place")
 	}
 }
 

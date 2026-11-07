@@ -41,8 +41,14 @@ the browser bundle is built reproducibly and its hashes are published.
   `internal/web/static/`. Those two are not built by esbuild; the release job
   hashes them from the tagged source. Compare the stylesheet the page links to
   (its URL is in the page source; the server fingerprints it at startup) with
-  the `app.css` entry.
-* A signed git tag.
+  the `app.css` entry. Signed like the checksums, with its bundle
+  `dropr-assets-<version>.sha256.sigstore.json`.
+* A signed git tag. Tags are SSH-signed; the release workflow refuses to
+  publish from a tag without a valid signature by one of these keys:
+
+  | Maintainer | Key fingerprint |
+  |---|---|
+  | `git.reformer354@passmail.net` | `SHA256:JQYUdCF3BZAP4lvdpxkAyjg6Jb7SOVn+UKxm98xLTac` (ED25519) |
 
 ### Verify the binaries
 
@@ -55,7 +61,26 @@ cosign verify-blob --bundle dropr-$V-SHA256SUMS.sigstore.json \
 sha256sum -c --ignore-missing dropr-$V-SHA256SUMS
 ```
 
+### Verify the asset hashes
+
+Do this before using `dropr-assets-<version>.sha256` in the checks below:
+
+```sh
+V=v0.1.0
+cosign verify-blob --bundle dropr-assets-$V.sha256.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/ci\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  dropr-assets-$V.sha256
+```
+
+Releases published before the asset hashes were signed have no such bundle:
+reproduce their hashes instead.
+
 ### Reproduce the hashes yourself
+
+`git verify-tag` needs the maintainer key above in an allowed signers file
+(`principal namespaces="git" ssh-ed25519 <key>`, set with
+`git config gpg.ssh.allowedSignersFile`); check the fingerprint it prints.
 
 ```sh
 git clone https://github.com/scttpr/dropr && cd dropr
@@ -73,6 +98,7 @@ source already.
 
 ### Check what a running instance serves
 
+Use a hash file you have verified (previous section) or reproduced yourself.
 The script tags in the page reference `/assets/<name>-<hash>.js` (with a
 Subresource Integrity attribute), and the service worker is served at `/sw.js`.
 For each line of the release hash file:

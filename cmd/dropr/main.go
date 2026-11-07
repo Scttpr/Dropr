@@ -1,7 +1,7 @@
 // Command dropr is the Dropr server and admin CLI.
 //
 //	dropr serve   --config dropr.toml
-//	dropr user list|revoke|purge|migrate ...
+//	dropr user list|revoke|disable|enable|purge|migrate ...
 //	dropr gc      --config dropr.toml
 //	dropr backup  --config dropr.toml --out FILE
 //	dropr healthcheck [--config dropr.toml | --url URL]
@@ -35,6 +35,7 @@ import (
 	"github.com/scttpr/dropr/internal/blob"
 	"github.com/scttpr/dropr/internal/config"
 	"github.com/scttpr/dropr/internal/db"
+	"github.com/scttpr/dropr/internal/httpx"
 	"github.com/scttpr/dropr/internal/jobs"
 	"github.com/scttpr/dropr/internal/server"
 	"github.com/scttpr/dropr/internal/store"
@@ -55,7 +56,9 @@ func usage(w io.Writer) {
 Commands:
   serve                     run the server
   user list                 list accounts
-  user revoke <user>        end all sessions of a user now
+  user revoke <user>        end all sessions of a user and expire their share links
+  user disable <user>       lock a user out until enabled (also ends sessions, expires share links)
+  user enable <user>        lift a disable (expired share links stay expired)
   user purge <user>         delete a user and all their data
   user migrate              relink accounts after changing identity provider
   gc                        run the cleanup jobs once
@@ -136,8 +139,18 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
+// newLogger returns the JSON logger. Records logged with a request context
+// carry the request ID (audit 2026-11b L-9).
 func newLogger(cfg *config.Config, w io.Writer) *slog.Logger {
-	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: cfg.Level}))
+	return slog.New(httpx.ContextHandler(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: cfg.Level})))
+}
+
+// auditAdmin records an admin CLI action on stderr (the service journal when
+// run under the service manager) in the server's JSON format (audit 2026-11
+// L-9). It logs at WARN so a quieter log_level keeps it.
+func auditAdmin(cfg *config.Config, stderr io.Writer, action string, attrs ...slog.Attr) {
+	attrs = append([]slog.Attr{slog.String("action", action), slog.Int("uid", os.Getuid())}, attrs...)
+	newLogger(cfg, stderr).LogAttrs(context.Background(), slog.LevelWarn, "admin action", attrs...)
 }
 
 func cmdServe(args []string, stderr io.Writer) error {
@@ -172,7 +185,7 @@ func openStore(ctx context.Context, cfgPath string) (*config.Config, *db.DB, *st
 
 func cmdUser(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return usageError{"user: missing subcommand (list, revoke, purge, migrate)"}
+		return usageError{"user: missing subcommand (list, revoke, disable, enable, purge, migrate)"}
 	}
 	sub, args := args[0], args[1:]
 	fs, cfgPath := newFlags("user "+sub, stderr)
@@ -215,7 +228,7 @@ func cmdUser(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		_, d, st, err := openStore(ctx, *cfgPath)
+		cfg, d, st, err := openStore(ctx, *cfgPath)
 		if err != nil {
 			return err
 		}
@@ -224,16 +237,55 @@ func cmdUser(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if err != nil {
 			return userErr(ref, err)
 		}
-		n, err := st.DeleteUserSessions(ctx, u.ID)
+		// Their request links stop accepting files until they sign in
+		// again with the role (audit I-3); their share links expire (audit
+		// 2026-11b L-2).
+		n, err := st.RevokeUser(ctx, u.ID, time.Now())
 		if err != nil {
 			return err
 		}
-		// Their request links stop accepting files until they sign in
-		// again with the role (audit I-3).
-		if err := st.MarkAccessLostByID(ctx, u.ID, time.Now()); err != nil {
+		auditAdmin(cfg, stderr, "user revoke", slog.String("user", u.ID), slog.Int64("sessions", n))
+		_, _ = fmt.Fprintf(stdout, "Ended %d session(s) of %s (%s) and expired their share links; their request links are paused until they sign in again.\n", n, u.ID, displayOf(u))
+		return nil
+
+	case "disable", "enable":
+		// A local lockout that a login does not undo (audit 2026-11b L-3).
+		ref, err := needUser()
+		if err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(stdout, "Ended %d session(s) of %s (%s); their request links are paused until they sign in again.\n", n, u.ID, displayOf(u))
+		cfg, d, st, err := openStore(ctx, *cfgPath)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = d.Close() }()
+		u, err := st.FindUser(ctx, ref)
+		if err != nil {
+			return userErr(ref, err)
+		}
+		if sub == "enable" {
+			was, err := st.EnableUser(ctx, u.ID)
+			if err != nil {
+				return userErr(ref, err)
+			}
+			auditAdmin(cfg, stderr, "user enable", slog.String("user", u.ID), slog.Bool("was_disabled", was))
+			if !was {
+				_, _ = fmt.Fprintf(stdout, "%s (%s) is not disabled.\n", u.ID, displayOf(u))
+				return nil
+			}
+			_, _ = fmt.Fprintf(stdout, "Enabled %s (%s); they can sign in again. Share links expired by the disable stay expired.\n", u.ID, displayOf(u))
+			return nil
+		}
+		n, was, err := st.DisableUser(ctx, u.ID, time.Now())
+		if err != nil {
+			return userErr(ref, err)
+		}
+		auditAdmin(cfg, stderr, "user disable", slog.String("user", u.ID), slog.Int64("sessions", n), slog.Bool("was_disabled", was))
+		if was {
+			_, _ = fmt.Fprintf(stdout, "%s (%s) was already disabled; ended %d session(s).\n", u.ID, displayOf(u), n)
+			return nil
+		}
+		_, _ = fmt.Fprintf(stdout, "Disabled %s (%s): ended %d session(s) and expired their share links; their request links are closed until `dropr user enable`.\n", u.ID, displayOf(u), n)
 		return nil
 
 	case "purge":
@@ -262,6 +314,7 @@ func cmdUser(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
+		auditAdmin(cfg, stderr, "user purge", slog.String("user", u.ID), slog.Int("files", len(ids)))
 		if err := removeBlobs(blobs, ids); err != nil {
 			return fmt.Errorf("purged %s, but some files remain (run `dropr gc`): %w", u.ID, err)
 		}
@@ -308,9 +361,22 @@ func cmdUser(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if !*yes && !confirm(stdin, stdout, fmt.Sprintf("Relink %d account(s) from %s to %s? Their sessions end.", len(mappings), *fromIssuer, to)) {
 			return errors.New("aborted")
 		}
+		// Resolve the user IDs first so the audit lines name the accounts;
+		// MigrateIdentities re-checks every mapping in its transaction.
+		uids := make([]string, len(mappings))
+		for i, m := range mappings {
+			if u, err := st.UserByIdentity(ctx, *fromIssuer, m.OldSubject); err == nil {
+				uids[i] = u.ID
+			}
+		}
 		n, err := st.MigrateIdentities(ctx, *fromIssuer, to, mappings)
 		if err != nil {
 			return err
+		}
+		for i, m := range mappings {
+			auditAdmin(cfg, stderr, "user migrate", slog.String("user", uids[i]),
+				slog.String("old_issuer", *fromIssuer), slog.String("old_subject", m.OldSubject),
+				slog.String("new_issuer", to), slog.String("new_subject", m.NewSubject))
 		}
 		_, _ = fmt.Fprintf(stdout, "Relinked %d account(s).\n", n)
 		return nil
@@ -326,11 +392,15 @@ func listUsers(ctx context.Context, st *store.Store, stdout io.Writer) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tNAME\tSUBJECT\tCREATED\tSESSIONS\tISSUER")
+	_, _ = fmt.Fprintln(tw, "ID\tNAME\tSUBJECT\tCREATED\tDISABLED\tSESSIONS\tISSUER")
 	for i := range users {
 		u := &users[i]
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\n", u.ID, sanitize(u.DisplayName), sanitize(u.Subject),
-			u.CreatedAt.Format(time.DateOnly), u.Sessions, sanitize(u.Issuer))
+		disabled := "-"
+		if u.DisabledAt != nil {
+			disabled = u.DisabledAt.Format(time.DateOnly)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", u.ID, sanitize(u.DisplayName), sanitize(u.Subject),
+			u.CreatedAt.Format(time.DateOnly), disabled, u.Sessions, sanitize(u.Issuer))
 	}
 	return tw.Flush()
 }

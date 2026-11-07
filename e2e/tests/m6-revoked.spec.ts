@@ -109,7 +109,7 @@ test("owner revokes a request link: its received files are deleted with it", asy
   await expectNoPageModule(page);
   const api = await request.post(`${dropr.origin}/api/r/${id}/files`, {
     headers: { origin: dropr.origin },
-    data: { size: 1016, parts: 1, meta: "A".repeat(80), wrapped_key: "A".repeat(107) },
+    data: { size: 1016, parts: 1, meta: "A".repeat(192), wrapped_key: "A".repeat(107) },
   });
   expect(api.status()).toBe(404);
 

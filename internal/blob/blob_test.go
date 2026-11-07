@@ -423,3 +423,31 @@ func TestWritePartIfCommitUnderLock(t *testing.T) {
 		t.Errorf("disk bytes %d", s.DiskBytes(id))
 	}
 }
+
+// deadlineRecorder is a ResponseWriter that records the deadlines set
+// through http.ResponseController.
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	read, write time.Time
+}
+
+func (d *deadlineRecorder) SetReadDeadline(t time.Time) error  { d.read = t; return nil }
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error { d.write = t; return nil }
+
+// Audit 2026-11b L-1: while a part body arrives, the write deadline slides
+// with the read deadline, so a slow uploader is not cut (HTTP/2) or left
+// without a reply (HTTP/1.1) by a deadline fixed at the start.
+func TestProgressReaderSlidesBothDeadlines(t *testing.T) {
+	t.Parallel()
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	start := time.Now()
+	p := &ProgressReader{R: bytes.NewReader(make([]byte, 100)), RC: http.NewResponseController(rec), Timeout: time.Minute}
+	if _, err := io.ReadAll(p); err != nil {
+		t.Fatal(err)
+	}
+	for name, d := range map[string]time.Time{"read": rec.read, "write": rec.write} {
+		if d.Before(start.Add(time.Minute)) {
+			t.Errorf("%s deadline not pushed forward: %v", name, d)
+		}
+	}
+}

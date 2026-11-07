@@ -66,7 +66,7 @@ reference. Dropr needs:
 In production mode, Dropr refuses to start on an unsafe configuration (plain
 HTTP, a client secret, a provider without PKCE or refresh tokens, a proxy
 without `trusted_proxies`, world-readable secret files). `dropr help` lists the
-admin commands: `user list|revoke|purge|migrate`, `gc`, `backup`,
+admin commands: `user list|revoke|disable|enable|purge|migrate`, `gc`, `backup`,
 `healthcheck`, `version`. There is no admin web UI.
 
 ## Documentation

@@ -23,11 +23,16 @@ type IPHasher struct {
 // key with seal.InfoIPHash).
 func NewIPHasher(key []byte) *IPHasher { return &IPHasher{key: append([]byte(nil), key...)} }
 
-// Sum returns the keyed hash of a.
-func (h *IPHasher) Sum(a netip.Addr) [32]byte {
+// Sum returns the keyed hash of a (IPv6 reduced to its /64).
+func (h *IPHasher) Sum(a netip.Addr) [32]byte { return h.SumPrefix(a, 64) }
+
+// SumPrefix is Sum with IPv6 addresses reduced to their /v6Bits instead, for
+// limits where one client may hold a wider prefix (a /56 is a typical
+// customer allocation).
+func (h *IPHasher) SumPrefix(a netip.Addr, v6Bits int) [32]byte {
 	m := hmac.New(sha256.New, h.key)
 	if a.Is6() && !a.Is4In6() {
-		p, _ := a.Prefix(64)
+		p, _ := a.Prefix(v6Bits)
 		a = p.Addr()
 	}
 	b, _ := a.MarshalBinary()

@@ -580,6 +580,47 @@ func TestLoginRotatesExistingSession(t *testing.T) {
 	}
 }
 
+// Audit 2026-11 A07-3: a browser does not send the SameSite=Strict session
+// cookie on the callback, which ends a redirect chain through the provider.
+// The session presented at /auth/login is still ended once sign-in succeeds,
+// and only then.
+func TestLoginEndsPresentedSessionWithoutCallbackCookie(t *testing.T) {
+	t.Parallel()
+	h := mustHarness(t, setup{})
+	h.login()
+	first := h.cookie(session.CookieName).Value
+	u, _ := url.Parse(h.srv.URL)
+	restore := func() {
+		h.client.Jar.SetCookies(u, []*http.Cookie{{Name: session.CookieName, Value: first, Path: "/"}})
+	}
+	drop := func() {
+		h.client.Jar.SetCookies(u, []*http.Cookie{{Name: session.CookieName, Value: "x", Path: "/", MaxAge: -1}})
+	}
+
+	h.op.Set(func(k *oidctest.Knobs) { k.AuthorizeError = "access_denied" })
+	cb := h.startFlow()
+	drop()
+	h.do(h.noRedirect(), http.MethodGet, cb)
+	restore()
+	if !h.loggedIn() {
+		t.Fatal("a canceled sign-in ended the session")
+	}
+
+	h.op.Set(func(k *oidctest.Knobs) { k.AuthorizeError = "" })
+	cb = h.startFlow()
+	drop()
+	if resp := h.do(h.noRedirect(), http.MethodGet, cb); resp.StatusCode != http.StatusOK {
+		t.Fatalf("callback status %d", resp.StatusCode)
+	}
+	if c := h.cookie(session.CookieName); c == nil || c.Value == first || !h.loggedIn() {
+		t.Fatal("no new session")
+	}
+	restore()
+	if h.loggedIn() {
+		t.Fatal("previous session survived sign-in")
+	}
+}
+
 func TestRevalidation(t *testing.T) {
 	t.Parallel()
 	t.Run("success rotates refresh token", func(t *testing.T) {
@@ -621,6 +662,11 @@ func TestRevalidation(t *testing.T) {
 			h.op.Set(func(k *oidctest.Knobs) { k.OmitIDTokenOnRefresh = true; k.RefreshSubject = "other" })
 		},
 	}
+	// Only a withdrawn role or required claim is a definitive loss of
+	// access: it marks the account and expires its share links (audit I-3,
+	// 2026-11b L-2). Every other failure (provider down, revoked refresh
+	// token, bad token, other subject) only ends the session.
+	losesAccess := map[string]bool{"role removed": true, "no id_token, userinfo lacks role": true}
 	for name, breakIt := range kill {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -629,11 +675,32 @@ func TestRevalidation(t *testing.T) {
 			if !h.loggedIn() {
 				t.Fatal("login failed")
 			}
+			users, err := h.st.ListUsers(t.Context())
+			if err != nil || len(users) != 1 {
+				t.Fatal(len(users), err)
+			}
+			uid := users[0].ID
+			shareID, _, err := h.st.CreateShare(t.Context(), &store.NewShare{OwnerID: uid, Size: 16, Parts: 1, Meta: make([]byte, 20),
+				ExpiresAt: h.clk.Now().Add(24 * time.Hour), TokenHash: make([]byte, 32), DefaultQuota: 1 << 30}, h.clk.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
 			sessCookie := h.cookie(session.CookieName).Value
 			breakIt(h)
 			h.clk.Add(16 * time.Minute)
 			if h.loggedIn() {
 				t.Fatal("session survived failed revalidation")
+			}
+			active, err := h.st.AccountActive(t.Context(), uid)
+			if err != nil || active == losesAccess[name] {
+				t.Errorf("account active = %v (%v), want %v", active, err, !losesAccess[name])
+			}
+			var exp int64
+			if err := h.st.DB().R.QueryRowContext(t.Context(), `SELECT expires_at FROM shares WHERE id = ?`, shareID).Scan(&exp); err != nil {
+				t.Fatal(err)
+			}
+			if live := exp > h.clk.Now().Unix(); live == losesAccess[name] {
+				t.Errorf("share live = %v, want %v", live, !losesAccess[name])
 			}
 			// The row is gone, not just hidden.
 			u, _ := url.Parse(h.srv.URL)
@@ -710,6 +777,48 @@ func TestLogout(t *testing.T) {
 	}
 }
 
+// Audit 2026-11 A07-4: logout revokes the refresh token at the provider when
+// it advertises a revocation_endpoint, without waiting for it.
+func TestLogoutRevokesRefreshToken(t *testing.T) {
+	t.Parallel()
+	t.Run("advertised", func(t *testing.T) {
+		t.Parallel()
+		h := mustHarness(t, setup{})
+		h.login()
+		if resp := h.do(h.noRedirect(), http.MethodPost, h.srv.URL+"/auth/logout"); resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("status %d", resp.StatusCode)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for len(h.op.Revocations()) == 0 && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if got := h.op.Revocations(); len(got) != 1 || got[0] == "" {
+			t.Fatalf("revocations: %q", got)
+		}
+	})
+	t.Run("not advertised", func(t *testing.T) {
+		t.Parallel()
+		h := mustHarness(t, setup{discovery: func(d map[string]any) { delete(d, "revocation_endpoint") }})
+		h.login()
+		if resp := h.do(h.noRedirect(), http.MethodPost, h.srv.URL+"/auth/logout"); resp.StatusCode != http.StatusSeeOther || h.loggedIn() {
+			t.Fatal("logout failed")
+		}
+		if got := h.op.Revocations(); len(got) != 0 {
+			t.Fatalf("revocations: %q", got)
+		}
+	})
+	t.Run("endpoint down", func(t *testing.T) {
+		t.Parallel()
+		dead := httptest.NewServer(http.NotFoundHandler())
+		dead.Close()
+		h := mustHarness(t, setup{discovery: func(d map[string]any) { d["revocation_endpoint"] = dead.URL + "/revoke" }})
+		h.login()
+		if resp := h.do(h.noRedirect(), http.MethodPost, h.srv.URL+"/auth/logout"); resp.StatusCode != http.StatusSeeOther || h.loggedIn() {
+			t.Fatal("logout depends on revocation")
+		}
+	})
+}
+
 func TestFrontchannelLogout(t *testing.T) {
 	t.Parallel()
 	h := mustHarness(t, setup{})
@@ -764,6 +873,8 @@ func TestDiscoveryAndCapabilities(t *testing.T) {
 			d["token_endpoint_auth_signing_alg_values_supported"] = []string{"ES256"}
 		}}, wantErr: "client assertions"},
 		"no code response type": {s: setup{discovery: func(d map[string]any) { d["response_types_supported"] = []string{"id_token"} }}, wantErr: "code"},
+		// Audit 2026-11 I7: go-oidc reads discovery without a bound.
+		"oversized discovery": {s: setup{discovery: func(d map[string]any) { d["x_padding"] = strings.Repeat("a", 1<<20) }}, wantErr: "too large"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -797,6 +908,12 @@ func TestDiscoveryAndCapabilities(t *testing.T) {
 	}
 	if got := h.rp.FormActionOrigins(); len(got) != 1 {
 		t.Errorf("form-action origins: %v", got)
+	}
+
+	// A bad revocation_endpoint is dropped with a warning, not refused.
+	h = mustHarness(t, setup{discovery: func(d map[string]any) { d["revocation_endpoint"] = "/revoke" }})
+	if h.rp.Metadata().RevocationEndpoint != "" || !strings.Contains(strings.Join(h.warnings, "\n"), "revocation_endpoint") {
+		t.Errorf("invalid revocation_endpoint kept: %v", h.warnings)
 	}
 }
 

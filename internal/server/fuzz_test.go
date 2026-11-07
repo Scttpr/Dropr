@@ -17,8 +17,8 @@ func FuzzJSONRequests(f *testing.F) {
 	for _, s := range []string{
 		`{"size":1016,"parts":1,"meta":"` + meta() + `","expires_in":"1h","max_downloads":3}`,
 		`{"expires_in":"7d","max_files":2,"max_bytes":2032,"single_use":true}`,
-		`{"size":16,"parts":1,"meta":"AAAAAAAAAAAAAAAAAAAAAAA","wrapped_key":"` + b64t.EncodeToString(make([]byte, 80)) + `"}`,
-		`{"label_meta":"` + b64t.EncodeToString(make([]byte, 60)) + `"}`,
+		`{"size":16,"parts":1,"meta":"` + meta() + `","wrapped_key":"` + b64t.EncodeToString(make([]byte, 80)) + `"}`,
+		`{"label_meta":"` + b64t.EncodeToString(make([]byte, minLabel)) + `"}`,
 		`{"parts":3}`, `{} {}`, `[]`, `{"size":-1}`, `{"size":1e30}`,
 	} {
 		f.Add([]byte(s))
@@ -30,7 +30,7 @@ func FuzzJSONRequests(f *testing.F) {
 				if _, err := blob.NewGeometry(v.geo.Size, v.geo.Parts); err != nil || v.geo.Plain() > fuzzLimits.maxFileSize {
 					t.Fatalf("accepted bad geometry %+v", v.geo)
 				}
-				if len(v.meta) < minMeta || len(v.meta) > maxMeta || v.ttl <= 0 {
+				if !onBucket(len(v.meta)-blob.TagSize, maxMetaPadded) || v.ttl <= 0 {
 					t.Fatalf("accepted share %+v", v)
 				}
 				if v.maxDownloads != nil && *v.maxDownloads < 1 {
@@ -46,19 +46,57 @@ func FuzzJSONRequests(f *testing.F) {
 		}
 		var rf requestFileRequest
 		if httpx.DecodeJSONBytesFrom(bytes.NewReader(body), &rf) == nil {
-			if v, e := rf.validate(fuzzLimits); e == nil && len(v.wrappedKey) != wrappedKeyLen {
-				t.Fatal("accepted wrapped key length")
+			if v, e := rf.validate(fuzzLimits); e == nil && (len(v.wrappedKey) != wrappedKeyLen || !onBucket(len(v.meta)-blob.TagSize, maxMetaPadded)) {
+				t.Fatal("accepted wrapped key or meta length")
 			}
 		}
 		var lb labelRequest
 		if httpx.DecodeJSONBytesFrom(bytes.NewReader(body), &lb) == nil {
-			if l, e := lb.validate(); e == nil && (len(l) < minLabel || len(l) > maxLabel) {
+			if l, e := lb.validate(); e == nil && !onBucket(len(l)-labelOverhead, maxLabelPad) {
 				t.Fatal("accepted label length")
 			}
 		}
 		var fin finalizeRequest
 		_ = httpx.DecodeJSONBytesFrom(bytes.NewReader(body), &fin)
 	})
+}
+
+// onBucket reports whether n is a padded plaintext length: a power of two in
+// [padMin, maxLen] (audit 2026-11b L-8).
+func onBucket(n, maxLen int) bool {
+	for b := padMin; b <= maxLen; b *= 2 {
+		if n == b {
+			return true
+		}
+	}
+	return false
+}
+
+// Sealed metadata and labels are accepted only on a padded length (audit
+// 2026-11b L-8).
+func TestPaddedLengths(t *testing.T) {
+	for n := 0; n <= 2*maxMeta; n++ {
+		s := b64t.EncodeToString(make([]byte, n))
+		sh := shareRequest{Size: blob.CipherSize(1), Parts: 1, Meta: s}
+		_, e := sh.validate(fuzzLimits)
+		if want := onBucket(n-blob.TagSize, maxMetaPadded); (e == nil) != want {
+			t.Errorf("meta %d bytes: accepted %v, want %v", n, e == nil, want)
+		}
+		_, e = (&labelRequest{LabelMeta: s}).validate()
+		if want := onBucket(n-labelOverhead, maxLabelPad); (e == nil) != want {
+			t.Errorf("label_meta %d bytes: accepted %v, want %v", n, e == nil, want)
+		}
+	}
+	for _, n := range []int{144, 272, 528} {
+		if !onBucket(n-blob.TagSize, maxMetaPadded) {
+			t.Errorf("meta %d not a bucket", n)
+		}
+	}
+	for _, n := range []int{176, 304} {
+		if !onBucket(n-labelOverhead, maxLabelPad) {
+			t.Errorf("label_meta %d not a bucket", n)
+		}
+	}
 }
 
 func FuzzPartNumber(f *testing.F) {

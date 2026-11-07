@@ -23,7 +23,7 @@ import { attachDropZone } from "./lib/dropzone.ts";
 import { expiryChoiceText, formatBytes, formatInteger } from "./lib/format.ts";
 import { t } from "./lib/i18n.ts";
 import { showLink } from "./lib/linkview.ts";
-import { requestKeysFor, requestPersistence } from "./lib/request-keys.ts";
+import { KeyIdTakenError, requestKeysFor, requestPersistence } from "./lib/request-keys.ts";
 import { isAbortError } from "./lib/retry.ts";
 import { ProgressPanel, runUploadWithPanel } from "./lib/transfer-ui.ts";
 import { Uploader } from "./lib/uploader.ts";
@@ -202,8 +202,10 @@ function initRequest(main: HTMLElement): void {
       try {
         await requestKeys.put(request_id, key);
       } catch (e) {
-        // Never hand out a link whose files nobody could open.
-        void api.deleteRequest(request_id).catch(() => undefined);
+        // Never hand out a link whose files nobody could open. But if the ID
+        // is already taken, it names an existing link: leave it alone
+        // (audit 2026-11b L-7).
+        if (!(e instanceof KeyIdTakenError)) void api.deleteRequest(request_id).catch(() => undefined);
         throw e;
       }
       void requestPersistence();

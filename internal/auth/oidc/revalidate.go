@@ -49,7 +49,11 @@ func (p *Provider) Revalidate(ctx context.Context, s *session.Session) (*session
 	if err := p.refresh(ctx, cur); err != nil {
 		if (errors.Is(err, ErrRoleMissing) || errors.Is(err, ErrClaimMismatch)) && cur.User != nil {
 			// The provider withdrew access: request links stop accepting
-			// uploads until the next successful login (audit I-3).
+			// uploads until the next successful login (audit I-3) and share
+			// links expire for good (audit 2026-11b L-2). Only this definitive
+			// answer counts: a provider that is down, a rejected refresh token
+			// (invalid_grant also means an ended SSO session), a bad token or
+			// another subject end the session and nothing else.
 			if lerr := p.st.MarkAccessLost(context.WithoutCancel(ctx), cur.User.Issuer, cur.User.Subject, p.now()); lerr != nil {
 				err = errors.Join(err, lerr)
 			}

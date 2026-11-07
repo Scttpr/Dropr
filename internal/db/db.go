@@ -143,19 +143,53 @@ func (d *DB) Tx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 }
 
 // Backup writes a consistent, compacted copy of the live database to dest
-// using VACUUM INTO. dest must not exist.
+// using VACUUM INTO. dest must not exist. The copy is written inside a fresh
+// 0700 directory next to dest and made 0600 before it is moved into place, so
+// it is never readable under the process umask while it is written (audit
+// 2026-11 L-10).
 func (d *DB) Backup(ctx context.Context, dest string) error {
 	abs, err := filepath.Abs(dest)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(abs); err == nil {
+	if _, err := os.Lstat(abs); err == nil {
 		return fmt.Errorf("db: backup destination %s already exists", abs)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if _, err := d.W.ExecContext(ctx, "VACUUM INTO ?", abs); err != nil {
+	dir, err := os.MkdirTemp(filepath.Dir(abs), ".dropr-backup-")
+	if err != nil {
 		return fmt.Errorf("db: backup: %w", err)
 	}
-	return os.Chmod(abs, 0o600)
+	defer func() { _ = os.RemoveAll(dir) }()
+	tmp := filepath.Join(dir, "backup.db")
+	if _, err := d.W.ExecContext(ctx, "VACUUM INTO ?", tmp); err != nil {
+		return fmt.Errorf("db: backup: %w", err)
+	}
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		return fmt.Errorf("db: backup: %w", err)
+	}
+	return placeNew(tmp, abs)
+}
+
+// placeNew moves src to dst without replacing an existing dst: a hard link
+// fails if dst exists. File systems without hard links fall back to a rename
+// after a fresh existence check.
+func placeNew(src, dst string) error {
+	err := os.Link(src, dst)
+	switch {
+	case err == nil:
+		return os.Remove(src)
+	case errors.Is(err, os.ErrExist):
+		return fmt.Errorf("db: backup destination %s already exists", dst)
+	}
+	if _, serr := os.Lstat(dst); serr == nil {
+		return fmt.Errorf("db: backup destination %s already exists", dst)
+	} else if !errors.Is(serr, os.ErrNotExist) {
+		return serr
+	}
+	if err := os.Rename(src, dst); err != nil {
+		return fmt.Errorf("db: backup: %w", err)
+	}
+	return nil
 }

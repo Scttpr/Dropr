@@ -1,0 +1,20 @@
+# Weekly dependency update PRs (audit 2026-11b L-6).
+# Go and web/ updates change the fixed-output hashes in nix/hashes.nix:
+# run `make hashes` on the PR branch (CONTRIBUTING.md).
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: npm
+    directory: /web
+    schedule: { interval: weekly }
+  - package-ecosystem: npm
+    directory: /e2e
+    schedule: { interval: weekly }
+    ignore:
+      # Must equal the nixpkgs playwright-driver version (flake.nix).
+      - dependency-name: "@playwright/test"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

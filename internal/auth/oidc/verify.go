@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"time"
@@ -164,7 +165,8 @@ func decodeClaims(b []byte) (map[string]any, error) {
 	if err := d.Decode(&m); err != nil {
 		return nil, fmt.Errorf("oidc: decode claims: %w", err)
 	}
-	if d.More() {
+	// d.More() would accept a stray "}" or "]" (audit 2026-11 A03-2).
+	if _, err := d.Token(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("oidc: trailing data after claims")
 	}
 	if m == nil {

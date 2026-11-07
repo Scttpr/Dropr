@@ -3,8 +3,12 @@
  *
  * ```
  * meta = AES-256-GCM(MK, nonce = 0x00{12}, aad = "dropr/v1 meta",
- *                    UTF-8 JSON {"name": string, "type": string, "size": number})
+ *                    pad(UTF-8 JSON {"name": string, "type": string, "size": number}))
  * ```
+ *
+ * `pad` (pad.ts, FORMAT.md §7) zero-fills the JSON to 128, 256 or 512 bytes,
+ * so the ciphertext length reveals only that bucket, not the exact name and
+ * type lengths (audit 2026-11b L-8).
  *
  * The all-zero nonce is safe because MK is derived from a fresh random file
  * key and encrypts exactly one message (see FORMAT.md §8.1).
@@ -22,10 +26,16 @@
 
 import { type Bytes, subtle, utf8 } from "./bytes.ts";
 import { DecryptionError, FormatError } from "./errors.ts";
+import { pad, unpad } from "./pad.ts";
 import { MAX_PLAINTEXT_SIZE } from "./stream.ts";
 
+/**
+ * Largest padded metadata plaintext. The longest canonical JSON (255-byte
+ * name, 127-byte type, 16-digit size) is 427 bytes, so it always fits.
+ */
+export const MAX_META_PADDED = 512;
 /** Maximum sealed metadata size in bytes (ciphertext ‖ tag), as stored by the server. */
-export const MAX_META_SIZE = 4096;
+export const MAX_META_SIZE = MAX_META_PADDED + 16;
 /** Maximum file name length, in UTF-8 bytes (common filesystem limit). */
 export const MAX_NAME_BYTES = 255;
 /** Name used when sanitization leaves nothing. */
@@ -133,8 +143,7 @@ function checkSize(size: unknown): size is number {
 export async function sealMeta(mk: CryptoKey, meta: FileMeta): Promise<Bytes> {
   if (!checkSize(meta.size)) throw new FormatError("invalid size");
   const json = JSON.stringify({ name: sanitizeFileName(meta.name), type: sanitizeMediaType(meta.type), size: meta.size });
-  const pt = utf8(json);
-  if (pt.length + TAG_SIZE > MAX_META_SIZE) throw new FormatError("metadata too large");
+  const pt = pad(utf8(json), MAX_META_PADDED); // JSON text never holds a raw 0x00
   const ct = await subtle.encrypt({ name: "AES-GCM", iv: zeroNonce(), additionalData: META_AAD }, mk, pt);
   return new Uint8Array(ct);
 }
@@ -147,8 +156,9 @@ export async function sealMeta(mk: CryptoKey, meta: FileMeta): Promise<Bytes> {
  * @param expectedSize - if given, the plaintext size implied by the blob's
  *   ciphertext size ({@link plaintextSize}); a mismatch is rejected so the
  *   displayed size cannot lie about the actual content.
- * @throws {FormatError} if `sealed` exceeds {@link MAX_META_SIZE}, or the
- *   authenticated JSON is malformed or inconsistent with `expectedSize`.
+ * @throws {FormatError} if `sealed` exceeds {@link MAX_META_SIZE}, the
+ *   padding is not canonical, or the authenticated JSON is malformed or
+ *   inconsistent with `expectedSize`.
  * @throws {DecryptionError} if authentication fails.
  */
 export async function openMeta(mk: CryptoKey, sealed: Uint8Array, expectedSize?: number): Promise<FileMeta> {
@@ -161,9 +171,13 @@ export async function openMeta(mk: CryptoKey, sealed: Uint8Array, expectedSize?:
   } catch {
     throw new DecryptionError();
   }
+  const json = unpad(pt, MAX_META_PADDED);
+  // Exactly one JSON object, no surrounding whitespace: the only encoding
+  // sealMeta produces.
+  if (json[0] !== 0x7b || json[json.length - 1] !== 0x7d) throw new FormatError("invalid metadata");
   let v: unknown;
   try {
-    v = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(pt));
+    v = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(json));
   } catch {
     throw new FormatError("invalid metadata");
   }

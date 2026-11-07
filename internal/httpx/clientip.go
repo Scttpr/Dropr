@@ -33,7 +33,9 @@ func WithClientIP(ctx context.Context, a netip.Addr) context.Context {
 // socket file, i.e. the reverse proxy). For a trusted peer, X-Forwarded-For is
 // walked from right to left, skipping trusted proxies; the first untrusted
 // address is the client. Unparseable entries stop the walk so a client cannot
-// smuggle an arbitrary address past the proxy chain. X-Forwarded-Proto and
+// smuggle an arbitrary address past the proxy chain. Entries carrying a port
+// ("1.2.3.4:5678", "[2001:db8::1]:443", as some proxies append) are accepted
+// for their address (audit 2026-11b L-5). X-Forwarded-Proto and
 // X-Forwarded-Host are never used: public_url is authoritative.
 type IPResolver struct {
 	Trusted []netip.Prefix
@@ -43,25 +45,49 @@ type IPResolver struct {
 
 // Resolve returns the client address for r (invalid if undeterminable).
 func (res IPResolver) Resolve(r *http.Request) netip.Addr {
+	a, _ := res.resolve(r)
+	return a
+}
+
+// resolve is Resolve; bad reports that a trusted proxy sent an
+// X-Forwarded-For entry that could not be parsed, which ended the walk.
+func (res IPResolver) resolve(r *http.Request) (client netip.Addr, bad bool) {
 	peer, isUnix := peerAddr(r.RemoteAddr)
 	trustedPeer := (isUnix && res.TrustUnixPeer) || (peer.IsValid() && res.trusted(peer))
 	if !trustedPeer {
-		return peer
+		return peer, false
 	}
 	entries := forwardedFor(r.Header.Values("X-Forwarded-For"))
-	client := peer
+	client = peer
 	for i := len(entries) - 1; i >= 0; i-- {
-		a, err := netip.ParseAddr(strings.TrimSpace(entries[i]))
-		if err != nil {
-			break
+		a, ok := parseForwarded(entries[i])
+		if !ok {
+			return client, true
 		}
-		a = a.Unmap().WithZone("")
 		client = a
 		if !res.trusted(a) {
-			return a
+			return a, false
 		}
 	}
-	return client
+	return client, false
+}
+
+// parseForwarded parses one X-Forwarded-For entry: a bare address, a
+// bracketed IPv6 address, or either with a port (audit 2026-11b L-5).
+func parseForwarded(e string) (netip.Addr, bool) {
+	e = strings.TrimSpace(e)
+	a, err := netip.ParseAddr(e)
+	if err != nil {
+		if ap, perr := netip.ParseAddrPort(e); perr == nil {
+			a, err = ap.Addr(), nil
+		} else if len(e) > 2 && e[0] == '[' && e[len(e)-1] == ']' {
+			a, err = netip.ParseAddr(e[1 : len(e)-1])
+		}
+	}
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return a.Unmap().WithZone(""), true
 }
 
 func (res IPResolver) trusted(a netip.Addr) bool {
@@ -112,13 +138,20 @@ func peerAddr(remote string) (netip.Addr, bool) {
 // logger, it warns once when the setup looks wrong (audit L-1): a request
 // whose client address cannot be determined (a unix-socket proxy that sends
 // no X-Forwarded-For), or X-Forwarded-For arriving from a peer that is not a
-// trusted proxy (trusted_proxies missing the proxy's address).
+// trusted proxy (trusted_proxies missing the proxy's address), or a trusted
+// proxy sending X-Forwarded-For entries that cannot be parsed (audit 2026-11
+// L-5).
 func RealIP(res IPResolver, log *slog.Logger) func(http.Handler) http.Handler {
-	var noAddr, untrusted sync.Once
+	var noAddr, untrusted, unparsable sync.Once
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			a := res.Resolve(r)
+			a, bad := res.resolve(r)
 			if log != nil {
+				if bad {
+					unparsable.Do(func() {
+						log.Warn("a trusted proxy sent an X-Forwarded-For entry that is not an IP address (or ip:port); such clients get the proxy's address and share its rate-limit bucket; check the reverse proxy's X-Forwarded-For format")
+					})
+				}
 				if !a.IsValid() {
 					noAddr.Do(func() {
 						log.Warn("cannot determine client addresses: all such clients share one rate-limit bucket; check that the reverse proxy sets X-Forwarded-For and that trusted_proxies / trust_unix_socket_proxy is set")

@@ -211,10 +211,13 @@ func (d *deadlineWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// ProgressReader wraps a request body and pushes the read deadline forward
-// while bytes arrive (uploads of one 32 MiB part over a slow link). With
-// MinRate > 0 it fails with ErrTooSlow once a whole RateWindow brought fewer
-// than MinRate bytes per second.
+// ProgressReader wraps a request body and pushes the read and write
+// deadlines forward while bytes arrive (uploads of one 32 MiB part over a
+// slow link). The write deadline must slide too: HTTP/2 resets the stream
+// when it passes, even mid-body, and HTTP/1.1 could not send the reply
+// (audit 2026-11b L-1). Callers set a final write deadline once the body is
+// read. With MinRate > 0 it fails with ErrTooSlow once a whole RateWindow
+// brought fewer than MinRate bytes per second.
 type ProgressReader struct {
 	R       io.Reader
 	RC      *http.ResponseController
@@ -228,6 +231,7 @@ type ProgressReader struct {
 func (p *ProgressReader) Read(b []byte) (int, error) {
 	if now := time.Now(); now.Sub(p.last) > p.Timeout/8 {
 		_ = p.RC.SetReadDeadline(now.Add(p.Timeout))
+		_ = p.RC.SetWriteDeadline(now.Add(p.Timeout))
 		p.last = now
 	}
 	n, err := p.R.Read(b)

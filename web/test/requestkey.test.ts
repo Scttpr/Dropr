@@ -12,6 +12,19 @@ const EMPTY = new Uint8Array(0);
 const REQUEST_ID = "q83vEjRWeJq8Ad7tEjRWeA";
 const OTHER_ID = "q83vEjRWeJq8Ad7tEjRWeQ";
 
+/** HPKE-seal raw label plaintext exactly like sealRequestLabel, minus the padding. */
+async function craft(publicKey: Uint8Array, pt: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
+  const { enc, ct } = await seal(publicKey, utf8("dropr/v1 label " + REQUEST_ID), EMPTY, pt);
+  return new Uint8Array([...enc, ...ct]);
+}
+
+/** `content` followed by zeros up to `len` bytes. */
+function zeroPadded(content: Uint8Array, len: number): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(len);
+  out.set(content);
+  return out;
+}
+
 describe("request key pair", () => {
   it("is a fresh X25519 pair whose private key cannot be exported", async () => {
     const kp = await generateRequestKeyPair();
@@ -40,11 +53,11 @@ describe("request label", () => {
   it("round-trips, bound to info \"dropr/v1 label \" ‖ requestId", async () => {
     const kp = await generateRequestKeyPair();
     const sealed = await sealRequestLabel(kp.publicKey, REQUEST_ID, "Invoices – Q3 ✓");
-    assert.equal(sealed.length, 32 + utf8("Invoices – Q3 ✓").length + 16);
+    assert.equal(sealed.length, 32 + 128 + 16, "padded to the smallest bucket");
     assert.equal(await openRequestLabel(kp, REQUEST_ID, sealed), "Invoices – Q3 ✓");
     // Byte layout cross-check against raw HPKE.
     const raw = await open(kp, sealed.subarray(0, 32), utf8("dropr/v1 label " + REQUEST_ID), EMPTY, sealed.subarray(32));
-    assert.equal(new TextDecoder().decode(raw), "Invoices – Q3 ✓");
+    assert.deepEqual(raw, zeroPadded(utf8("Invoices – Q3 ✓"), 128));
   });
 
   it("is domain-separated from file keys and bound to its request and key pair", async () => {
@@ -63,15 +76,39 @@ describe("request label", () => {
   it("limits labels to 1..256 UTF-8 bytes and checks the request id", async () => {
     const kp = await generateRequestKeyPair();
     const max = "é".repeat(MAX_LABEL_BYTES / 2);
-    assert.equal(await openRequestLabel(kp, REQUEST_ID, await sealRequestLabel(kp.publicKey, REQUEST_ID, max)), max);
+    const sealedMax = await sealRequestLabel(kp.publicKey, REQUEST_ID, max);
+    assert.equal(sealedMax.length, 32 + 256 + 16);
+    assert.equal(await openRequestLabel(kp, REQUEST_ID, sealedMax), max);
     await assert.rejects(sealRequestLabel(kp.publicKey, REQUEST_ID, max + "a"), FormatError);
     await assert.rejects(sealRequestLabel(kp.publicKey, REQUEST_ID, ""), FormatError);
     await assert.rejects(sealRequestLabel(kp.publicKey, "short", "label"), FormatError);
+    await assert.rejects(sealRequestLabel(kp.publicKey, REQUEST_ID, "a\u0000b"), FormatError, "NUL is the padding byte");
+  });
+
+  it("pads to 128 or 256 bytes, so label_meta is 176 or 304 bytes (audit 2026-11b L-8)", async () => {
+    const kp = await generateRequestKeyPair();
+    for (let n = 1; n <= MAX_LABEL_BYTES; n++) {
+      const sealed = await sealRequestLabel(kp.publicKey, REQUEST_ID, "x".repeat(n));
+      assert.equal(sealed.length, n <= 128 ? 176 : 304, `label ${n}`);
+    }
+  });
+
+  it("rejects non-canonical padding", async () => {
+    const kp = await generateRequestKeyPair();
+    const label = utf8("label");
+    assert.equal(await openRequestLabel(kp, REQUEST_ID, await craft(kp.publicKey, zeroPadded(label, 128))), "label");
+    await assert.rejects(openRequestLabel(kp, REQUEST_ID, await craft(kp.publicKey, zeroPadded(label, 200))), FormatError, "not a bucket");
+    await assert.rejects(openRequestLabel(kp, REQUEST_ID, await craft(kp.publicKey, zeroPadded(label, 256))), FormatError, "larger bucket than needed");
+    const nonZero = zeroPadded(label, 128);
+    nonZero[127] = 0x61;
+    await assert.rejects(openRequestLabel(kp, REQUEST_ID, await craft(kp.publicKey, nonZero)), FormatError, "non-zero pad byte");
+    await assert.rejects(openRequestLabel(kp, REQUEST_ID, await craft(kp.publicKey, new Uint8Array(128))), FormatError, "empty label");
+    await assert.rejects(openRequestLabel(kp, REQUEST_ID, await craft(kp.publicKey, label)), DecryptionError, "unpadded: bad length");
   });
 
   it("rejects a label that is not valid UTF-8", async () => {
     const kp = await generateRequestKeyPair();
-    const { enc, ct } = await seal(kp.publicKey, utf8("dropr/v1 label " + REQUEST_ID), EMPTY, Uint8Array.of(0xff, 0xfe));
-    await assert.rejects(openRequestLabel(kp, REQUEST_ID, new Uint8Array([...enc, ...ct])), DecryptionError);
+    const sealed = await craft(kp.publicKey, zeroPadded(Uint8Array.of(0xff, 0xfe), 128));
+    await assert.rejects(openRequestLabel(kp, REQUEST_ID, sealed), DecryptionError);
   });
 });

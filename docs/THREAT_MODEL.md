@@ -102,20 +102,20 @@ Trust boundaries, in order of importance:
 | Database or disk thief | Reads SQLite and blobs, no secrets | Ciphertext, sizes, timestamps, HPKE-wrapped file keys, encrypted refresh tokens, hashes. No plaintext, no names, no private keys | E2E encryption; refresh tokens under `refresh_key`; session IDs and tokens stored as hashes |
 | Database + `refresh_key` thief | Above plus secrets | Can use refresh tokens against the IdP while they are valid (impersonation toward IdP, up to the token lifetime). Still cannot read files | Store `refresh_key` apart from the database and its backups; on a leak rotate it and revoke sessions at the IdP ([ARCHITECTURE §5](ARCHITECTURE.md#5-config-droprtoml)) |
 | Stolen IdP credentials | Logs in as the owner from their own browser | Can create shares, see link metadata, revoke links and delete files. Can create *new* request links, whose keys then live in the attacker's browser (R15). **Cannot read files received through the owner's existing links**: their keys are only in the owner's browser profile | MFA / phishing-resistant Conditional Access at the IdP; link keys never leave the browser that created them |
-| Stolen session cookie | Acts as the owner until expiry | Same as stolen IdP credentials | `__Host-`, HttpOnly, Secure, SameSite=Strict; 30 min idle, 8 h absolute, 15 min revalidation; `dropr user revoke` |
+| Stolen session cookie | Acts as the owner until expiry | Same as stolen IdP credentials | `__Host-`, HttpOnly, Secure, SameSite=Strict; 30 min idle, 8 h absolute, 15 min revalidation; `dropr user revoke` / `disable` (also expire the owner's share links) |
 | Malicious IdP admin / compromised IdP | Mints tokens for any user | Same as stolen IdP credentials, for every owner. Cannot read inboxes without the owners' browser profiles. Can mint tokens for new `sub`s | Issuer pinning, `required_claims`, role check; monitor `user list` |
 | Control of the owner's browser profile | Device access, malware, a malicious extension, or XSS in a Dropr page | Can *use* the link keys stored there to decrypt received files while it has control; cannot export them (non-extractable), so the access ends with the control | OS account lock, full-disk encryption, no shared OS accounts; CSP and Trusted Types against XSS (R16) |
-| Departed user | Valid account until disabled | Session dies at next revalidation (at most 15 min); their request links stop accepting uploads once a revalidation or login found the role missing, or after `dropr user revoke` | Role removal / disable at IdP; `dropr user revoke` for immediate effect |
+| Departed user | Valid account until disabled | Session dies at next revalidation (at most 15 min). Once a revalidation or login found the role missing, or after `dropr user revoke` or `dropr user disable`, their share links expire for good (share uploads in progress die with them) and their request links stop accepting uploads; request uploads already started can finish | Role removal / disable at IdP, then `dropr user disable` (local lockout) or `dropr user revoke` (not a lockout: the next login with the role reopens the request links, R10). `dropr user purge` deletes their links and files |
 | Holder of a share link | Anyone the link reached | Reads the file until expiry, revocation or download limit | Mandatory expiry (1 h to 30 d), `max_downloads` (each counted token serves at most 2 × size + min(size, 1 MiB) bytes), revocation deletes blobs. Operators should educate users: the link is the secret |
 | Holder of a request link | Anyone | Uploads to that owner's inbox up to caps; learns the owner's display name and the link's public key | `max_files`, `max_bytes`, `single_use`, expiry, per-IP rate limit, owner quota, disk-space check |
 | Malicious uploader | Crafts files and metadata | Cannot affect other owners. Content is never rendered. Can try to exhaust quota or inject hostile file names | Files are saved as downloads, never displayed; metadata sanitized and size-capped (FORMAT §5); caps |
-| Malicious owner (insider with role) | Authenticated | Can fill disk up to own quota; can share illegal content (the server cannot see it) | Per-user quota, `max_file_size`, disk-space check. Content policy is an operator/legal matter (section 7) |
+| Malicious owner (insider with role) | Authenticated | Can fill disk up to own quota; can share illegal content (the server cannot see it) | Per-user quota, `max_file_size`, disk-space check; per-user owner write limit (300/min) and object caps (5000 live shares, 5000 live request links, 500 open incomplete request uploads), which also bound database growth outside the quota. Content policy is an operator/legal matter (section 7) |
 | Compromised Dropr server / malicious operator | Controls code and data | **Can deliver malicious JS that uses the stored link keys and steals plaintext (R1).** Can read all metadata, delete data, inject inbox entries | Minimal JS, no third-party code, CSP, reproducible build, published hashes (SECURITY.md); external users verify the bundle |
 | Supply-chain attacker | Poisons a dependency | Same as a compromised server, at build time | Zero runtime JS dependencies; pinned, locked dev dependencies (`package-lock.json`, `go.sum`); Nix build with fixed-output hashes; `govulncheck`, `npm audit`; signed tags and checksums |
 | Cross-site attacker | Web page in the victim's browser | Cannot make state-changing requests as the user | `SameSite=Strict`, `Sec-Fetch-Site`/`Origin` checks on all non-GET requests, CSP `form-action`, `frame-ancestors 'none'` |
 | XSS attacker | Injects script into a Dropr page | Would equal R1 for the victim's browser: can use (not export) its link keys | `html/template` auto-escaping, no inline scripts or styles, strict CSP (`script-src 'self'`, Trusted Types required), uploaded content never rendered |
 | Brute-force / enumeration | Guesses IDs | Infeasible | 128-bit random IDs; rate limits; uniform 404 for unknown and expired links |
-| Resource-exhaustion attacker | Slowloris, trickling transfers, huge bodies, many uploads | Service degradation | Server timeouts, minimum transfer rate (4 KiB/s over 60 s), concurrent transfer caps (512 total, 32 per address), per-route body limits, rate limits, quotas, disk reservation for uploads in progress, 24 h GC of incomplete uploads |
+| Resource-exhaustion attacker | Slowloris, trickling transfers, huge bodies, many uploads | Service degradation | Server timeouts, minimum transfer rate (4 KiB/s over 60 s), concurrent transfer caps (512 total, 32 per address with IPv6 keyed on the /56, 6 per upload or download token), per-route body limits, rate limits, per-user owner write limit, object caps (100 open incomplete uploads per request link, 500 per owner), quotas, disk reservation for uploads in progress, 24 h GC of incomplete uploads. Residual: the open-upload caps count uploads, not bytes, so one request link can still reserve up to 100 × `max_file_size` (within the link's `max_bytes` and the owner's quota) for 24 h with no bytes sent |
 
 ## 5. STRIDE by component
 
@@ -130,6 +130,7 @@ D = denial of service, E = elevation of privilege.
 | T | Server swaps the public key in a request link | The link is built from the public key generated and stored in the owner's browser, never from a server value | `web/src/lib/request-keys.ts`, `web/src/dashboard.ts`, `web/src/links.ts`, FORMAT §8.8 |
 | T | Server moves an inbox file to another request | `requestId` bound in HPKE `info` | `web/src/crypto/hpke.ts` |
 | I | Private key exfiltrated by page script | Generated non-extractable (`extractable = false`): `exportKey` and `wrapKey` fail, even for Dropr's own code; a script can only *use* it in the page | `web/src/lib/request-keys.ts`, FORMAT §8.9 |
+| D | Server makes the browser drop or replace link keys: a listing that omits live links (malicious server, bug, database restored from an old backup) prunes their keys; a create response that reuses an existing request ID | Pruning only touches the signed-in account's records older than 60 s before the listing; a stored record is never overwritten (`add`, not `put`): creation fails with an error and the existing link is left alone (audit 2026-11b L-7). Pruning on the server's word is accepted (R17) | `web/src/lib/request-keys.ts`, `web/src/dashboard.ts` |
 | D | Link keys lost (site data cleared, profile deleted, device lost) or evicted | **By design the files received through those links are unreadable** (DESIGN.md §2); `navigator.storage.persist()` requested at link creation; the dashboard and the links page say keys are browser-bound; a link is never handed out if storing its key failed | `web/src/lib/request-keys.ts`, `web/src/dashboard.ts` |
 | I | Fragment leaks through Referer or requests | `Referrer-Policy: no-referrer`; the fragment is never put in a request URL, API call or log | `internal/httpx/headers.go`, `web/src/lib/linkview.ts` |
 | I | Hostile file names attack the UI or filesystem, or spoof an extension | Names decrypted client-side, treated as text, sanitized: controls, bidi and all default-ignorable characters (Hangul fillers, Braille blank, soft hyphen…) removed, runs of spaces of any width collapsed to one, path and Windows-reserved characters replaced, length capped | `web/src/lib/decrypt-names.ts`, FORMAT §5 |
@@ -140,20 +141,20 @@ D = denial of service, E = elevation of privilege.
 
 | | Threat | Mitigation | Code |
 |---|---|---|---|
-| S | Forged or replayed ID token | Signature against discovered JWKS (asymmetric only; never `none` or HS*), `iss`, `aud`, `azp`, `exp`/`nbf`/`iat`, `nonce`, `required_claims` | `internal/auth/oidc` |
+| S | Forged or replayed ID token | Signature against discovered JWKS (asymmetric only; never `none` or HS*), `iss`, `aud`, `azp`, `exp`/`nbf`/`iat`, `nonce`, `required_claims`. Discovery, JWKS and token/userinfo response bodies capped at 1 MiB | `internal/auth/oidc` |
 | S | Authorization-code injection, login CSRF | PKCE S256, `state` and `nonce` in a sealed `__Host-` cookie, deleted at callback | `internal/auth/oidc/handlers.go`, `internal/seal` |
 | S | Tokens from another tenant or issuer | Single pinned issuer; multi-tenant and templated issuers refused; `tid` check for Entra | `internal/config/config.go` |
 | S | Client impersonation toward the IdP | `private_key_jwt`; client secret only in dev mode | `internal/auth/oidc/assertion.go`, `internal/config` |
-| S | Identity confusion via email or name | Identity is `(iss, sub)`; other claims display-only (control characters stripped in CLI) | `internal/store/users.go`, `cmd/dropr/main.go` |
+| S | Identity confusion via email or name | Identity is `(iss, sub)`; other claims display-only. Display names (shown on the anonymous request page) are stripped of controls, bidi, invisible and other default-ignorable characters, with runs of spaces collapsed (no NFC normalization); control characters stripped in CLI output | `internal/store/users.go`, `cmd/dropr/main.go` |
 | E | User without the role | Role claim checked at login and every revalidation; no account is created on denial | `internal/auth/oidc` |
-| E | Session outlives revoked access | Refresh every `revalidate_every` (max 1 h, default 15 min); refresh failure, `sub` change or lost role kills the session; front-channel logout; `dropr user revoke` | `internal/auth/session`, `internal/auth/oidc` |
-| R | No record of who did what | Structured request logs with route, status, request ID and a keyed IP hash; admin actions are CLI-only and visible in the host's shell audit | `internal/httpx/middleware.go` |
+| E | Session outlives revoked access | Refresh every `revalidate_every` (max 1 h, default 15 min); refresh failure, `sub` change or lost role kills the session; front-channel logout (needs `sid` in ID tokens; a WARN is logged once if it is missing); `dropr user revoke`; `dropr user disable` (local lockout: login and session load refuse the account). Logout also revokes the refresh token at the IdP when discovery advertises a `revocation_endpoint` (best effort, asynchronous); `dropr user revoke`, `disable` and failed revalidation only drop it locally | `internal/auth/session`, `internal/auth/oidc` |
+| R | No record of who did what | Structured request logs with route, status, request ID, a keyed IP hash and, for signed-in requests, the user ID; other log lines written while serving a request (login, logout, denials) carry its request ID; admin CLI actions (`user revoke`, `disable`, `enable`, `purge`, `migrate`) write a WARN `admin action` line to stderr with the acting Unix UID and the user ID (`migrate`: old and new issuer and subject) | `internal/httpx/middleware.go`, `cmd/dropr/main.go` |
 
 ### 5.3 Sessions (`internal/auth/session`)
 
 | | Threat | Mitigation |
 |---|---|---|
-| S | Session fixation or theft from the database | 256-bit random ID; only its SHA-256 stored; ID rotated at login |
+| S | Session fixation or theft from the database | 256-bit random ID; only its SHA-256 stored; ID rotated at login; signing in again deletes the browser's previous session (its hash rides in the sealed OIDC state cookie; a cancelled or refused sign-in keeps it) |
 | I | Request link keys reached through the server (stolen database, stolen login, compromised IdP) | The server never holds a private key, wrapped or not: there is nothing to steal or unwrap there |
 | I | Another account signed in on the same browser profile | Records carry the owning account's ID (`ownerId`); the pages only list, use and prune the signed-in account's records, and the server lists only that owner's requests and inbox, so another account never gets the files to open nor deletes the first account's keys. This is an app-level scope, not a security boundary: every record is readable by any script of the origin. Logout does not delete keys: on a shared OS account the next user of the profile controls them (R16) |
 | T | Session rotation racing revalidation loses a rotated refresh token | Rotation takes the same per-session lock as revalidation and copies the refresh token from the row as stored inside its transaction |
@@ -166,8 +167,8 @@ D = denial of service, E = elevation of privilege.
 | T | Clickjacking | `frame-ancestors 'none'`, `X-Frame-Options: DENY` | `internal/httpx/headers.go` |
 | I | Cached sensitive responses | `Cache-Control: no-store` on pages with links and on the API | `internal/httpx/headers.go` |
 | I | Spoofed client IP via forwarded headers | `X-Forwarded-For` trusted only from `trusted_proxies` (or a `unix:` socket peer with `trust_unix_socket_proxy`); IPs only logged as keyed hashes | `internal/httpx/clientip.go` |
-| D | Every client behind a misconfigured proxy shares one rate-limit bucket (one client locks out sign-in for all) | Production refuses proxy mode without `trusted_proxies` (TCP) or `trusted_proxies`/`trust_unix_socket_proxy` (unix socket); dev warns; runtime warnings for undeterminable addresses and untrusted X-Forwarded-For | `internal/config/config.go` |
-| D | Slowloris, trickling transfers, oversized bodies, floods | `ReadHeaderTimeout`, idle timeout, header limits, per-route body limits, in-memory rate limiting, minimum transfer rate, concurrent transfer caps | `internal/httpx/ratelimit.go`, `internal/httpx/streams.go`, `internal/blob/serve.go`, `internal/server/server.go` |
+| D | Every client behind a misconfigured proxy shares one rate-limit bucket (one client locks out sign-in for all) | Production refuses proxy mode without `trusted_proxies` (TCP) or `trusted_proxies`/`trust_unix_socket_proxy` (unix socket); dev warns; X-Forwarded-For entries with a port are parsed; runtime warnings for undeterminable addresses, untrusted X-Forwarded-For and unparsable entries from a trusted proxy | `internal/config/config.go` |
+| D | Slowloris, trickling transfers, oversized bodies, floods | `ReadHeaderTimeout`, idle timeout, header limits, per-route body limits, in-memory rate limiting (per IP, and per user on owner writes), minimum transfer rate, concurrent transfer caps (total, per address, per upload/download token), object caps per owner and per request link | `internal/httpx/ratelimit.go`, `internal/httpx/streams.go`, `internal/blob/serve.go`, `internal/server/server.go` |
 | I | Responses without security headers | Every handler response, including ServeMux redirects and 404/405, passes the header middleware. Only answers `net/http` writes before routing (400 on a malformed request line, 431 for oversized headers, plain-HTTP-to-HTTPS) lack them: they are fixed `text/plain` with nothing reflected (accepted) | `internal/httpx/headers.go` |
 | E | Reaching unlisted functionality | `ServeMux` patterns; anything not listed returns 404 | `internal/server/server.go` |
 
@@ -177,10 +178,10 @@ D = denial of service, E = elevation of privilege.
 |---|---|---|
 | T | Blob tampered on disk | Detected on decryption (per-segment GCM tags, STREAM final flag); nothing is released before authentication |
 | I | Disk theft | Ciphertext only; protect the host with full-disk encryption anyway (DB holds encrypted refresh tokens) |
-| I | Backups leak | `dropr backup` output has the same properties as the live database: protect it; blobs are already ciphertext |
+| I | Backups leak | `dropr backup` output has the same properties as the live database: protect it; blobs are already ciphertext. The copy is written in a fresh 0700 directory and linked into place, so it is never readable under the umask while being written; a symlink at `--out` is refused |
 | D | Disk filled by uploads | Free-space check before accepting that also reserves what the uploads in progress still have to write, per-owner quota, instance and per-link caps, GC of incomplete uploads after 24 h, expiry cleanup every 5 min |
 | T | A part replacing data after finalize (uploader changes a file the owner already saw) | Part rename and finalize serialized by a per-blob lock with a state re-check; parts arriving after finalize are discarded (409) |
-| I | Secret files readable by other local users | Warning if group/world-readable; production refuses world-readable (except `/run/credentials`, `/run/secrets`) |
+| I | Secret files readable by other local users | Warning if group/world-readable; production refuses world-readable (except files really under `/run/credentials`, `/run/secrets`: symlinks are resolved before the exemption applies). Production warns about a refresh key of 32 printable ASCII bytes (likely a passphrase) and about the committed TEST-ONLY client key |
 | E | Path traversal via IDs | IDs are fixed-length base64url from a strict parser; sharded directory layout derived from the ID only |
 | D | Orphaned blobs consume disk after purge | `dropr gc` reclaims them |
 
@@ -215,12 +216,16 @@ register it over the whole origin) and the browser re-fetches it on
 navigation.
 
 **R2. Metadata leakage to the server.** The server learns exact plaintext sizes
-(no padding), upload and download times, part counts, link expiry, download
+(file content is not padded), upload and download times, part counts, link expiry, download
 counts, who owns which link, which request link a file arrived through, the
 owner's display name, the number of received files, and IP addresses (only as
 keyed hashes in logs, but visible to the network and any fronting proxy in
 transit). Request link public keys travel only in the fragment. File names
-and types are encrypted. Sizes and timing can fingerprint well-known files.
+and types are encrypted and padded to 128, 256 or 512 bytes, and request labels
+to 128 or 256 bytes (FORMAT §5.1, audit 2026-11b L-8): the server learns only
+which bucket the combined name and type length falls in, and whether a label
+is longer than 128 bytes (FORMAT §8.7). Sizes and timing can
+fingerprint well-known files.
 
 **R3. AES-GCM is not key-committing.** A sender can craft a ciphertext that
 decrypts under two keys. Dropr never tries several keys on one blob and no
@@ -263,7 +268,20 @@ Back up the database (`dropr backup`) and the blobs.
 
 **R10. Time of check at the IdP.** Access removal propagates at the next
 revalidation: up to `revalidate_every` (default 15 min) plus idle behavior.
-`dropr user revoke` is immediate.
+A revalidation or login that finds the role missing, and `dropr user revoke`,
+expire the user's share links for good (their share uploads in progress die
+with them) and pause their request links; `revoke` also ends every session at
+once. Revoke is not a lockout: the next successful login, which the IdP alone
+decides, reopens the request links (not the shares). `dropr user disable` is
+the local lockout: it sets `users.disabled_at`, ends the sessions and expires
+the shares, and login, session load and request links refuse the account until
+`dropr user enable`. Request uploads already started can still finish.
+Revalidation treats only a missing role or required claim as a loss of access;
+an unreachable provider or a rejected refresh token (which also follows an
+ended SSO session) only ends the session, so a user removed that way keeps
+their shares until the next login attempt finds the role missing. Remove access
+at the IdP first, then disable; `dropr user purge` deletes the user's links and
+files.
 
 **R11. The operator is powerful.** Shell access gives deletion, metadata,
 secrets and the ability to serve modified code (R1). Dropr protects users from
@@ -300,6 +318,20 @@ Dropr does not delete them, because the files would become unreadable. XSS in a
 Dropr page could use them for as long as it runs (CSP with `script-src 'self'`
 and Trusted Types make XSS unlikely). Advice: full-disk encryption, a locked OS
 account per person, and no request links from shared computers.
+
+**R17. The server's link list decides which link keys the browser keeps.**
+When the inbox or links page loads, the browser deletes the signed-in
+account's link keys whose request the server no longer lists (records stored
+less than 60 s before the listing are kept). This is how keys of expired and
+revoked links are cleaned up, and those links' files are already gone. But a
+server that omits a live link, whether malicious, buggy or restored from a
+backup older than the link, makes the browser delete a key that exists nowhere
+else (R7): the link's files become unreadable even if the server state is
+corrected later. A malicious server can already delete the ciphertext, so
+this adds no new power to an attacker; it turns transient server faults into
+permanent loss. Advice: restore the database only from a backup taken after
+the request links still in use were created, or have owners download received
+files before a restore. Creating a link never overwrites a stored key.
 
 ## 7. Out of scope
 

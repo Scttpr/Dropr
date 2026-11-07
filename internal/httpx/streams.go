@@ -10,10 +10,18 @@ import (
 var ErrTooManyStreams = Errorf(http.StatusTooManyRequests, "too_many_transfers",
 	"Too many uploads or downloads are running. Please try again in a moment.")
 
+// streamV6Bits is the IPv6 prefix a client address is keyed on for the
+// stream caps: wider than the rate limiters' /64, so one customer's /56 cannot
+// claim 256 times the per-address share of the global slots (audit 2026-11b
+// M-1).
+const streamV6Bits = 56
+
 // StreamLimiter caps the number of concurrent long-lived requests (part
-// uploads, downloads) in total and per client address (keyed hash, IPv6 by
-// /64), so trickling connections cannot pile up without bound (audit L-4).
-// Requests over a cap are answered 429 with Retry-After at once.
+// uploads, downloads) in total and per key, so trickling connections cannot
+// pile up without bound (audit L-4). Limit keys on the client address (keyed
+// hash, IPv6 by /56); Acquire takes any key, such as the hash of an upload or
+// download capability (audit 2026-11b M-1). Requests over a cap are answered
+// 429 with Retry-After at once.
 type StreamLimiter struct {
 	hasher *IPHasher
 	total  int
@@ -61,13 +69,18 @@ func (l *StreamLimiter) Active() int {
 	return l.cur
 }
 
+// RefuseStream answers a stream refused by Acquire: 429 with Retry-After.
+func RefuseStream(w http.ResponseWriter, r *http.Request) {
+	SetRetryAfter(w, 5*time.Second)
+	Fail(w, r, ErrTooManyStreams)
+}
+
 // Limit wraps h, keyed by the client IP from RealIP.
 func (l *StreamLimiter) Limit(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		release, ok := l.Acquire(l.hasher.Sum(ClientIP(r.Context())))
+		release, ok := l.Acquire(l.hasher.SumPrefix(ClientIP(r.Context()), streamV6Bits))
 		if !ok {
-			SetRetryAfter(w, 5*time.Second)
-			Fail(w, r, ErrTooManyStreams)
+			RefuseStream(w, r)
 			return
 		}
 		defer release()

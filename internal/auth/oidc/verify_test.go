@@ -36,10 +36,14 @@ func TestLookupAndHasRole(t *testing.T) {
 
 func TestDecodeClaimsRejects(t *testing.T) {
 	t.Parallel()
-	for _, in := range []string{``, `null`, `[]`, `"x"`, `{"a":1} {"b":2}`, `{`} {
+	for _, in := range []string{``, `null`, `[]`, `"x"`, `{"a":1} {"b":2}`, `{`,
+		`{"a":1}}`, `{"a":1}]`, `{"a":1} x`} { // stray closers: audit 2026-11 A03-2
 		if _, err := decodeClaims([]byte(in)); err == nil {
 			t.Errorf("accepted %q", in)
 		}
+	}
+	if _, err := decodeClaims([]byte(" {\"a\":1} \n")); err != nil {
+		t.Errorf("surrounding whitespace refused: %v", err)
 	}
 }
 

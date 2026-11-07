@@ -6,8 +6,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -86,6 +88,33 @@ type ClientKey struct {
 	Key   crypto.Signer
 	Cert  *x509.Certificate   // leaf certificate, if present
 	Chain []*x509.Certificate // all certificates in file order
+}
+
+// looksLikePassphrase reports whether a raw 32-byte key is all printable
+// ASCII, which random bytes almost never are (audit 2026-11 I5). The key is
+// still used as is: reinterpreting it would end every session.
+func looksLikePassphrase(key []byte) bool {
+	for _, b := range key {
+		if b < 0x20 || b > 0x7e {
+			return false
+		}
+	}
+	return len(key) > 0
+}
+
+// testOnlyKeySPKI is the SHA-256 of the public key (PKIX DER) of the
+// committed dev/keycloak/test-keys/dropr-pkjwt.TEST-ONLY.pem.
+const testOnlyKeySPKI = "9eaf9f8d95345ef75b0d44ee29962d7b0ab600235a5f9ae98adb64c7f8ae0398"
+
+// isTestOnlyKey reports whether key is the committed TEST-ONLY key, whose
+// private half is public (audit 2026-11 I5).
+func isTestOnlyKey(key crypto.Signer) bool {
+	der, err := x509.MarshalPKIXPublicKey(key.Public())
+	if err != nil {
+		return false
+	}
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:]) == testOnlyKeySPKI
 }
 
 // LoadClientKey reads a PEM file holding one unencrypted private key (PKCS#8,
@@ -202,19 +231,14 @@ func checkAlgForKey(alg string, key crypto.Signer) error {
 // runtime (systemd credentials, Docker/Podman secrets): their modes are not
 // the operator's to tighten (container secrets are often 0444 inside a
 // private mount namespace), so they are not checked.
-var managedSecretDirs = []string{"/run/credentials/", "/run/secrets/"}
+var managedSecretDirs = []string{"/run/credentials", "/run/secrets"}
 
 // checkSecretPerms inspects a secret file's mode (audit I-7): readable by
 // group or others gives a warning; readable by others refuses to start in
 // production. Files under managedSecretDirs are exempt.
 func checkSecretPerms(path string, production bool) (warning string, err error) {
-	abs, aerr := filepath.Abs(path)
-	if aerr == nil {
-		for _, d := range managedSecretDirs {
-			if strings.HasPrefix(abs, d) {
-				return "", nil
-			}
-		}
+	if inManagedDir(path, managedSecretDirs) {
+		return "", nil
 	}
 	st, serr := os.Stat(path)
 	if serr != nil {
@@ -229,6 +253,29 @@ func checkSecretPerms(path string, production bool) (warning string, err error) 
 		return fmt.Sprintf("secret file %s is readable by group or others (mode %#o); chmod 600 is recommended", path, mode), nil
 	}
 	return "", nil
+}
+
+// inManagedDir reports whether path, with symlinks resolved, lies inside one
+// of dirs (audit 2026-11 I5: a string prefix also exempted a symlink under
+// /run/secrets pointing at an operator-managed file elsewhere).
+func inManagedDir(path string, dirs []string) bool {
+	p, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	if p, err = filepath.Abs(p); err != nil {
+		return false
+	}
+	for _, d := range dirs {
+		if rd, err := filepath.EvalSymlinks(d); err == nil {
+			d = rd
+		}
+		rel, err := filepath.Rel(d, p)
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) checkSecretFiles(paths ...string) error {

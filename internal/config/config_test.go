@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -404,5 +405,98 @@ func TestTransferLimits(t *testing.T) {
 	c, err = Parse([]byte(f.prod("[limits]\nmax_transfers = 8\nmax_transfers_per_ip = 2\nmin_transfer_rate = \"0\"")))
 	if err != nil || c.Limits.MaxTransfers != 8 || c.Limits.MaxTransfersPerIP != 2 || c.Limits.MinTransferRateBytes != 0 {
 		t.Fatalf("custom: %v %+v", err, c)
+	}
+	// Audit 2026-11 I5: production warns (but starts) without the
+	// slow-transfer cutoff or with a tiny disk headroom.
+	if len(c.Warnings) != 1 || !strings.Contains(c.Warnings[0], "min_transfer_rate") {
+		t.Errorf("min_transfer_rate = 0 warnings: %v", c.Warnings)
+	}
+	c, err = Parse([]byte(f.prod("[limits]\ndisk_headroom = \"1MB\"")))
+	if err != nil || len(c.Warnings) != 1 || !strings.Contains(c.Warnings[0], "disk_headroom") {
+		t.Errorf("tiny headroom: %v %v", err, c)
+	}
+	c, err = Parse([]byte(f.prod("[limits]\ndisk_headroom = \"2GB\"")))
+	if err != nil || len(c.Warnings) != 0 {
+		t.Errorf("2GB headroom: %v %v", err, c)
+	}
+}
+
+// Audit 2026-11 I5: a raw key of printable characters is kept as is but
+// flagged.
+func TestRefreshKeyPassphraseWarning(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	pass := []byte("correct horse battery staple 123")
+	write(t, f.refresh, pass)
+	c, err := Parse([]byte(f.prod("")))
+	if err != nil || !bytes.Equal(c.RefreshKey, pass) {
+		t.Fatalf("printable raw key: %v", err)
+	}
+	if len(c.Warnings) != 1 || !strings.Contains(c.Warnings[0], "passphrase") {
+		t.Errorf("warnings: %v", c.Warnings)
+	}
+	if looksLikePassphrase(bytes.Repeat([]byte{0x80}, 32)) || looksLikePassphrase(nil) {
+		t.Error("non-printable key flagged")
+	}
+}
+
+// Audit 2026-11 I5: the committed TEST-ONLY key is recognized.
+func TestTestOnlyKeyDetected(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../dev/keycloak/test-keys/dropr-pkjwt.TEST-ONLY.pem")
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skip("dev/ is not part of this source tree (nix build)")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	ck, err := ParseClientKey(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isTestOnlyKey(ck.Key) {
+		t.Error("TEST-ONLY key not detected")
+	}
+	f := newFixture(t)
+	own, err := LoadClientKey(f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isTestOnlyKey(own.Key) {
+		t.Error("fresh key flagged")
+	}
+}
+
+// Audit 2026-11 I5: the managed-directory exemption is a containment check
+// on the resolved path, not a string prefix.
+func TestInManagedDir(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	managed, sibling := filepath.Join(root, "secrets"), filepath.Join(root, "secrets-other")
+	for _, d := range []string{managed, sibling} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inside, outside, other := filepath.Join(managed, "k"), filepath.Join(root, "k"), filepath.Join(sibling, "k")
+	for _, p := range []string{inside, outside, other} {
+		write(t, p, []byte("x"))
+	}
+	link := filepath.Join(managed, "link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	dirs := []string{managed}
+	for p, want := range map[string]bool{
+		inside:                            true,
+		outside:                           false,
+		other:                             false,
+		link:                              false,
+		filepath.Join(managed, "..", "k"): false,
+		managed:                           false,
+		filepath.Join(managed, "missing"): false,
+	} {
+		if got := inManagedDir(p, dirs); got != want {
+			t.Errorf("%s: got %v want %v", p, got, want)
+		}
 	}
 }

@@ -109,6 +109,12 @@ func TestIPResolver(t *testing.T) {
 		{"@", []string{"1.2.3.4"}, "1.2.3.4"},                           // unix socket peer
 		{"", nil, "invalid IP"},
 		{"10.0.0.2:80", []string{"fe80::1%eth0"}, "fe80::1"},
+		// Entries with a port (audit 2026-11b L-5).
+		{"10.0.0.2:80", []string{"1.2.3.4:5678"}, "1.2.3.4"},
+		{"10.0.0.2:80", []string{"[2001:db8::1]:443"}, "2001:db8::1"},
+		{"10.0.0.2:80", []string{"[2001:db8::1]"}, "2001:db8::1"},
+		{"10.0.0.2:80", []string{"6.6.6.6:1, 1.2.3.4:5678, 10.0.0.3:80"}, "1.2.3.4"},
+		{"10.0.0.2:80", []string{"1.2.3.4:notaport"}, "10.0.0.2"},
 	}
 	for i, c := range cases {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -192,6 +198,61 @@ func TestRateLimitMiddleware(t *testing.T) {
 	w := do()
 	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
 		t.Fatalf("got %d", w.Code)
+	}
+}
+
+func TestRealIPWarnsOnUnparsableForwardedFor(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	res := IPResolver{Trusted: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}}
+	h := RealIP(res, log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	send := func(xff string) {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = "10.0.0.2:80"
+		r.Header.Set("X-Forwarded-For", xff)
+		h.ServeHTTP(httptest.NewRecorder(), r)
+	}
+	send("1.2.3.4:5678")
+	if buf.Len() != 0 {
+		t.Fatalf("warned on a valid ip:port entry: %s", buf.String())
+	}
+	send("unknown")
+	send("garbage")
+	if n := strings.Count(buf.String(), "X-Forwarded-For entry"); n != 1 {
+		t.Errorf("want one warning, got %d: %s", n, buf.String())
+	}
+}
+
+func TestLoggerUserAndRequestID(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	log := slog.New(ContextHandler(slog.NewJSONHandler(&buf, nil)))
+	var rid string
+	h := Chain(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		rid = RequestID(r.Context())
+		SetUser(r.Context(), "user-123")
+		log.InfoContext(r.Context(), "event")
+	}), RealIP(IPResolver{}, nil), Logger(log, NewIPHasher(make([]byte, 32))))
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "192.0.2.55:1"
+	h.ServeHTTP(httptest.NewRecorder(), r)
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if rid == "" || len(lines) != 2 {
+		t.Fatalf("rid %q, log: %s", rid, buf.String())
+	}
+	if !strings.Contains(lines[0], `"msg":"event"`) || !strings.Contains(lines[0], `"rid":"`+rid+`"`) {
+		t.Errorf("event line lacks rid: %s", lines[0])
+	}
+	if strings.Count(lines[1], `"rid"`) != 1 || !strings.Contains(lines[1], `"user":"user-123"`) {
+		t.Errorf("request line: %s", lines[1])
+	}
+	// Outside a request: no rid, and SetUser is a no-op.
+	buf.Reset()
+	SetUser(t.Context(), "x")
+	log.InfoContext(t.Context(), "bare")
+	if strings.Contains(buf.String(), "rid") {
+		t.Errorf("rid outside a request: %s", buf.String())
 	}
 }
 

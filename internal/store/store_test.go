@@ -58,6 +58,34 @@ func TestProvisionUser(t *testing.T) {
 	}
 }
 
+// Audit 2026-11 A03-1: the display name is shown to anonymous uploaders, so
+// bidi controls, invisible fillers and C1 controls are removed.
+func TestDisplayNameSanitized(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	r := func(cps ...rune) string { return string(cps) }
+	for i, c := range []struct{ in, want string }{
+		{"Payroll" + r(0x202e) + "Dept", "PayrollDept"},                                                      // RLO
+		{r(0x2066) + "Bob" + r(0x2069, ' ', 0x200f), "Bob"},                                                  // isolates, RLM
+		{"A" + r(0x200b) + "l" + r(0xad) + "i" + r(0xfeff) + "ce", "Alice"},                                  // ZWSP, soft hyphen, BOM
+		{"Bob" + r(0x3164, 0x2800, 0x115f), "Bob"},                                                           // Hangul fillers, Braille blank
+		{"Bob" + r(0x85, 0x9b) + "31m", "Bob31m"},                                                            // C1 (NEL, CSI)
+		{"Bob" + r(0x061c, 0x2028, 0x2029), "Bob"},                                                           // ALM, line/paragraph separators
+		{" Ada" + r(0xa0, 0x2003, 0x3000) + " Lovelace" + r(0x2003), "Ada Lovelace"},                         // space runs collapse
+		{r(0x1f469, 0x200d, 0x1f4bb) + " Dev" + r(0xfe0f), r(0x1f469, 0x200d, 0x1f4bb) + " Dev" + r(0xfe0f)}, // ZWJ, variation selector kept
+		{"Zo" + r(0xeb, ' ', 0x3a9, ' ', 0x674e), "Zo" + r(0xeb, ' ', 0x3a9, ' ', 0x674e)},
+	} {
+		u, _, err := st.ProvisionUser(ctx, "https://iss", "san-"+string(rune('a'+i)), c.in, t0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.DisplayName != c.want {
+			t.Errorf("%q: got %q, want %q", c.in, u.DisplayName, c.want)
+		}
+	}
+}
+
 func newSession(userID string) *store.Session {
 	return &store.Session{
 		IDHash: ids.Hash(ids.NewSecret()), UserID: userID, OIDCSID: "sid-1",

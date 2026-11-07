@@ -13,6 +13,10 @@
  *   longer lists (expired, revoked, deleted elsewhere), whose files are gone.
  *   Records newer than the list are kept: another tab may have just created
  *   the link.
+ * - A record is never overwritten: {@link RequestKeyStore.put} fails with
+ *   {@link KeyIdTakenError} if the ID is already stored, so a server that
+ *   hands out an existing request ID cannot replace that link's key
+ *   (audit 2026-11b L-7).
  *
  * The store logic runs over a small {@link KeyBackend} so it is testable in
  * Node, which has no IndexedDB; by default it is IndexedDB. A store is bound
@@ -44,7 +48,8 @@ export interface RequestKeyRecord extends RequestKeyPair {
 
 /** The storage operations the store needs. Values read back are checked, not trusted. */
 export interface KeyBackend {
-  put(record: RequestKeyRecord): Promise<void>;
+  /** Store a new record; rejects with a `ConstraintError` DOMException if its ID is already stored. */
+  add(record: RequestKeyRecord): Promise<void>;
   get(id: string): Promise<unknown>;
   getAll(): Promise<unknown[]>;
   delete(ids: readonly string[]): Promise<void>;
@@ -56,6 +61,18 @@ export class KeyStoreError extends Error {
     const full = cause instanceof Error && cause.name === "QuotaExceededError";
     super(message ?? (full ? t.storageFull : t.keyStoreUnavailable), { cause });
     this.name = "KeyStoreError";
+  }
+}
+
+/**
+ * A key is already stored under this request ID (any account). Nothing was
+ * written; the existing record, and the request it belongs to, must be left
+ * alone.
+ */
+export class KeyIdTakenError extends KeyStoreError {
+  constructor(cause: unknown) {
+    super(cause, t.keyIdTaken);
+    this.name = "KeyIdTakenError";
   }
 }
 
@@ -110,11 +127,19 @@ export class RequestKeyStore {
     return isRecord(x) && x.ownerId === this.ownerId;
   }
 
-  /** Store the key pair of request `id` for this owner. */
+  /**
+   * Store the key pair of request `id` for this owner. Never overwrites: if
+   * any record has this ID, rejects with a {@link KeyIdTakenError}.
+   */
   put(id: string, pair: RequestKeyPair, createdAt = nowSeconds()): Promise<void> {
-    return this.run((b) => {
+    return this.run(async (b) => {
       const ownerId = this.ownerId as string; // checked by run()
-      return b.put({ id, privateKey: pair.privateKey, publicKey: pair.publicKey, ownerId, createdAt });
+      try {
+        await b.add({ id, privateKey: pair.privateKey, publicKey: pair.publicKey, ownerId, createdAt });
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "ConstraintError") throw new KeyIdTakenError(e);
+        throw e;
+      }
     });
   }
 
@@ -218,7 +243,8 @@ function indexedDbBackend(db: IDBDatabase): KeyBackend {
       trans.onabort = () => reject(trans.error ?? new DOMException("Transaction aborted", "AbortError"));
     });
   return {
-    put: async (record) => void (await tx("readwrite", (s) => s.put(record))),
+    // add, not put: an existing ID aborts the transaction with a ConstraintError.
+    add: async (record) => void (await tx("readwrite", (s) => s.add(record))),
     get: (id) => tx("readonly", (s) => s.get(id)),
     getAll: async () => (await tx("readonly", (s) => s.getAll())) ?? [],
     delete: async (ids) => {

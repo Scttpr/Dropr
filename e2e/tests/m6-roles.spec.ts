@@ -117,7 +117,7 @@ test.describe("role removed mid-session", () => {
       await expect(page.locator("#file-input")).toHaveCount(0);
       const api = await request.post(`${dropr.origin}/api/r/${linkId(requestLink)}/files`, {
         headers: { origin: dropr.origin },
-        data: { size: 1016, parts: 1, meta: "A".repeat(80), wrapped_key: "A".repeat(107) },
+        data: { size: 1016, parts: 1, meta: "A".repeat(192), wrapped_key: "A".repeat(107) },
       });
       expect(api.status()).toBe(410);
       expect(((await api.json()) as { error: string }).error).toBe("closed");
