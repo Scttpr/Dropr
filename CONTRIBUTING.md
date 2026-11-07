@@ -34,6 +34,8 @@ targets also work outside the dev shell.
 
 ```sh
 make check                    # build, golangci-lint, race tests, govulncheck
+make cover                    # race tests with a coverage profile (coverage.out)
+make lint-ci                  # actionlint, zizmor and shellcheck on .github/ and scripts/
 make test-keycloak            # Go integration tests with real logins (needs make keycloak-up)
 make e2e                      # Playwright: Chromium, Firefox, WebKit (needs make keycloak-up)
 make e2e E2E_PROJECTS=chromium
@@ -44,6 +46,32 @@ nix flake check               # reference builds, go vet and tests, web tests
 
 Playwright browsers come from nixpkgs. Never run `npx playwright install`.
 
+## Continuous integration
+
+Workflows live in `.github/workflows/`; each file starts with a comment that
+says when it runs and why. Long shell steps are scripts in `scripts/ci/`, so
+they can be run and read outside a workflow.
+
+| Workflow | Runs on | Does |
+|---|---|---|
+| `ci.yml` | PRs, main | lint, race tests, Nix builds, Keycloak integration, e2e, fuzz smoke (main) |
+| `security.yml` | PRs, main, daily | CodeQL, dependency review (PRs), govulncheck, npm audit, OSV-Scanner |
+| `scorecard.yml` | main, weekly | OpenSSF Scorecard |
+| `nightly.yml` | daily | 5 minutes of fuzzing per target, corpus kept between nights |
+| `release.yml` | `v*` tags | verify the tag, reproducible build, SBOMs, signatures, attestations, release |
+| `deps.yml` | Dependabot PRs, weekly | `make hashes` on Dependabot PRs; weekly `flake.lock` bump PR |
+
+* On a PR, `ci.yml` runs only the jobs whose inputs changed (a docs-only PR
+  runs almost nothing) and e2e in Chromium only. Add the `e2e:all-browsers`
+  label to also run Firefox and WebKit. Main runs everything.
+* `main` requires the `ci-ok` and `security-ok` checks, which summarise their
+  workflows, and linear history (PRs are rebased).
+* A release needs a signed tag on a commit of `main` whose `ci-ok` and
+  `security-ok` are green: tag after main's CI has passed.
+* Failed scheduled runs open a `ci-failure` issue.
+* Actions are pinned by commit SHA. Dependabot proposes updates after a 7-day
+  cooldown; `make lint-ci` (zizmor) flags unpinned or risky workflow changes.
+
 ## Things to know
 
 * **Contracts live in `docs/`.** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -53,7 +81,8 @@ Playwright browsers come from nixpkgs. Never run `npx playwright install`.
   A change to one side updates the contract and every other side in the same
   commit.
 * **Dependency changes**: after changing `go.mod` or a `package-lock.json`, run
-  `make hashes` to refresh `nix/hashes.nix`.
+  `make hashes` to refresh `nix/hashes.nix`. On Dependabot PRs, `deps.yml`
+  does it for you.
 * **The flake only sees files known to git.** `git add` new files before
   `nix build` or `nix flake check`.
 * **Translations**: user-facing text goes in both the Go catalog
