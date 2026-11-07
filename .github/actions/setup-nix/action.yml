@@ -1,0 +1,30 @@
+name: Set up Nix
+description: >
+  Install upstream Nix and restore this job's /nix/store from the Actions
+  cache. Only pushes to main save the cache: pull requests restore it but
+  never write it, which keeps the 10 GB repository quota for main.
+
+inputs:
+  cache-key:
+    description: Name of this job's store cache (each job has its own closure).
+    required: true
+  cache:
+    description: "'false' skips the store cache entirely (release builds)."
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      with:
+        determinate: false        # upstream Nix, no FlakeHub login
+        diagnostic-endpoint: ""   # no installer telemetry
+        summarize: false
+
+    - if: inputs.cache == 'true'
+      uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+      with:
+        primary-key: nix-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/hashes.nix') }}
+        restore-prefixes-first-match: nix-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-
+        gc-max-store-size-linux: 3G
+        save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
