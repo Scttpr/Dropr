@@ -136,7 +136,7 @@ Admin access is shell access to the host. There is no admin web UI.
 
 - **TLS**, two modes:
   - `tls = "acme"` (default): the Go binary gets and renews Let's Encrypt certificates itself (`golang.org/x/crypto/acme/autocert`, TLS-ALPN-01 challenge, so only port 443 is needed). Certificates are cached in the data volume. TLS 1.2 minimum with AEAD cipher suites only; TLS 1.3 preferred. Port 80, if enabled, only redirects to HTTPS. Set a CAA record for the domain.
-  - `tls = "proxy"`: plain HTTP on a local address or Unix socket, behind your own reverse proxy. `X-Forwarded-For` / `X-Forwarded-Proto` are trusted **only** from the configured `trusted_proxies`. Dropr refuses to start in this mode if `public_url` isn't `https://`.
+  - `tls = "proxy"`: plain HTTP on a local address or Unix socket, behind your own reverse proxy. `X-Forwarded-For` is trusted **only** from the configured `trusted_proxies` (or a Unix socket peer with `trust_unix_socket_proxy`); `X-Forwarded-Proto` and `X-Forwarded-Host` are ignored, since `public_url` is authoritative. Dropr refuses to start in this mode if `public_url` isn't `https://`.
   - In both modes: HSTS with `includeSubDomains; preload`.
 - **Server timeouts**: `ReadHeaderTimeout`, idle timeout and header size limits on the Go `http.Server`, plus per-route body limits (one part for uploads, a few KiB for the API). These protect against slowloris attacks and oversized requests when no proxy sits in front.
 - **CSP**: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; form-action 'self' <issuer origin>; frame-ancestors 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types dropr-sw` (the single policy turns exactly `/sw.js` into a TrustedScriptURL for `serviceWorker.register()`, a Trusted Types sink)
@@ -144,7 +144,7 @@ Admin access is shell access to the host. There is no admin web UI.
 - **CSRF**: SameSite=Strict session cookie, plus checks on `Origin` and `Sec-Fetch-Site` for every state-changing request. The OIDC callback is the only cross-site entry point and is protected by `state` + PKCE.
 - **Uploaded content** is never rendered. The browser decrypts it and saves it as a download.
 - **Abuse limits on request links**: size/count caps per link, per-IP rate limits (in memory, keyed by a hash), and a quota per owner. The inbox UI warns that files come from outside.
-- **Logs**: no plaintext IPs, tokens or link fragments (fragments never reach the server anyway). 7-day retention.
+- **Logs**: JSON lines on standard output (`log/slog`), with no plaintext IPs (keyed hashes only), tokens or link fragments (fragments never reach the server anyway). Retention is the log collector's job; 7 days is enough.
 - **Browser code integrity**: no third-party JS, minimal dependencies, reproducible build, published asset hashes.
 - **Secrets**: the OIDC client key and the refresh-token encryption key are loaded from files, never from the configuration file, environment variables or the database.
 
@@ -216,7 +216,7 @@ The product constraints the code enforces:
 
 | Attacker | Outcome |
 |---|---|
-| Network | TLS 1.3 + HSTS. Nothing readable. |
+| Network | TLS 1.2+ (AEAD only) + HSTS. Nothing readable. |
 | Database or disk theft | Ciphertext, sizes, timestamps, HPKE-wrapped file keys, encrypted refresh tokens. No plaintext, no filenames, no private keys. |
 | Stolen provider credentials | Attacker can share new files and see link metadata, but **cannot read the inbox** without the owner's browser profile. Mitigated by MFA at the provider (Conditional Access in Entra). |
 | Departed user | Role removed or account disabled at the provider, so the session dies within 15 min. `dropr user revoke` for immediate effect. |
