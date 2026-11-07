@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import { generateRequestKeyPair } from "../src/crypto/index.ts";
 import { en } from "../src/lib/locales/en.ts";
 import { errorMessage } from "../src/lib/messages.ts";
-import { KeyStoreError, RequestKeyStore, requestPersistence } from "../src/lib/request-keys.ts";
+import { KeyIdTakenError, KeyStoreError, RequestKeyStore, requestPersistence } from "../src/lib/request-keys.ts";
 import { memoryKeyBackend } from "./fakes.ts";
 
 const NOW = 1_800_000_000;
@@ -32,6 +32,22 @@ describe("request key store", () => {
     await store.delete("a");
     assert.equal(await store.get("a"), null);
     assert.deepEqual([...(await store.all()).keys()], ["b"]);
+  });
+
+  it("never overwrites a stored record, whoever owns it (audit 2026-11b L-7)", async () => {
+    const backend = memoryKeyBackend();
+    const alice = storeFor(ALICE, backend).store;
+    const bob = storeFor(BOB, backend).store;
+    const first = await generateRequestKeyPair();
+    await alice.put("a", first, NOW);
+    const isTaken = (e: unknown): boolean =>
+      e instanceof KeyIdTakenError && e instanceof KeyStoreError && errorMessage(e) === en.keyIdTaken;
+    await assert.rejects(alice.put("a", await generateRequestKeyPair()), isTaken);
+    await assert.rejects(bob.put("a", await generateRequestKeyPair()), isTaken);
+    const got = await alice.get("a");
+    assert.equal(got?.privateKey, first.privateKey);
+    assert.deepEqual(got?.publicKey, first.publicKey);
+    assert.equal(got?.createdAt, NOW);
   });
 
   it("ignores malformed records", async () => {

@@ -31,9 +31,11 @@ import { isAbortError } from "./lib/retry.ts";
 import { ProgressPanel, runUploadWithPanel } from "./lib/transfer-ui.ts";
 import { Uploader } from "./lib/uploader.ts";
 
+/** `/r/<22-character request ID>`, the request page's path. */
+const REQUEST_PATH_RE = /^\/r\/([A-Za-z0-9_-]{22})$/;
+
 function init(main: HTMLElement): void {
   revealJsOnly();
-  const requestId = main.dataset["requestId"] ?? "";
   const notice = new Notice(byId("upload-error"), null);
   const zoneEl = byId("drop-zone");
   const input = byId("file-input", HTMLInputElement);
@@ -51,8 +53,13 @@ function init(main: HTMLElement): void {
   let filesLeft = dataInt(main, "maxFiles", Number.MAX_SAFE_INTEGER);
   let bytesLeft = maxBytes;
 
+  // The request ID bound into the HPKE info comes from the link path, like the
+  // key from the fragment (FORMAT.md §6); the page's copy must agree
+  // (audit 2026-11b, spec drift).
+  const requestId = REQUEST_PATH_RE.exec(location.pathname)?.[1] ?? "";
   let linkKey: Uint8Array;
   try {
+    if (requestId === "" || requestId !== main.dataset["requestId"]) throw new Error("request ID mismatch");
     linkKey = decodeRequestFragment(location.hash);
   } catch {
     zoneEl.hidden = true;

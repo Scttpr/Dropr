@@ -41,6 +41,7 @@ export const fr: Messages = {
     `Ce navigateur ne peut pas conserver les clés de vos liens de dépôt${nb}: il ne peut donc ni créer de lien ni ouvrir les fichiers reçus par ce biais. ` +
     "Autorisez ce site à enregistrer des données (la navigation privée le bloque souvent), ou utilisez un autre navigateur.",
   ownerUnknown: "Dropr n'a pas pu déterminer quel compte est connecté et ne peut donc pas utiliser les clés de vos liens de dépôt. Veuillez recharger la page.",
+  keyIdTaken: "Le serveur a renvoyé l'identifiant d'un lien dont ce navigateur détient déjà la clé. Le lien n'a pas été créé et vos liens existants sont inchangés.",
   apiCodes: {
     unauthenticated: "Votre session a expiré. Veuillez vous reconnecter.",
     bad_request: "La requête n'a pas été acceptée. Veuillez recharger la page et réessayer.",

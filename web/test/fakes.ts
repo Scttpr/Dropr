@@ -141,8 +141,9 @@ export function memoryKeyBackend(): KeyBackend & { records: Map<string, unknown>
     check() {
       if (b.fail !== undefined) throw b.fail;
     },
-    async put(record: RequestKeyRecord) {
+    async add(record: RequestKeyRecord) {
       b.check();
+      if (b.records.has(record.id)) throw new DOMException("Key already exists in the object store.", "ConstraintError");
       b.records.set(record.id, record);
     },
     async get(id: string) {

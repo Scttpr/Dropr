@@ -7,8 +7,8 @@
  *
  * The character mapping is branch-free and table-free (after libsodium's
  * `sodium_base642bin`), because this codec handles secret key material (file
- * keys in URL fragments, private-key JWK fields). Only the *validity* of the
- * input, a public fact, influences control flow.
+ * keys in URL fragments). Only the *validity* of the input, a public fact,
+ * influences control flow.
  *
  * @module
  */

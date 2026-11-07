@@ -29,12 +29,12 @@ function attackerPage(u: URL): string {
   if (u.pathname === "/form") {
     const enctype = u.searchParams.get("enctype") ?? "text/plain";
     return `<!doctype html><title>evil</title><form id=f method=post action="${action}" enctype="${enctype}">
-<input name='{"size":1016,"parts":1,"meta":"${"A".repeat(80)}","x":"' value='"}'></form>
+<input name='{"size":1016,"parts":1,"meta":"${"A".repeat(192)}","x":"' value='"}'></form>
 <script>document.getElementById("f").submit()</script>`;
   }
   return `<!doctype html><title>evil</title><script>
 window.result = fetch(${JSON.stringify(action)}, { method: ${JSON.stringify(u.searchParams.get("method") ?? "POST")}, mode: "no-cors", credentials: "include",
-  headers: { "content-type": "text/plain" }, body: JSON.stringify({ size: 1016, parts: 1, meta: "${"A".repeat(80)}" }) })
+  headers: { "content-type": "text/plain" }, body: JSON.stringify({ size: 1016, parts: 1, meta: "${"A".repeat(192)}" }) })
   .then(r => r.type, e => "error:" + e);
 </script>`;
 }

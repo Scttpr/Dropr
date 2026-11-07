@@ -40,17 +40,6 @@ export function randomBytes(n: number): Bytes {
   return globalThis.crypto.getRandomValues(new Uint8Array(n));
 }
 
-/**
- * Constant-time equality of two byte arrays. The running time depends only on
- * the lengths (which are public in every use here), never on the contents.
- */
-export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
-  return diff === 0;
-}
-
 /** True iff every byte is zero, evaluated in constant time. */
 export function isAllZero(a: Uint8Array): boolean {
   let acc = 0;
