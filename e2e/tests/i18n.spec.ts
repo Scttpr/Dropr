@@ -52,7 +52,8 @@ test("a French visitor gets the French interface and can switch theme and langua
   await context.close();
 });
 
-test("display settings work without JavaScript", async ({ browser, dropr }) => {
+test("display settings work without JavaScript", async ({ browser, browserName, dropr }) => {
+  test.skip(browserName === "webkit", "WebKit drops Secure (__Host-) cookies on http://localhost (test-environment limitation)");
   const context = await browser.newContext({ javaScriptEnabled: false, locale: "en-US" });
   const page = await context.newPage();
   await page.goto(dropr.origin + "/login");
