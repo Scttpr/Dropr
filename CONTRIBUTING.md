@@ -62,12 +62,13 @@ they can be run and read outside a workflow.
 | `deps.yml` | Dependabot PRs, weekly | `make hashes` on Dependabot PRs; weekly `flake.lock` bump PR |
 
 * On a PR, `ci.yml` runs only the jobs whose inputs changed (a docs-only PR
-  runs almost nothing) and e2e in Chromium only. Add the `e2e:all-browsers`
-  label to also run Firefox and WebKit. Main runs everything.
+  runs almost nothing). e2e runs in Chromium, Firefox and WebKit when browser
+  code (`web/`, `e2e/`) or CI changed, else in Chromium only. Main runs
+  everything.
 * `main` requires the `ci-ok` and `security-ok` checks, which summarise their
   workflows, and linear history (PRs are rebased).
 * A release needs a signed tag on a commit of `main` whose `ci-ok` and
-  `security-ok` are green: tag after main's CI has passed.
+  `security-ok` are green: tag main's tip after its CI has passed.
 * Failed scheduled runs open a `ci-failure` issue.
 * Actions are pinned by commit SHA. Dependabot proposes updates after a 7-day
   cooldown; `make lint-ci` (zizmor) flags unpinned or risky workflow changes.

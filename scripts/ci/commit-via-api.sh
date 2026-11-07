@@ -6,8 +6,11 @@
 #
 #   GH_TOKEN=... scripts/ci/commit-via-api.sh <branch> <message> [base-sha]
 #
-# The branch is created from base-sha when it does not exist yet. Prints
-# nothing and exits 0 when there is nothing to commit.
+# base-sha (default: HEAD) is the commit the changes were made on. A missing
+# branch is created there; an existing branch must still point at it, so a
+# branch that moved meanwhile (say, a Dependabot rebase) is never overwritten
+# with changes computed for an older commit. Prints the new commit's SHA, or
+# nothing when there is nothing to commit.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -19,16 +22,15 @@ if [ "${#changed[@]}" -eq 0 ]; then
   exit 0
 fi
 
-if ! head=$(gh api "repos/$repo/git/ref/heads/$branch" --jq .object.sha 2>/dev/null); then
-  gh api "repos/$repo/git/refs" -f ref="refs/heads/$branch" -f sha="$base" >/dev/null
-  head=$base
+if ! gh api "repos/$repo/git/ref/heads/$branch" --silent 2>/dev/null; then
+  gh api "repos/$repo/git/refs" -f ref="refs/heads/$branch" -f sha="$base" --silent
 fi
 
 additions=$(for f in "${changed[@]}"; do
   jq -nc --arg path "$f" --arg contents "$(base64 -w0 "$f")" '{path: $path, contents: $contents}'
 done | jq -sc .)
 
-jq -n --arg repo "$repo" --arg branch "$branch" --arg head "$head" \
+jq -n --arg repo "$repo" --arg branch "$branch" --arg head "$base" \
   --arg message "$message" --argjson additions "$additions" '{
   query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
   variables: { input: {

@@ -2,6 +2,10 @@
 # Release gate: the tagged commit must be on main and its CI must have passed.
 # The release then reuses that run instead of testing the same commit twice.
 #
+# Tag a commit main's CI ran on: a push of several commits only tests the
+# last one. The latest result counts, so a daily security run that finds a
+# new advisory on main's tip blocks its release until fixed or re-run.
+#
 #   GH_TOKEN=... scripts/ci/require-green-main.sh <sha>
 set -euo pipefail
 

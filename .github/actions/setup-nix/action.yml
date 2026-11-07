@@ -11,6 +11,11 @@ inputs:
   cache:
     description: "'false' skips the store cache entirely (release builds)."
     default: "true"
+  store-size:
+    description: >
+      Store size kept when saving; dead paths beyond it are garbage-collected
+      first. Must hold the job's whole closure, or later runs re-download.
+    default: 3G
 
 runs:
   using: composite
@@ -26,5 +31,5 @@ runs:
       with:
         primary-key: nix-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/hashes.nix') }}
         restore-prefixes-first-match: nix-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-
-        gc-max-store-size-linux: 3G
+        gc-max-store-size-linux: ${{ inputs.store-size }}
         save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}

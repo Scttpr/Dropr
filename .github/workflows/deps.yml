@@ -43,9 +43,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-nix
-        with: { cache-key: hashes }
-      # Fixed-output fetches only (go mod download, npm cache): no dependency
-      # code runs here. The App token is created after it, for the commit.
+        with: { cache-key: ci-shell }
+      # Dependency code only runs inside the Nix build sandbox, and before
+      # the App token exists.
       - run: scripts/update-hashes.sh
       - id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -56,8 +56,9 @@ jobs:
       - env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          scripts/ci/commit-via-api.sh "$BRANCH" "build(nix): update fixed-output hashes"
+          scripts/ci/commit-via-api.sh "$BRANCH" "build(nix): update fixed-output hashes" "$HEAD_SHA"
 
   update-flake:
     name: Bump flake.lock and open a PR
@@ -72,7 +73,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup-nix
-        with: { cache-key: hashes }
+        with: { cache-key: ci-shell }
       - run: scripts/ci/update-flake.sh
       - id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -84,8 +85,9 @@ jobs:
       - env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          branch="deps/flake-update-$(date -u +%F)"
-          if [ -z "$(scripts/ci/commit-via-api.sh "$branch" "build(nix): update flake.lock")" ]; then
+          branch="deps/flake-update-$GITHUB_RUN_ID"
+          oid=$(scripts/ci/commit-via-api.sh "$branch" "build(nix): update flake.lock")
+          if [ -z "$oid" ]; then
             echo "flake.lock is current"
             exit 0
           fi
@@ -96,5 +98,11 @@ jobs:
             git diff -- flake.lock e2e/package.json nix/hashes.nix
             echo '```'
           } > "$RUNNER_TEMP/body.md"
-          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
-            --title "build(nix): update flake.lock" --body-file "$RUNNER_TEMP/body.md"
+          url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+            --title "build(nix): update flake.lock" --body-file "$RUNNER_TEMP/body.md")
+          # Close last week's bump if it was never merged.
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,headRefName \
+            --jq ".[] | select(.headRefName | startswith(\"deps/flake-update-\")) | select(.headRefName != \"$branch\") | .number" |
+            while read -r n; do
+              gh pr close "$n" --repo "$GITHUB_REPOSITORY" --delete-branch --comment "Superseded by $url"
+            done

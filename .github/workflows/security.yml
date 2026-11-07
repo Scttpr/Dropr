@@ -100,7 +100,7 @@ jobs:
       # Security tab rather than failing the job: OSV also lists unreachable
       # vulnerabilities, which govulncheck above already judged.
       - name: OSV-Scanner
-        run: nix develop .#ci -c osv-scanner scan source --recursive --format sarif --output osv.sarif . || true
+        run: nix develop .#ci -c osv-scanner scan source --recursive --format sarif --output-file osv.sarif . || true
       - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: osv.sarif

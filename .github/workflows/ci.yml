@@ -1,8 +1,8 @@
 # Build, lint and test.
 #
 #   pull_request   only the jobs whose inputs changed (see `changes`);
-#                  e2e in Chromium, or every browser with the
-#                  `e2e:all-browsers` label
+#                  e2e in every browser when browser code (web/, e2e/) or CI
+#                  changed, else Chromium only
 #   push to main   every job, e2e in every browser, fuzz smoke; saves caches
 #
 # Branch protection requires `ci-ok` (and security.yml's `security-ok`):
@@ -16,7 +16,6 @@ name: ci
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
   workflow_dispatch:
@@ -43,6 +42,7 @@ jobs:
       go: ${{ github.event_name != 'pull_request' || steps.filter.outputs.all == 'true' || steps.filter.outputs.go == 'true' }}
       build: ${{ github.event_name != 'pull_request' || steps.filter.outputs.all == 'true' || steps.filter.outputs.go == 'true' || steps.filter.outputs.web == 'true' }}
       e2e: ${{ github.event_name != 'pull_request' || steps.filter.outputs.all == 'true' || steps.filter.outputs.go == 'true' || steps.filter.outputs.web == 'true' || steps.filter.outputs.e2e == 'true' }}
+      all-browsers: ${{ github.event_name != 'pull_request' || steps.filter.outputs.all == 'true' || steps.filter.outputs.web == 'true' || steps.filter.outputs.e2e == 'true' }}
     steps:
       - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with: { egress-policy: audit }
@@ -198,7 +198,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e:all-browsers')) && '["chromium", "firefox", "webkit"]' || '["chromium"]') }}
+        browser: ${{ fromJSON(needs.changes.outputs.all-browsers == 'true' && '["chromium", "firefox", "webkit"]' || '["chromium"]') }}
     steps:
       - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with: { egress-policy: audit }
@@ -206,7 +206,7 @@ jobs:
         with: { persist-credentials: false }
       - uses: ./.github/actions/keycloak
       - uses: ./.github/actions/setup-nix
-        with: { cache-key: e2e }
+        with: { cache-key: e2e, store-size: 6G } # dev shell with browsers, plus mesa
       - uses: ./.github/actions/go-cache
         with: { cache-key: e2e }
       # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor;
