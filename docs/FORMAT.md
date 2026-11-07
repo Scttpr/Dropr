@@ -345,7 +345,7 @@ another request of the same owner without detection.
 Non-extractable CryptoKeys prevent any script from reading key bytes; they do
 not prevent malicious script (e.g. served by a compromised server, or XSS) from
 *using* the key while it runs in the page. This is the residual risk of
-browser E2E noted in PLAN.md §12. `skR` is never extractable, at any point of
+browser E2E noted in DESIGN.md §11. `skR` is never extractable, at any point of
 its life. Anyone controlling the browser profile can likewise use the stored
 keys (THREAT_MODEL.md R16).
 

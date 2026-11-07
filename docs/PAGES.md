@@ -535,7 +535,7 @@ also accepts a bare array. Fields beyond those listed are ignored.
   "deny all" breaks Copy. Nothing else is needed: Dropr uses no WebAuthn, so
   `publickey-credentials-create` and `publickey-credentials-get` are denied
   (`()`) like every other feature.
-- CSP as in PLAN.md §7 works unchanged (`trusted-types dropr-sw` allows the
+- CSP as in DESIGN.md §7 works unchanged (`trusted-types dropr-sw` allows the
   one policy that registers the service worker; `worker-src 'self'` is
   needed for the service worker).
 

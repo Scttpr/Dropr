@@ -1,12 +1,12 @@
 # Dropr threat model
 
-Status: draft for external review (PLAN.md milestone 7). Scope: Dropr as
-specified in `PLAN.md`, `docs/ARCHITECTURE.md` and `docs/FORMAT.md`, deployed
-as one instance with Microsoft Entra ID (or another OIDC provider) for login.
-Every mitigation listed is implemented; the "Code" column names where it
-lives. Findings of the internal audit and their fixes are in
-[security-audit-2026-11.md](security-audit-2026-11.md). Treat this document
-as a checklist to re-verify against the code before each release.
+Status: draft for external review. Scope: Dropr as specified in
+`docs/DESIGN.md`, `docs/ARCHITECTURE.md` and `docs/FORMAT.md`, deployed as one
+instance with Microsoft Entra ID (or another OIDC provider) for login. Every
+mitigation listed is implemented; the "Code" column names where it lives.
+Fixes from the 2026-11 internal audit are cited as "audit X-n" in
+ARCHITECTURE.md and covered by regression tests. Treat this document as a
+checklist to re-verify against the code before each release.
 
 ## 1. What Dropr is protecting, and from whom
 
@@ -37,8 +37,8 @@ delivers (section 6, R1).
 | A6 | OIDC identity `(iss, sub)` and role | Decides who may be an owner | IdP; sessions table |
 | A7 | Session cookie | Acts as the user | Browser (`__Host-`, HttpOnly); SHA-256 hash in SQLite |
 | A8 | Refresh tokens | Revalidation, and impersonation toward the IdP | SQLite, AES-256-GCM under `refresh_key` |
-| A9 | `refresh_key` | Decrypts A8 | File on host / Docker secret |
-| A10 | OIDC client key (private_key_jwt) | Authenticates Dropr to the IdP | File on host / Docker secret |
+| A9 | `refresh_key` | Decrypts A8 | Secret file on the host |
+| A10 | OIDC client key (private_key_jwt) | Authenticates Dropr to the IdP | Secret file on the host |
 | A11 | Served JavaScript (the `/assets` bundle) | Anything it does, it does with A1-A5 | Embedded in the binary; verified by published hashes |
 | A12 | Availability and disk space | A 100 GB upload feature is a DoS surface | Host |
 | A13 | Metadata: sizes, timestamps, link graph, IP hash | Privacy | SQLite, logs |
@@ -99,7 +99,7 @@ Trust boundaries, in order of importance:
 | Passive network | Observes traffic | Sees host, sizes, timing. No content, names or keys | TLS 1.2+ (AEAD only), HSTS preload, fragment not sent, `Referrer-Policy: no-referrer` |
 | Active network / MITM | Intercepts, modifies | Cannot serve JS without a valid certificate | TLS, HSTS with `includeSubDomains; preload`, CAA record, ACME TLS-ALPN-01 |
 | Database or disk thief | Reads SQLite and blobs, no secrets | Ciphertext, sizes, timestamps, HPKE-wrapped file keys, encrypted refresh tokens, hashes. No plaintext, no names, no private keys | E2E encryption; refresh tokens under `refresh_key`; session IDs and tokens stored as hashes |
-| Database + `refresh_key` thief | Above plus secrets | Can use refresh tokens against the IdP while they are valid (impersonation toward IdP, up to the token lifetime). Still cannot read files | Store `refresh_key` separately (systemd credentials / Docker secret); revoke sessions at the IdP; rotate (operations.md) |
+| Database + `refresh_key` thief | Above plus secrets | Can use refresh tokens against the IdP while they are valid (impersonation toward IdP, up to the token lifetime). Still cannot read files | Store `refresh_key` apart from the database and its backups; on a leak rotate it and revoke sessions at the IdP ([ARCHITECTURE §5](ARCHITECTURE.md#5-config-droprtoml)) |
 | Stolen IdP credentials | Logs in as the owner from their own browser | Can create shares, see link metadata, revoke links and delete files. Can create *new* request links, whose keys then live in the attacker's browser (R15). **Cannot read files received through the owner's existing links**: their keys are only in the owner's browser profile | MFA / phishing-resistant Conditional Access at the IdP; link keys never leave the browser that created them |
 | Stolen session cookie | Acts as the owner until expiry | Same as stolen IdP credentials | `__Host-`, HttpOnly, Secure, SameSite=Strict; 30 min idle, 8 h absolute, 15 min revalidation; `dropr user revoke` |
 | Malicious IdP admin / compromised IdP | Mints tokens for any user | Same as stolen IdP credentials, for every owner. Cannot read inboxes without the owners' browser profiles. Can mint tokens for new `sub`s | Issuer pinning, `required_claims`, role check; monitor `user list` |
@@ -110,11 +110,11 @@ Trust boundaries, in order of importance:
 | Malicious uploader | Crafts files and metadata | Cannot affect other owners. Content is never rendered. Can try to exhaust quota or inject hostile file names | Files are saved as downloads, never displayed; metadata sanitized and size-capped (FORMAT §5); caps |
 | Malicious owner (insider with role) | Authenticated | Can fill disk up to own quota; can share illegal content (the server cannot see it) | Per-user quota, `max_file_size`, disk-space check. Content policy is an operator/legal matter (section 7) |
 | Compromised Dropr server / malicious operator | Controls code and data | **Can deliver malicious JS that uses the stored link keys and steals plaintext (R1).** Can read all metadata, delete data, inject inbox entries | Minimal JS, no third-party code, CSP, reproducible build, published hashes (SECURITY.md); external users verify the bundle |
-| Supply-chain attacker | Poisons a dependency | Same as a compromised server, at build time | Zero runtime JS dependencies; pinned, locked dev dependencies (`package-lock.json`, `go.sum`); Nix build with fixed-output hashes; `govulncheck`, `npm audit`; SBOM; signed releases |
+| Supply-chain attacker | Poisons a dependency | Same as a compromised server, at build time | Zero runtime JS dependencies; pinned, locked dev dependencies (`package-lock.json`, `go.sum`); Nix build with fixed-output hashes; `govulncheck`, `npm audit`; signed tags and checksums |
 | Cross-site attacker | Web page in the victim's browser | Cannot make state-changing requests as the user | `SameSite=Strict`, `Sec-Fetch-Site`/`Origin` checks on all non-GET requests, CSP `form-action`, `frame-ancestors 'none'` |
 | XSS attacker | Injects script into a Dropr page | Would equal R1 for the victim's browser: can use (not export) its link keys | `html/template` auto-escaping, no inline scripts or styles, strict CSP (`script-src 'self'`, Trusted Types required), uploaded content never rendered |
 | Brute-force / enumeration | Guesses IDs | Infeasible | 128-bit random IDs; rate limits; uniform 404 for unknown and expired links |
-| Resource-exhaustion attacker | Slowloris, trickling transfers, huge bodies, many uploads | Service degradation | Server timeouts, minimum transfer rate (4 KiB/s over 60 s), concurrent transfer caps (512 total, 32 per address), per-route body limits, rate limits, quotas, disk reservation for uploads in progress, 24 h GC of incomplete uploads, systemd/container limits |
+| Resource-exhaustion attacker | Slowloris, trickling transfers, huge bodies, many uploads | Service degradation | Server timeouts, minimum transfer rate (4 KiB/s over 60 s), concurrent transfer caps (512 total, 32 per address), per-route body limits, rate limits, quotas, disk reservation for uploads in progress, 24 h GC of incomplete uploads |
 
 ## 5. STRIDE by component
 
@@ -129,7 +129,7 @@ D = denial of service, E = elevation of privilege.
 | T | Server swaps the public key in a request link | The link is built from the public key generated and stored in the owner's browser, never from a server value | `web/src/lib/request-keys.ts`, `web/src/dashboard.ts`, `web/src/links.ts`, FORMAT §8.8 |
 | T | Server moves an inbox file to another request | `requestId` bound in HPKE `info` | `web/src/crypto/hpke.ts` |
 | I | Private key exfiltrated by page script | Generated non-extractable (`extractable = false`): `exportKey` and `wrapKey` fail, even for Dropr's own code; a script can only *use* it in the page | `web/src/lib/request-keys.ts`, FORMAT §8.9 |
-| D | Link keys lost (site data cleared, profile deleted, device lost) or evicted | **By design the files received through those links are unreadable** (PLAN §2); `navigator.storage.persist()` requested at link creation; the dashboard and the links page say keys are browser-bound; a link is never handed out if storing its key failed | `web/src/lib/request-keys.ts`, `web/src/dashboard.ts` |
+| D | Link keys lost (site data cleared, profile deleted, device lost) or evicted | **By design the files received through those links are unreadable** (DESIGN.md §2); `navigator.storage.persist()` requested at link creation; the dashboard and the links page say keys are browser-bound; a link is never handed out if storing its key failed | `web/src/lib/request-keys.ts`, `web/src/dashboard.ts` |
 | I | Fragment leaks through Referer or requests | `Referrer-Policy: no-referrer`; the fragment is never put in a request URL, API call or log | `internal/httpx/headers.go`, `web/src/lib/linkview.ts` |
 | I | Hostile file names attack the UI or filesystem, or spoof an extension | Names decrypted client-side, treated as text, sanitized: controls, bidi and all default-ignorable characters (Hangul fillers, Braille blank, soft hyphen…) removed, runs of spaces of any width collapsed to one, path and Windows-reserved characters replaced, length capped | `web/src/lib/decrypt-names.ts`, FORMAT §5 |
 | D | Memory exhaustion on 100 GB files | Streaming, bounded parallelism, 32 MiB parts, no whole-file buffering | `web/src/lib/uploader.ts`, `downloader.ts` |
@@ -183,13 +183,13 @@ D = denial of service, E = elevation of privilege.
 | E | Path traversal via IDs | IDs are fixed-length base64url from a strict parser; sharded directory layout derived from the ID only |
 | D | Orphaned blobs consume disk after purge | `dropr gc` reclaims them |
 
-### 5.6 Operator tooling and deployment
+### 5.6 Operator tooling and releases
 
 | | Threat | Mitigation |
 |---|---|---|
-| E | Compromised process escapes | Static non-root binary, read-only root filesystem, no capabilities, `no-new-privileges`, no shell in the image; NixOS module adds `DynamicUser`, `ProtectSystem=strict`, syscall filter, `MemoryDenyWriteExecute` |
-| I | Secrets in environment or database | Secrets are loaded from files only (Docker secrets / systemd credentials) |
-| T | Tampered release | Reproducible Nix build, signed tags, cosign-signed image, SBOM, published asset hashes (SECURITY.md) |
+| E | Compromised process escalates | Static binary without cgo that needs no privilege beyond binding its listen port; running it as an unprivileged, sandboxed user is the host's job |
+| I | Secrets in environment or database | Secrets are loaded from files only, never from the TOML file or the environment |
+| T | Tampered release | Reproducible Nix build of the web assets, signed tags, cosign-signed binary checksums, published asset hashes (SECURITY.md) |
 | E | Admin CLI abuse | Admin access is shell access; no admin web UI exists to attack |
 
 ## 6. Residual risks (accepted, with advice)
@@ -258,7 +258,7 @@ window; download received files promptly.
 renders them, but the owner opens them on their device. The inbox UI warns.
 
 **R9. Availability depends on one host.** No replication, no high availability.
-Back up (docs/operations.md).
+Back up the database (`dropr backup`) and the blobs.
 
 **R10. Time of check at the IdP.** Access removal propagates at the next
 revalidation: up to `revalidate_every` (default 15 min) plus idle behavior.
@@ -331,5 +331,5 @@ account per person, and no request links from shared computers.
   Keycloak (`e2e/tests`): tampered ciphertext and request keys, expiry,
   revocation, download limits, roles, CSRF, security headers, request link
   keys scoped per account.
-* Deployment: NixOS VM test of the hardened module (`nix/vm-test.nix`).
-* Before real use: external review (PLAN §11, milestone 7).
+* Audit fixes: `internal/server/audit_test.go`.
+* Before real use: external review.

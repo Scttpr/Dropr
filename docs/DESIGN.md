@@ -1,6 +1,8 @@
-# Dropr — Plan
+# Dropr — Design
 
 Self-hosted, end-to-end encrypted file drop. One instance. Accounts come from a standard OIDC provider, with Microsoft Entra ID as the officially supported one. Each file has exactly one owner.
+
+This document states what Dropr does and why. [ARCHITECTURE.md](ARCHITECTURE.md), [FORMAT.md](FORMAT.md) and [PAGES.md](PAGES.md) pin the details; [THREAT_MODEL.md](THREAT_MODEL.md) is the full security analysis. Code comments cite its sections ("DESIGN.md §5.1"), so section numbers are stable.
 
 ## 1. Scope
 
@@ -20,14 +22,14 @@ Non-goals: local accounts, public sign-up, folders, previews, comments, editing,
 | Topic | Decision |
 |---|---|
 | Identity | Generic OIDC is the **only** way to log in. No local accounts, no fallback admin login. |
-| Supported provider | Microsoft Entra ID is officially supported, with a setup guide and release testing. Other compliant providers (Keycloak, Authentik, Okta, ...) should work but are best-effort. Keycloak is used in CI. |
+| Supported provider | Microsoft Entra ID is officially supported ([oidc.md](oidc.md)). Other compliant providers (Keycloak, Authentik, Okta, ...) work if they meet the same requirements, on a best-effort basis. Keycloak is used in development and CI. |
 | Request link key | Each request link has its own X25519 key pair, generated in the owner's browser when the link is created. The private key stays in that browser (IndexedDB, non-extractable). OIDC proves identity; the browser profile holds the keys. |
 | Users | Several accounts per instance. Access is granted by a role claim from the provider (in Entra, an app role). A file belongs to exactly one owner. |
 | File size | Configurable per instance and per request link. Default 5 GB, hard maximum 100 GB. |
 | Lost browser data | Files received through a link open only in the browser profile that created it. Clearing that site's data, or losing the device, makes them unreadable. Accepted. The UI says so where links are created and listed. |
 | Backend language | Go |
 | Architecture | **Monolith**: one Go binary serves the HTML pages, the API and the static assets, all embedded with `go:embed`. Pages are rendered on the server. The only browser JavaScript is what must run client-side: encryption, request link keys, streaming transfers. |
-| Hosting | Self-hosted, one container, one data volume, on a domain you own. HTTPS is built in (ACME), or the app can run behind an existing reverse proxy. |
+| Hosting | Self-hosted, one binary, one data directory, on a domain you own. HTTPS is built in (ACME), or the app runs behind an existing reverse proxy. |
 
 ## 3. Cryptography (server never sees plaintext)
 
@@ -77,7 +79,7 @@ revalidate_every = "15m"
 - **ID token checks** (`go-oidc`): signature against the discovered JWKS (asymmetric algorithms only, never `none` or HS*), `iss`, `aud`, `azp` when present, `exp`, `nbf`, `iat` with small clock skew, `nonce`, plus every `required_claims` entry.
 - **User identity**: `(iss, sub)`, the standard stable identifier. Never email, `preferred_username` or `name`; those are display only.
 - **Authorization**: `role_claim` must contain `required_role` on every login and every revalidation. Otherwise access is denied (403 page, no account created).
-- **MFA**: delegated to the provider. Dropr doesn't do MFA itself; the provider's setup guide covers enforcing it.
+- **MFA**: delegated to the provider. Dropr doesn't do MFA itself; [oidc.md](oidc.md) covers enforcing it.
 - **Revalidation**: the server stores the refresh token (AES-256-GCM encrypted at rest) and refreshes it every `revalidate_every`. The new ID token must pass all checks above, carry the same `sub`, and still have the role. If the refresh fails or any check fails, the session is killed. Providers refuse refresh tokens for disabled users and revoked sessions.
 - **Logout**: ends the local session, then RP-initiated logout via the discovered `end_session_endpoint` when the provider has one. Front-channel logout is also supported when the provider offers it.
 - **Provisioning**: an account is created just-in-time on first successful login. Removing the role blocks access. The data stays until an admin purges it.
@@ -136,7 +138,7 @@ Admin access is shell access to the host. There is no admin web UI.
   - `tls = "acme"` (default): the Go binary gets and renews Let's Encrypt certificates itself (`golang.org/x/crypto/acme/autocert`, TLS-ALPN-01 challenge, so only port 443 is needed). Certificates are cached in the data volume. TLS 1.2 minimum with AEAD cipher suites only; TLS 1.3 preferred. Port 80, if enabled, only redirects to HTTPS. Set a CAA record for the domain.
   - `tls = "proxy"`: plain HTTP on a local address or Unix socket, behind your own reverse proxy. `X-Forwarded-For` / `X-Forwarded-Proto` are trusted **only** from the configured `trusted_proxies`. Dropr refuses to start in this mode if `public_url` isn't `https://`.
   - In both modes: HSTS with `includeSubDomains; preload`.
-- **Server timeouts**: `ReadHeaderTimeout`, idle timeout and header size limits on the Go `http.Server`, plus per-route body limits (one part for uploads, a few KiB for the API). These protect against slowloris attacks and oversized requests now that no proxy sits in front.
+- **Server timeouts**: `ReadHeaderTimeout`, idle timeout and header size limits on the Go `http.Server`, plus per-route body limits (one part for uploads, a few KiB for the API). These protect against slowloris attacks and oversized requests when no proxy sits in front.
 - **CSP**: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; form-action 'self' <issuer origin>; frame-ancestors 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types dropr-sw` (the single policy turns exactly `/sw.js` into a TrustedScriptURL for `serviceWorker.register()`, a Trusted Types sink)
 - **Headers**: `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`, a strict `Permissions-Policy`, and `Cache-Control: no-store` on link pages and the API.
 - **CSRF**: SameSite=Strict session cookie, plus checks on `Origin` and `Sec-Fetch-Site` for every state-changing request. The OIDC callback is the only cross-site entry point and is protected by `state` + PKCE.
@@ -144,7 +146,7 @@ Admin access is shell access to the host. There is no admin web UI.
 - **Abuse limits on request links**: size/count caps per link, per-IP rate limits (in memory, keyed by a hash), and a quota per owner. The inbox UI warns that files come from outside.
 - **Logs**: no plaintext IPs, tokens or link fragments (fragments never reach the server anyway). 7-day retention.
 - **Browser code integrity**: no third-party JS, minimal dependencies, reproducible build, published asset hashes.
-- **Secrets**: the OIDC client key and the refresh-token encryption key are loaded from files (Docker secrets), never from environment variables or the database.
+- **Secrets**: the OIDC client key and the refresh-token encryption key are loaded from files, never from the configuration file, environment variables or the database.
 
 ## 8. Stack
 
@@ -155,8 +157,8 @@ Admin access is shell access to the host. There is no admin web UI.
 | Blobs | Local disk volume |
 | Pages | Server-rendered with Go `html/template` (contextual auto-escaping). No inline scripts or styles, so the strict CSP holds. Every page works as a plain HTML document; JS only adds the crypto parts. |
 | Browser code | A few small TypeScript modules, no framework, bundled with esbuild and embedded in the binary: `crypto` (STREAM, HPKE), `request-keys` (IndexedDB store of the link private keys), `uploader`, `downloader` (+ service worker), `decrypt-names` (fills in encrypted filenames on the inbox and share pages), one entry module per page, plus `prefs` (language and theme) and typed EN/FR catalogs. |
-| Deployment | One distroless container running as non-root, read-only root filesystem, one data volume (SQLite, blobs, ACME cache). Listens on 8443 inside the container, mapped to host port 443. |
-| Dev environment | Nix flake (Go, Node, esbuild). A dev Compose profile starts Keycloak with a seeded realm, so login works locally without a real tenant. |
+| Distribution | One static binary (Linux amd64 and arm64) with every asset embedded. One data directory holds SQLite, the blobs and the ACME cache. |
+| Dev environment | Nix flake (Go, Node, esbuild). A dev Compose file starts Keycloak with a seeded realm, so login works locally without a real tenant. |
 | CI | Go tests + fuzzing, browser-module tests, Playwright E2E against Keycloak |
 
 ### Data model
@@ -201,30 +203,16 @@ header) and are remembered in cookies.
 
 ## 10. Self-hosting
 
-- Requirements: a domain, ports 80/443, disk space for the blobs plus headroom for files up to 100 GB, and an OIDC provider where you can register a client.
-- **Entra setup guide** (official, step by step):
-  1. App registration, single-tenant, web redirect URI `https://<host>/auth/callback`
-  2. Upload the certificate credential
-  3. Define the app role `Dropr.User`
-  4. Enterprise app: set "Assignment required = Yes" and assign users or groups
-  5. Recommended: a Conditional Access policy requiring phishing-resistant MFA
-- **Keycloak example config** shipped as a reference (best-effort, also used in CI).
-- `docker compose up -d`. One service, plus `dropr.toml` (`public_url`, `tls`, the `[oidc]` section) and the secrets files. Running the binary directly (for example as a systemd service) works too.
-- On startup, Dropr checks provider discovery and its capabilities (PKCE S256, `private_key_jwt`, refresh tokens). In production mode it refuses to start if any check fails.
-- Backups: back up SQLite (online backup API) and the blob volume. Blobs are already encrypted. The database holds encrypted refresh tokens and HPKE-wrapped file keys, so protect it. Request link private keys are not on the server: they live in the owners' browser profiles, outside any server backup.
-- Updates: pinned image digests and a signed release tag.
+The product constraints the code enforces:
 
-## 11. Milestones
+- **One process, one directory**: `dropr serve` is the whole service. `data_dir` holds the SQLite database (`dropr.db`), the blobs (`blobs/`) and the ACME cache (`acme/`). There is no external database, cache or queue.
+- **Requirements**: a domain, disk space for the blobs plus headroom for files up to 100 GB, and an OIDC provider where you can register a client with a role claim ([oidc.md](oidc.md)).
+- **TLS**: `acme` or `proxy` (§7). Dropr is always served from the root of its own origin; `public_url` has no path.
+- **Startup checks**: Dropr validates the configuration (unknown keys are errors), then checks provider discovery and its capabilities (PKCE S256, `private_key_jwt`, refresh tokens). In production mode, the default, it refuses to start on: a non-`https` `public_url` or issuer, `client_secret` authentication, a provider missing a required capability, a multi-tenant issuer, proxy mode without `trusted_proxies` (or `trust_unix_socket_proxy` on a socket), world-readable secret files, an expired client certificate. Dev mode downgrades the PKCE, refresh-token and `private_key_jwt` checks to warnings and allows `http://localhost`.
+- **Backups**: `dropr backup` writes a consistent online copy of the database; the blobs are already encrypted. The database holds encrypted refresh tokens and HPKE-wrapped file keys, so protect it. Request link private keys are not on the server: they live in the owners' browser profiles, outside any server backup.
+- **Releases**: signed git tags, static binaries with signed checksums, and published asset hashes ([SECURITY.md](../SECURITY.md)).
 
-1. **Skeleton**: Go module, config, SQLite migrations, TLS modes (ACME + proxy), `html/template` layout and asset embedding, security-header middleware, generic OIDC login/logout/revalidation, sessions, the dev Keycloak profile. Automated tests against Keycloak, plus a manual check against a real Entra test tenant.
-2. **Crypto core**: STREAM and HPKE in TypeScript. Test vectors plus property tests (round-trip, truncation, reordering, tampering).
-3. **Request link keys**: a key pair per request link, generated in the browser, private key non-extractable in IndexedDB. (First built with passkeys and the WebAuthn PRF extension; replaced, see ARCHITECTURE.md §2.)
-4. **Files**: share/request APIs, chunked resumable uploads, Range downloads, expiry cleanup, quotas, rate limits.
-5. **Pages + browser modules**: server-rendered dashboard, share page, request page and inbox, wired to the upload, download, request-key and filename-decryption modules. Streaming downloads through File System Access or the service worker.
-6. **Hardening and tests**: Go native fuzzing, `govulncheck`, `npm audit`, Mozilla Observatory. Playwright E2E for both flows in Chromium, Firefox and WebKit. Negative cases: expired, revoked, oversized, tampered, truncated, wrong key, role removed, wrong issuer/audience/nonce, `alg: none` / HS256 tokens. A 100 GB soak test.
-7. **Release**: THREAT_MODEL.md, Entra setup guide, Keycloak example, a release check against Entra, reproducible build, Compose file, external review before real use.
-
-## 12. Threat model summary
+## 11. Threat model summary
 
 | Attacker | Outcome |
 |---|---|

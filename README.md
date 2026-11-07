@@ -1,110 +1,90 @@
 # Dropr
 
-Self-hosted, end-to-end encrypted file drop. One Go binary, one data volume,
-your own domain, and your existing identity provider for accounts.
+Self-hosted, end-to-end encrypted file drop. One Go binary, your domain, and
+your existing OIDC identity provider for accounts.
 
 Two flows, nothing else:
 
 * **Share**: an owner uploads a file and gets a link. Anyone with the link can
-  download it, until it expires or is revoked.
+  download it until it expires or is revoked.
 * **Request**: an owner creates a request link. Anyone with it can send files
   that only that owner can read.
 
-Files go up to 100 GB (default cap 5 GB), uploaded in resumable 32 MiB parts
-and streamed to disk on download.
+Files go up to 100 GB (default cap 5 GB). Uploads are resumable; downloads
+stream to disk. The interface is in English and French, with light, dark and
+system themes.
 
-The interface is in English and French (picked from the browser's language,
-switchable on every page) with a light theme by default, plus dark and
-follow-the-system themes. Adding a language means one Go catalog
-(`internal/i18n`) and one TypeScript catalog (`web/src/lib/locales`); tests
-fail on any missing translation.
-
-## Security model in six bullets
+## Security model
 
 * **The server never sees plaintext.** Files and their names are encrypted in
   the browser (AES-256-GCM STREAM, WebCrypto only). Share-link keys live in the
   URL fragment, which browsers never send to the server.
-* **Request links use HPKE** (RFC 9180, X25519) with a key pair per link,
-  generated in the owner's browser. The private key is stored there,
-  non-extractable, and never reaches the server. Stolen login credentials do
-  not open the inbox.
-* **Login is OIDC only**, single pinned issuer, PKCE, `private_key_jwt`
-  client authentication in production, and a required role claim re-checked
-  every 15 minutes. Microsoft Entra ID is officially supported; Keycloak is
-  used in CI. There are no local accounts.
-* **Hardened web surface**: strict CSP with Trusted Types and no inline code,
-  HSTS preload, `__Host-` SameSite=Strict sessions, CSRF checks, built-in
-  Let's Encrypt (or run behind your proxy), no third-party scripts.
+* **Request links use HPKE** (RFC 9180, X25519) with one key pair per link,
+  generated in the owner's browser. The private key stays there,
+  non-extractable. Stolen login credentials do not open the inbox.
+* **Login is OIDC only**: one pinned issuer, PKCE, `private_key_jwt` in
+  production, and a required role claim re-checked every 15 minutes. No local
+  accounts.
+* **Strict web surface**: CSP with Trusted Types and no inline code, HSTS,
+  `__Host-` SameSite=Strict sessions, CSRF checks, no third-party scripts.
 * **Verifiable browser code**: reproducible build, zero runtime JavaScript
   dependencies, published asset hashes. See [SECURITY.md](SECURITY.md).
-* **Honest limits**: a server operator can still serve malicious JavaScript,
-  and the server sees sizes and timing. Read the
-  [threat model](docs/THREAT_MODEL.md) before real use. Files received through
-  a request link open only in the browser that created it: clearing its site
-  data loses them, by design.
+* **Honest limits**: whoever controls the server can serve malicious
+  JavaScript, and the server sees sizes and timing. Files received through a
+  request link open only in the browser that created the link; clearing its
+  site data loses them, by design. Read the
+  [threat model](docs/THREAT_MODEL.md) before real use.
 
-## Quickstart (development)
-
-Needs Nix with flakes and podman.
+## Build
 
 ```sh
-nix develop            # Go, Node, esbuild, tooling
-make keycloak-up       # dev Keycloak on :8180 with a seeded "dropr" realm
-make dev               # builds the browser modules, then Dropr on http://localhost:8080
+nix build .#dropr    # result/bin/dropr
+make build           # bin/dropr (from `nix develop`)
 ```
 
-Open <http://localhost:8080> and sign in as `alice` (`alice-dev-password`).
-`mallory` has no role and is refused. Credentials are public test values
-(see `deploy/compose.dev.yaml`).
+Either way you get one static binary with the browser modules, templates and
+styles embedded. Release binaries for Linux amd64 and arm64 are published with
+signed checksums ([verifying a release](SECURITY.md#verifying-a-release)).
+
+## Run
 
 ```sh
-make check             # build, lint, race tests, govulncheck
-make test-keycloak     # integration tests with real logins
-make e2e               # real-browser smoke (Playwright: Chromium, Firefox, WebKit)
-make fuzz FUZZTIME=20s
-cd web && npm ci && npm run typecheck && npm test
-make keycloak-down
+(umask 077; openssl rand -base64 32 > refresh_key)   # encrypts stored refresh tokens
+dropr serve --config dropr.toml
 ```
 
-## Build and run
+[`dropr.example.toml`](dropr.example.toml) is the commented configuration
+reference. Dropr needs:
 
-```sh
-nix build .#dropr        # static binary with embedded assets
-nix build .#web-assets   # hashed JS bundle, manifest.json, sw.js
-nix build .#image        # distroless-style OCI image (reproducible)
-nix flake check          # vet, tests, web tests, VM test
-```
+* an OIDC provider where you can register a client and issue a role claim
+  ([docs/oidc.md](docs/oidc.md));
+* a domain; Dropr either gets its own Let's Encrypt certificate
+  (`tls = "acme"`) or runs behind your reverse proxy (`tls = "proxy"`);
+* one data directory (`data_dir`) for the SQLite database, the encrypted blobs
+  and the ACME cache.
 
-Without Nix: `podman build -f deploy/Containerfile -t dropr .`.
-After changing Go or npm dependencies run `make hashes` to refresh
-`nix/hashes.nix`. Flake builds only see files known to git (`git add` new files).
-
-## Deploy
-
-[docs/operations.md](docs/operations.md) covers the NixOS module, Compose
-(`deploy/docker/`), hardened Debian 13 + systemd (`deploy/debian/`, step by step in [docs/deploy-debian.md](docs/deploy-debian.md)), TLS modes, backups, upgrades, the
-admin CLI and capacity planning for 100 GB files.
+In production mode, Dropr refuses to start on an unsafe configuration (plain
+HTTP, a client secret, a provider without PKCE or refresh tokens, a proxy
+without `trusted_proxies`, world-readable secret files). `dropr help` lists the
+admin commands: `user list|revoke|purge|migrate`, `gc`, `backup`,
+`healthcheck`, `version`. There is no admin web UI.
 
 ## Documentation
 
 | Document | Content |
 |---|---|
-| [docs/setup-entra.md](docs/setup-entra.md) | Microsoft Entra ID setup, step by step |
-| [docs/setup-keycloak.md](docs/setup-keycloak.md) | Keycloak realm, client and mappers |
-| [docs/deploy-debian.md](docs/deploy-debian.md) | Production install: hardened Debian 13 with systemd, or Docker Compose |
-| [docs/operations.md](docs/operations.md) | Install, configure, back up, upgrade, rotate |
+| [docs/oidc.md](docs/oidc.md) | Identity provider requirements, Entra ID and Keycloak |
+| [docs/DESIGN.md](docs/DESIGN.md) | Scope, decisions and their rationale |
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Assets, attackers, STRIDE, residual risks |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | HTTP surface, data model, contracts |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | HTTP surface, data model, configuration, contracts |
 | [docs/FORMAT.md](docs/FORMAT.md) | Normative byte formats and test vectors |
-| [docs/PAGES.md](docs/PAGES.md) | Page ↔ browser module DOM contract, language and theme |
-| [docs/security-audit-2026-11.md](docs/security-audit-2026-11.md) | Internal security audit: findings and fixes |
-| [PLAN.md](PLAN.md) | Product plan and decisions |
+| [docs/PAGES.md](docs/PAGES.md) | Page and browser module DOM contract |
 | [SECURITY.md](SECURITY.md) | Reporting, supported versions, verifying releases |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup and tests |
 
 ## Status
 
-Pre-release; external review is required before real use (PLAN.md,
-milestone 7).
+Pre-release. An external security review is required before real use.
 
 ## License
 
