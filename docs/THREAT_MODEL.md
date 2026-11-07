@@ -4,8 +4,9 @@ Status: draft for external review. Scope: Dropr as specified in
 `docs/DESIGN.md`, `docs/ARCHITECTURE.md` and `docs/FORMAT.md`, deployed as one
 instance with Microsoft Entra ID (or another OIDC provider) for login. Every
 mitigation listed is implemented; the "Code" column names where it lives.
-Fixes from the 2026-11 internal audit are cited as "audit X-n" in
-ARCHITECTURE.md and covered by regression tests. Treat this document as a
+Fixes from the [2026-11 internal audit](security-audit-2026-11.md) are cited
+as "audit X-n" in ARCHITECTURE.md and the code, and covered by regression
+tests. Treat this document as a
 checklist to re-verify against the code before each release.
 
 ## 1. What Dropr is protecting, and from whom
@@ -164,7 +165,7 @@ D = denial of service, E = elevation of privilege.
 | T | CSRF | SameSite=Strict cookie; reject non-GET unless `Sec-Fetch-Site` is same-origin/none, else `Origin` equals the public origin | `internal/httpx/csrf.go` |
 | T | Clickjacking | `frame-ancestors 'none'`, `X-Frame-Options: DENY` | `internal/httpx/headers.go` |
 | I | Cached sensitive responses | `Cache-Control: no-store` on pages with links and on the API | `internal/httpx/headers.go` |
-| I | Spoofed client IP via forwarded headers | `X-Forwarded-*` trusted only from `trusted_proxies` (or a `unix:` socket peer with `trust_unix_socket_proxy`); IPs only logged as keyed hashes | `internal/httpx/clientip.go` |
+| I | Spoofed client IP via forwarded headers | `X-Forwarded-For` trusted only from `trusted_proxies` (or a `unix:` socket peer with `trust_unix_socket_proxy`); IPs only logged as keyed hashes | `internal/httpx/clientip.go` |
 | D | Every client behind a misconfigured proxy shares one rate-limit bucket (one client locks out sign-in for all) | Production refuses proxy mode without `trusted_proxies` (TCP) or `trusted_proxies`/`trust_unix_socket_proxy` (unix socket); dev warns; runtime warnings for undeterminable addresses and untrusted X-Forwarded-For | `internal/config/config.go` |
 | D | Slowloris, trickling transfers, oversized bodies, floods | `ReadHeaderTimeout`, idle timeout, header limits, per-route body limits, in-memory rate limiting, minimum transfer rate, concurrent transfer caps | `internal/httpx/ratelimit.go`, `internal/httpx/streams.go`, `internal/blob/serve.go`, `internal/server/server.go` |
 | I | Responses without security headers | Every handler response, including ServeMux redirects and 404/405, passes the header middleware. Only answers `net/http` writes before routing (400 on a malformed request line, 431 for oversized headers, plain-HTTP-to-HTTPS) lack them: they are fixed `text/plain` with nothing reflected (accepted) | `internal/httpx/headers.go` |
