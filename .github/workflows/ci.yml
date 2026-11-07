@@ -132,13 +132,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, fetch-depth: 0 }
+      # Fails closed: no release from a tag that is unsigned, signed by a key
+      # not listed below, or not pointing at the commit being built (audit
+      # 2026-11b L-6). Tags are SSH-signed; the maintainers' public keys are
+      # listed here and in SECURITY.md. Add a line per maintainer key.
       - name: Verify the tag signature
         run: |
-          # Needs the maintainers' signing keys in the runner keyring; adapt to
-          # your key distribution (for SSH-signed tags: gpg.ssh.allowedSignersFile).
-          git tag -v "$GITHUB_REF_NAME" || echo "::warning::tag signature not verified in CI"
+          # checkout may leave the tag lightweight; fetch the annotated object.
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+          test "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" = "$GITHUB_SHA"
+          cat > "$RUNNER_TEMP/allowed_signers" <<'KEYS'
+          git.reformer354@passmail.net namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDZjQZiLBUTB+CxltkP0SER456htd7hruQMHmsWlGTMA
+          KEYS
+          git -c gpg.ssh.allowedSignersFile="$RUNNER_TEMP/allowed_signers" tag -v "$GITHUB_REF_NAME"
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+      # No magic-nix-cache here: the release job holds id-token and
+      # contents:write, and must not substitute store paths that other jobs
+      # (which run npm ci outside the sandbox) could have pushed to the shared
+      # Actions cache (audit 2026-11b L-6). Everything comes from
+      # cache.nixos.org or is built locally.
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: Build and hash the web assets
@@ -160,10 +173,13 @@ jobs:
           sha256sum "dropr-${GITHUB_REF_NAME}-linux-"* > "dropr-${GITHUB_REF_NAME}-SHA256SUMS"
           cat "dropr-${GITHUB_REF_NAME}-SHA256SUMS"
 
-      - name: Sign the binary checksums (keyless)
+      # Both hash lists are signed: SECURITY.md's "check a running instance"
+      # procedure trusts the asset hashes (audit 2026-11b L-6).
+      - name: Sign the binary checksums and the asset hashes (keyless)
         run: |
-          cosign sign-blob --yes --bundle "dropr-${GITHUB_REF_NAME}-SHA256SUMS.sigstore.json" \
-            "dropr-${GITHUB_REF_NAME}-SHA256SUMS"
+          for f in "dropr-${GITHUB_REF_NAME}-SHA256SUMS" "dropr-assets-${GITHUB_REF_NAME}.sha256"; do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+          done
 
       - name: Publish the GitHub release
         env:
@@ -172,6 +188,6 @@ jobs:
           printf 'Verify: see SECURITY.md.\n' > notes.md
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
             --notes-file notes.md \
-            "dropr-assets-${GITHUB_REF_NAME}.sha256" \
+            "dropr-assets-${GITHUB_REF_NAME}.sha256" "dropr-assets-${GITHUB_REF_NAME}.sha256.sigstore.json" \
             "dropr-${GITHUB_REF_NAME}-linux-amd64" "dropr-${GITHUB_REF_NAME}-linux-arm64" \
             "dropr-${GITHUB_REF_NAME}-SHA256SUMS" "dropr-${GITHUB_REF_NAME}-SHA256SUMS.sigstore.json"
