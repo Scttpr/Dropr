@@ -75,6 +75,40 @@ export function importX25519PublicKey(pk: Uint8Array): Promise<CryptoKey> {
   return subtle.importKey("raw", copyBytes(pk), { name: "X25519" }, true, []);
 }
 
+/** Attempts at X25519 key generation; see {@link generateX25519KeyPair}. */
+const KEYGEN_ATTEMPTS = 8;
+
+/**
+ * Retry `generate` while it rejects with an `OperationError`. Every attempt
+ * draws a fresh random key, so retrying loses nothing.
+ */
+async function retryOperationError<T>(generate: () => Promise<T>, attempts: number): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await generate();
+    } catch (e) {
+      if (i >= attempts || !(e instanceof DOMException && e.name === "OperationError")) throw e;
+    }
+  }
+}
+
+/**
+ * Generate an X25519 key pair: private half non-extractable, raw 32-byte
+ * public half.
+ *
+ * WebKitGTK/WPE (libgcrypt backend) rejects about 1 in 130 X25519
+ * `generateKey` calls with an `OperationError`; importing, exporting and
+ * `deriveBits` are unaffected. Retrying makes a failure vanishingly rare
+ * (about 1e-17 after {@link KEYGEN_ATTEMPTS} attempts).
+ */
+export async function generateX25519KeyPair(): Promise<{ privateKey: CryptoKey; publicKey: Bytes }> {
+  const kp = await retryOperationError(
+    async () => (await subtle.generateKey({ name: "X25519" }, false, ["deriveBits"])) as CryptoKeyPair,
+    KEYGEN_ATTEMPTS,
+  );
+  return { privateKey: kp.privateKey, publicKey: new Uint8Array(await subtle.exportKey("raw", kp.publicKey)) };
+}
+
 /** Public key of an **extractable** X25519 private key. */
 export async function x25519PublicFromPrivate(sk: CryptoKey): Promise<Bytes> {
   const jwk = await subtle.exportKey("jwk", sk);
@@ -118,10 +152,8 @@ interface EphemeralKeyPair {
   readonly publicKey: Bytes;
 }
 
-async function generateEphemeral(): Promise<EphemeralKeyPair> {
-  // Private half non-extractable; public half is always exportable.
-  const kp = (await subtle.generateKey({ name: "X25519" }, false, ["deriveBits"])) as CryptoKeyPair;
-  return { privateKey: kp.privateKey, publicKey: new Uint8Array(await subtle.exportKey("raw", kp.publicKey)) };
+function generateEphemeral(): Promise<EphemeralKeyPair> {
+  return generateX25519KeyPair();
 }
 
 async function encap(pkR: Uint8Array, eph: EphemeralKeyPair): Promise<{ sharedSecret: Bytes; enc: Bytes }> {
@@ -282,6 +314,7 @@ export const _internals = {
   contextOpen,
   computeNonce,
   decap,
+  retryOperationError,
   /** Seal with a caller-supplied ephemeral key pair (raw scalars). */
   async sealDeterministic(
     pkR: Uint8Array,

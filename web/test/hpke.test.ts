@@ -176,3 +176,29 @@ describe("HPKE seal/open", () => {
     await assert.rejects(seal(new Uint8Array(31), new Uint8Array(0), new Uint8Array(0), new Uint8Array(1)), FormatError);
   });
 });
+
+describe("X25519 key generation retry (WebKitGTK/WPE OperationError)", () => {
+  const { retryOperationError } = _internals;
+  const flaky = (failures: number, error: () => unknown) => {
+    let calls = 0;
+    const generate = () => (++calls <= failures ? Promise.reject(error()) : Promise.resolve(calls));
+    return { generate, calls: () => calls };
+  };
+
+  it("retries OperationError until an attempt succeeds", async () => {
+    const f = flaky(3, () => new DOMException("failed", "OperationError"));
+    assert.equal(await retryOperationError(f.generate, 8), 4);
+  });
+
+  it("gives up after the last attempt", async () => {
+    const f = flaky(Infinity, () => new DOMException("failed", "OperationError"));
+    await assert.rejects(retryOperationError(f.generate, 8), { name: "OperationError" });
+    assert.equal(f.calls(), 8);
+  });
+
+  it("does not retry other errors", async () => {
+    const f = flaky(Infinity, () => new DOMException("nope", "NotSupportedError"));
+    await assert.rejects(retryOperationError(f.generate, 8), { name: "NotSupportedError" });
+    assert.equal(f.calls(), 1);
+  });
+});
