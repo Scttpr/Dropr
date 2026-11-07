@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -443,7 +444,9 @@ func TestRefreshKeyPassphraseWarning(t *testing.T) {
 func TestTestOnlyKeyDetected(t *testing.T) {
 	t.Parallel()
 	data, err := os.ReadFile("../../dev/keycloak/test-keys/dropr-pkjwt.TEST-ONLY.pem")
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skip("dev/ is not part of this source tree (nix build)")
+	} else if err != nil {
 		t.Fatal(err)
 	}
 	ck, err := ParseClientKey(data)

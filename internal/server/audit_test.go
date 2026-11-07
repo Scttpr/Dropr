@@ -507,7 +507,7 @@ func TestRequestFileSpaceCheckAfterLink(t *testing.T) {
 		t.Errorf("request link on a full disk: %d %s", resp.StatusCode, b)
 	}
 	// ...so make one directly to check the upload answer.
-	id := "BBBBBBBBBBBBBBBBBBBBBB"
+	id := "BBBBBBBBBBBBBBBBBBBBBA" // canonical: no trailing bits
 	if _, err := e.s.store.DB().W.ExecContext(t.Context(), `INSERT INTO requests (id, owner_id, expires_at, max_files, max_bytes, created_at)
 		SELECT ?, id, ?, 1, ?, ? FROM users`, id, time.Now().Add(time.Hour).Unix(), smallSize, time.Now().Unix()); err != nil {
 		t.Fatal(err)

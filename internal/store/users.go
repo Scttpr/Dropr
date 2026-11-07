@@ -99,7 +99,7 @@ func stripInName(r rune) bool {
 		unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r):
 		return true
 	case unicode.Is(unicode.Cf, r):
-		return !(r >= 0xfff9 && r <= 0xfffb) && !(r >= 0x13430 && r <= 0x1343f) &&
+		return (r < 0xfff9 || r > 0xfffb) && (r < 0x13430 || r > 0x1343f) &&
 			!unicode.Is(unicode.Prepended_Concatenation_Mark, r)
 	}
 	return false
