@@ -25,11 +25,18 @@ runs:
         determinate: false        # upstream Nix, no FlakeHub login
         diagnostic-endpoint: ""   # no installer telemetry
         summarize: false
+        # The store cache is garbage-collected before saving, which deletes
+        # .drv files that Nix's evaluation cache still points to; a restored
+        # eval cache then fails with "store path ... does not exist".
+        # Re-evaluating the flake costs seconds.
+        extra-conf: |
+          eval-cache = false
 
     - if: inputs.cache == 'true'
       uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
       with:
-        primary-key: nix-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/hashes.nix') }}
-        restore-prefixes-first-match: nix-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-
+        # Bump v<n> to discard every saved store (v1 held a stale eval cache).
+        primary-key: nix-v2-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/hashes.nix') }}
+        restore-prefixes-first-match: nix-v2-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-
         gc-max-store-size-linux: ${{ inputs.store-size }}
         save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
