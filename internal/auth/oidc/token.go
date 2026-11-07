@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // tokenResponse is a successful token endpoint response (RFC 6749 §5.1).
@@ -36,26 +37,9 @@ const maxTokenResponse = 1 << 20
 
 // tokenRequest POSTs form to the token endpoint with client authentication.
 func (p *Provider) tokenRequest(ctx context.Context, form url.Values) (*tokenResponse, error) {
-	form.Set("client_id", p.cfg.ClientID)
-	if p.signer != nil {
-		a, err := p.signer.sign(p.meta.TokenEndpoint, p.now())
-		if err != nil {
-			return nil, fmt.Errorf("oidc: sign client assertion: %w", err)
-		}
-		form.Set("client_assertion_type", ClientAssertionType)
-		form.Set("client_assertion", a)
-	} else if p.secretAuth == "post" {
-		form.Set("client_secret", p.cfg.ClientSecret)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.meta.TokenEndpoint, strings.NewReader(form.Encode()))
+	req, err := p.clientAuthRequest(ctx, p.meta.TokenEndpoint, form)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	if p.signer == nil && p.secretAuth == "basic" {
-		// RFC 6749 §2.3.1: form-urlencode both parts before Basic encoding.
-		req.SetBasicAuth(url.QueryEscape(p.cfg.ClientID), url.QueryEscape(p.cfg.ClientSecret))
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -90,6 +74,65 @@ func (p *Provider) tokenRequest(ctx context.Context, form url.Values) (*tokenRes
 		return nil, errors.New("oidc: token response lacks a bearer access token")
 	}
 	return &tr, nil
+}
+
+// revokeTimeout bounds a background revocation request.
+const revokeTimeout = 10 * time.Second
+
+// revokeRefreshToken asks the provider to revoke a refresh token (RFC 7009)
+// in the background. It never blocks or fails the caller: the outcome is only
+// logged (audit 2026-11 A07-4).
+func (p *Provider) revokeRefreshToken(ctx context.Context, refreshToken string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revokeTimeout)
+	go func() {
+		defer cancel()
+		req, err := p.clientAuthRequest(ctx, p.meta.RevocationEndpoint, url.Values{
+			"token":           {refreshToken},
+			"token_type_hint": {"refresh_token"},
+		})
+		if err == nil {
+			var resp *http.Response
+			if resp, err = p.client.Do(req); err == nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					err = fmt.Errorf("revocation endpoint returned %d", resp.StatusCode)
+				}
+			}
+		}
+		if err != nil {
+			p.log.WarnContext(ctx, "refresh token revocation failed", "err", err)
+		}
+	}()
+}
+
+// clientAuthRequest builds a form POST to endpoint carrying the configured
+// client authentication (private_key_jwt or client_secret). The assertion's
+// audience is the token endpoint, which providers accept for their other
+// client-authenticated endpoints too.
+func (p *Provider) clientAuthRequest(ctx context.Context, endpoint string, form url.Values) (*http.Request, error) {
+	form.Set("client_id", p.cfg.ClientID)
+	if p.signer != nil {
+		a, err := p.signer.sign(p.meta.TokenEndpoint, p.now())
+		if err != nil {
+			return nil, fmt.Errorf("oidc: sign client assertion: %w", err)
+		}
+		form.Set("client_assertion_type", ClientAssertionType)
+		form.Set("client_assertion", a)
+	} else if p.secretAuth == "post" {
+		form.Set("client_secret", p.cfg.ClientSecret)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	if p.signer == nil && p.secretAuth == "basic" {
+		// RFC 6749 §2.3.1: form-urlencode both parts before Basic encoding.
+		req.SetBasicAuth(url.QueryEscape(p.cfg.ClientID), url.QueryEscape(p.cfg.ClientSecret))
+	}
+	return req, nil
 }
 
 // fetchUserinfo calls the userinfo endpoint with an access token and returns

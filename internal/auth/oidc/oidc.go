@@ -13,11 +13,13 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
@@ -46,6 +48,7 @@ type Metadata struct {
 	JWKSURI                            string   `json:"jwks_uri"`
 	UserinfoEndpoint                   string   `json:"userinfo_endpoint"`
 	EndSessionEndpoint                 string   `json:"end_session_endpoint"`
+	RevocationEndpoint                 string   `json:"revocation_endpoint"`
 	CodeChallengeMethods               []string `json:"code_challenge_methods_supported"`
 	TokenEndpointAuthMethods           []string `json:"token_endpoint_auth_methods_supported"`
 	TokenEndpointAuthSigningAlgs       []string `json:"token_endpoint_auth_signing_alg_values_supported"`
@@ -100,6 +103,8 @@ type Provider struct {
 	now        func() time.Time
 	// formOrigins are the provider origins the browser is sent to.
 	formOrigins []string
+	// noSIDOnce limits the "ID token has no sid" warning to one per process.
+	noSIDOnce sync.Once
 }
 
 // clockSkew is the tolerance applied to exp, nbf and iat.
@@ -121,6 +126,63 @@ func DefaultHTTPClient() *http.Client {
 	}
 }
 
+// maxProviderResponse caps every response body read from the provider,
+// including the discovery document and JWKS that go-oidc reads with an
+// unbounded io.ReadAll (audit 2026-11 I7).
+const maxProviderResponse = 1 << 20
+
+var errResponseTooLarge = errors.New("oidc: provider response too large")
+
+// capResponses returns a copy of c whose response bodies fail with
+// errResponseTooLarge past maxProviderResponse bytes.
+func capResponses(c *http.Client) *http.Client {
+	cc := *c
+	base := cc.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	cc.Transport = cappedTransport{base}
+	return &cc
+}
+
+type cappedTransport struct{ base http.RoundTripper }
+
+func (t cappedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.ContentLength > maxProviderResponse {
+		_ = resp.Body.Close()
+		return nil, errResponseTooLarge
+	}
+	resp.Body = &cappedBody{rc: resp.Body, left: maxProviderResponse}
+	return resp, nil
+}
+
+type cappedBody struct {
+	rc   io.ReadCloser
+	left int64
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.left < 0 {
+		return 0, errResponseTooLarge
+	}
+	// Read one byte past the cap to tell "exactly at the cap" from "over".
+	if int64(len(p)) > b.left+1 {
+		p = p[:b.left+1]
+	}
+	n, err := b.rc.Read(p)
+	b.left -= int64(n)
+	if b.left < 0 {
+		return n + int(b.left), errResponseTooLarge
+	}
+	return n, err
+}
+
+func (b *cappedBody) Close() error { return b.rc.Close() }
+
 // New performs discovery against the configured issuer, verifies its
 // capabilities and returns the relying party. Warnings describe capability
 // gaps tolerated in dev mode. In production any gap is an error.
@@ -131,6 +193,7 @@ func New(ctx context.Context, o Options) (*Provider, []string, error) {
 	if o.HTTPClient == nil {
 		o.HTTPClient = DefaultHTTPClient()
 	}
+	o.HTTPClient = capResponses(o.HTTPClient)
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
@@ -303,6 +366,15 @@ func (p *Provider) checkCapabilities() ([]string, error) {
 		need("provider advertises neither the refresh_token grant nor the offline_access scope; revalidation needs refresh tokens")
 	}
 
+	// The revocation endpoint is only used best-effort at logout, so a bad
+	// one is ignored rather than refused.
+	if ep := m.RevocationEndpoint; ep != "" {
+		if u, err := url.Parse(ep); err != nil || !u.IsAbs() || u.Host == "" ||
+			(u.Scheme != "https" && (p.production || u.Scheme != "http")) {
+			warnings = append(warnings, fmt.Sprintf("ignoring invalid revocation_endpoint %q", ep))
+			p.meta.RevocationEndpoint = ""
+		}
+	}
 	if m.EndSessionEndpoint == "" {
 		warnings = append(warnings, "provider has no end_session_endpoint; logout ends only the local session")
 	}

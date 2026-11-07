@@ -3,7 +3,7 @@
 // It implements discovery, JWKS, an auto-approving authorization endpoint,
 // a token endpoint that enforces PKCE S256 and authenticates the client
 // (private_key_jwt per RFC 7523, or client_secret), refresh with rotation,
-// userinfo and an end-session endpoint. Knobs let tests emit malicious or
+// userinfo, token revocation (RFC 7009) and an end-session endpoint. Knobs let tests emit malicious or
 // broken responses: unsigned or HMAC-signed tokens, unknown keys, wrong
 // claims, missing roles, a different subject on refresh, revoked refresh
 // tokens, refreshes without an id_token, and altered discovery documents.
@@ -120,6 +120,7 @@ type Provider struct {
 	assertions   []Assertion
 	tokenCalls   int
 	logouts      []url.Values
+	revocations  []string
 }
 
 type codeGrant struct {
@@ -182,6 +183,7 @@ func New(t testing.TB, opts Options) *Provider {
 	mux.HandleFunc("POST "+prefix+"/token", p.token)
 	mux.HandleFunc("GET "+prefix+"/userinfo", p.userinfo)
 	mux.HandleFunc("GET "+prefix+"/logout", p.logout)
+	mux.HandleFunc("POST "+prefix+"/revoke", p.revoke)
 	return p
 }
 
@@ -230,6 +232,14 @@ func (p *Provider) Logouts() []url.Values {
 	return slices.Clone(p.logouts)
 }
 
+// Revocations returns the tokens received by the revocation endpoint from
+// an authenticated client.
+func (p *Provider) Revocations() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.revocations)
+}
+
 // PublicKeyPEM returns the signing public key as PEM.
 func (p *Provider) PublicKeyPEM() []byte { return p.pubPEM }
 
@@ -249,6 +259,7 @@ func (p *Provider) discovery(w http.ResponseWriter, _ *http.Request) {
 		"jwks_uri":                                         p.Issuer + "/jwks",
 		"userinfo_endpoint":                                p.Issuer + "/userinfo",
 		"end_session_endpoint":                             p.Issuer + "/logout",
+		"revocation_endpoint":                              p.Issuer + "/revoke",
 		"response_types_supported":                         []string{"code"},
 		"subject_types_supported":                          []string{"public"},
 		"id_token_signing_alg_values_supported":            []string{"RS256"},
@@ -463,6 +474,25 @@ func (p *Provider) userinfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, claims)
+}
+
+func (p *Provider) revoke(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		oauthErr(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.authenticateClient(r); err != nil {
+		oauthErr(w, http.StatusUnauthorized, "invalid_client")
+		return
+	}
+	tok := r.PostForm.Get("token")
+	if g, ok := p.refresh[tok]; ok {
+		g.revoked = true
+	}
+	p.revocations = append(p.revocations, tok)
+	w.WriteHeader(http.StatusOK) // RFC 7009 §2.2: also for unknown tokens
 }
 
 func (p *Provider) logout(w http.ResponseWriter, r *http.Request) {
