@@ -1,6 +1,6 @@
 //go:build keycloak
 
-// Integration test against the dev Keycloak (deploy/compose.dev.yaml):
+// Integration test against the dev Keycloak (dev/compose.yaml):
 //
 //	make keycloak-up && make test-keycloak
 //
@@ -49,11 +49,11 @@ func keycloakConfig(t *testing.T, pkjwt bool) *config.Config {
 	}
 	clientAuth := `client_id = "dropr"
 client_auth = "client_secret"
-client_secret_file = "../../deploy/dev/client_secret"`
+client_secret_file = "../../dev/client_secret"`
 	if pkjwt {
 		clientAuth = `client_id = "dropr-pkjwt"
 client_auth = "private_key_jwt"
-client_key_file = "../../deploy/keycloak/test-keys/dropr-pkjwt.TEST-ONLY.pem"
+client_key_file = "../../dev/keycloak/test-keys/dropr-pkjwt.TEST-ONLY.pem"
 client_key_id = "dropr-dev-test"`
 	}
 	cfg, err := config.Parse([]byte(`

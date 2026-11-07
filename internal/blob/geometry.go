@@ -1,4 +1,4 @@
-// Package blob stores encrypted uploads on the local disk (PLAN.md §4).
+// Package blob stores encrypted uploads on the local disk (DESIGN.md §4).
 //
 // A blob is the ciphertext of one file, kept as the parts it was uploaded in:
 //

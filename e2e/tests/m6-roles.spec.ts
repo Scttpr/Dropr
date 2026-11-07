@@ -8,7 +8,7 @@
  *   when `sessions.revalidated_at` is older than revalidate_every (minimum
  *   1 m by config); instead of waiting, the test ages that column in SQLite.
  *   The next request must refresh at Keycloak, see the role is gone, and
- *   kill the session (PLAN.md §5.1). Signing in again is refused (403).
+ *   kill the session (DESIGN.md §5.1). Signing in again is refused (403).
  *   The role is restored in every case.
  */
 
@@ -87,7 +87,7 @@ test.describe("role removed mid-session", () => {
       expect(sqlGet<{ n: number }>(dropr, "SELECT count(*) AS n FROM sessions WHERE user_id = ?", user.id)?.n).toBe(0);
       const cookies = await bob.context.cookies(dropr.origin);
       expect(cookies.map((c) => c.name)).not.toContain("__Host-dropr_session");
-      // The data stays (PLAN.md §5.1: removing the role blocks access; data stays until purged).
+      // The data stays (DESIGN.md §5.1: removing the role blocks access; data stays until purged).
       expect(sqlGet<{ n: number }>(dropr, "SELECT count(*) AS n FROM requests WHERE owner_id = ?", user.id)?.n).toBe(1);
 
       // Signing in again is refused.

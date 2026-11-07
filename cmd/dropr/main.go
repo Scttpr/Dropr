@@ -492,8 +492,8 @@ func printVersion(w io.Writer) {
 // healthTimeout bounds `dropr healthcheck`.
 const healthTimeout = 3 * time.Second
 
-// cmdHealthcheck probes GET /healthz of the local server (container
-// healthchecks: the distroless image has no shell or curl). With --url it
+// cmdHealthcheck probes GET /healthz of the local server, for supervisors
+// and containers without a shell or curl. With --url it
 // probes that URL; otherwise it derives the address from the config's
 // listen and tls settings, including Unix sockets. Exit status 0 = healthy.
 func cmdHealthcheck(args []string, stdout, stderr io.Writer) error {

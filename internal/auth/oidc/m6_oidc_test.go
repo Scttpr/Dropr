@@ -10,7 +10,7 @@ import (
 	"github.com/scttpr/dropr/internal/config"
 )
 
-// Milestone 6 gap fill. TestIDTokenNegative and TestRevalidation already
+// Hardening gap fill. TestIDTokenNegative and TestRevalidation already
 // cover alg none, HS256-with-public-key, unknown key, wrong iss/aud/nonce,
 // azp, expiry, nbf, iat, missing role and a different sub on refresh for the
 // login path (and a subset on refresh). This file adds:

@@ -1,6 +1,6 @@
 package server
 
-// Regression tests for the 2026-11 security audit (docs/security-audit-2026-11.md).
+// Regression tests for the findings of the 2026-11 internal security audit.
 
 import (
 	"bytes"

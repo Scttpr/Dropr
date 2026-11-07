@@ -1,9 +1,9 @@
-// Package jobs runs Dropr's periodic maintenance (PLAN.md §6: every 5
+// Package jobs runs Dropr's periodic maintenance (DESIGN.md §6: every 5
 // minutes): expired sessions, expired links with their blobs, incomplete
 // uploads older than 24 h, expired download tokens, and orphaned blob
 // directories (FileTasks).
 //
-// Log retention (7 days, PLAN.md §7) is the job of the log collector: Dropr
+// Log retention (7 days, DESIGN.md §7) is the job of the log collector: Dropr
 // writes structured logs to stdout and keeps no log files.
 package jobs
 

@@ -1,6 +1,5 @@
 /result*
 /bin/
-/data/
 web/node_modules/
 e2e/node_modules/
 e2e/test-results/
@@ -13,4 +12,3 @@ coverage.out
 /internal/web/static/*.js
 /internal/web/static/manifest.json
 .claude/
-/out/

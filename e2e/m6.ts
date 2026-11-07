@@ -1,5 +1,5 @@
 /**
- * Milestone 6 (hardening) test helpers, layered on fixtures.ts without
+ * Hardening test helpers, layered on fixtures.ts without
  * changing it:
  *
  * - `dropr` is overridden by a configurable server (`droprConfig` worker
@@ -149,7 +149,7 @@ default_expiry = "7d"
 issuer = "${KEYCLOAK}/realms/dropr"
 client_id = "dropr"
 client_auth = "client_secret"
-client_secret_file = "${join(ROOT, "deploy/dev/client_secret")}"
+client_secret_file = "${join(ROOT, "dev/client_secret")}"
 scopes = ["openid", "profile"]
 role_claim = "realm_access.roles"
 required_role = "Dropr.User"

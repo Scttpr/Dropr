@@ -1,11 +1,11 @@
 # Dropr — Architecture & Contracts
 
 This document is the **binding contract** between the Go server, the browser
-modules and the tests. `PLAN.md` is the product spec; this file pins the
-details the plan leaves open. Change it only deliberately, and update every
+modules and the tests. [DESIGN.md](DESIGN.md) is the product spec; this file pins the
+details the design leaves open. Change it only deliberately, and update every
 side at once.
 
-## 0. Environment (NixOS)
+## 0. Environment
 
 - Everything runs inside `nix develop` (see `flake.nix`). Never assume global
   `go`, `node`, `npm`. Use `nix develop -c <cmd>` from non-interactive shells.
@@ -13,13 +13,16 @@ side at once.
 - Playwright: browsers come from nixpkgs (`PLAYWRIGHT_BROWSERS_PATH`). The npm
   `@playwright/test` version **must equal** `$PLAYWRIGHT_VERSION` (1.64.1). Never
   run `npx playwright install`.
-- Containers: `podman` / `podman-compose` (docker CLI also present).
+- The dev Keycloak runs with `podman-compose` (`dev/compose.yaml`).
 
 ## 1. Repository layout
 
 ```
-flake.nix                 dev shell, packages (dropr, web-assets, image), checks, NixOS module
-nix/                      module.nix (services.dropr), vm-test.nix, hashes.nix (`make hashes`)
+flake.nix                 dev shell, packages (dropr, web-assets), checks
+nix/                      hashes.nix: vendorHash and npmDepsHash (`make hashes`, scripts/update-hashes.sh)
+Makefile                  developer tasks (CONTRIBUTING.md)
+.github/workflows/ci.yml  CI and the tagged release (binaries, signed checksums, asset hashes)
+dropr.example.toml        commented production configuration
 go.mod                    module github.com/scttpr/dropr
 cmd/dropr/                main: `dropr serve | user list|revoke|purge|migrate | gc | backup | healthcheck | version`
 internal/config/          TOML config (BurntSushi/toml), validation, binary sizes, secrets from files
@@ -46,10 +49,10 @@ web/                      TypeScript browser modules (esbuild), zero runtime dep
   src/*.ts                page entry points: dashboard, links, inbox, share, request, prefs; sw (service worker)
   scripts/                build.ts (hashed bundles + manifest.json), bench.ts
   test/                   node --test unit and property tests, vectors/ (FORMAT.md test vectors)
-e2e/                      Playwright specs (tests/), fixtures, soak/ (100 GiB soak run)
-deploy/                   Containerfile, dropr.example.toml, compose.dev.yaml + keycloak/ (dev realm),
-                          docker/ (production Compose kit), debian/ (systemd kit), dropr.dev.toml
-docs/                     contracts, format, threat model, provider setup, operations, deployment
+e2e/                      Playwright specs (tests/), fixtures
+dev/                      compose.yaml (dev Keycloak), dropr.toml (dev config), client_secret,
+                          keycloak/ (dev realm, TEST-ONLY private_key_jwt key)
+docs/                     design, contracts, format, pages, threat model, OIDC providers
 ```
 
 Go: stdlib-first. Direct dependencies: `coreos/go-oidc/v3`, `golang.org/x/oauth2`,
@@ -290,7 +293,7 @@ CORP same-origin, `Accept-Ranges: bytes`, no `Last-Modified`/`ETag`.
   `Retry-After: 5`.
 
 ### Link lifecycle
-- **Expiry and revocation delete the blobs** (PLAN.md §6), for both link
+- **Expiry and revocation delete the blobs** (DESIGN.md §6), for both link
   types: an expired or revoked **request link takes every file it received
   with it**, so owners must download received files before the link expires.
   Expired links stop working immediately (410 `expired`); the cleanup job
@@ -336,7 +339,7 @@ session cookie. Upload endpoints are same-origin `fetch` too.
 
 ## 4. Data model (SQLite, strict tables)
 
-Extends PLAN.md §8 with the columns the protocol needs:
+Extends DESIGN.md §8 with the columns the protocol needs:
 
 ```
 users     (id TEXT PK, issuer, subject, display_name, created_at, disabled_at, quota_bytes NULL, access_lost_at NULL)  UNIQUE(issuer, subject)
@@ -384,7 +387,7 @@ max_file_size  = "5GB"     # ≤ 100GB
 user_quota     = "50GB"
 default_expiry = "7d"
 
-[oidc]   # see PLAN.md §5.1
+[oidc]   # see DESIGN.md §5.1
 ```
 
 Additional keys (all optional; unknown keys are rejected):
@@ -416,6 +419,21 @@ Secret files (`refresh_key_file`, `oidc.client_key_file`,
 readable by others refuses production (files under `/run/credentials/` and
 `/run/secrets/` are exempt: their modes belong to the service manager or
 container runtime).
+
+Changing a secret or the origin:
+
+- **`refresh_key`** encrypts stored refresh tokens and the login-state cookie;
+  it never protects files. Rotate by replacing the file and restarting. Stored
+  refresh tokens become undecryptable, so sessions can no longer revalidate
+  and users sign in again; logins in flight fail once. After a suspected leak,
+  rotate, run `dropr user revoke` for anyone who must lose access now, and
+  revoke sessions at the provider: the old key plus a database copy exposes
+  refresh tokens until they expire.
+- **OIDC client key**: see [oidc.md](oidc.md).
+- **`public_url`**: request link private keys live in owners' browsers per
+  origin. A new scheme or host makes every received file unreadable and breaks
+  every link already handed out. Pick it once; move only after owners have
+  downloaded their received files.
 
 Sizes use binary units (`5GB` = 5 GiB, so `100GB` = 3200 × 32 MiB parts).
 
@@ -450,5 +468,6 @@ scope; a root-scope registration is refused).
 - E2E (`make e2e`): Playwright in Chromium, Firefox and WebKit (browsers from
   nixpkgs) against the dev Keycloak: both flows, resume, tampering, expiry,
   revocation, download limits, roles, CSRF, headers, accessibility, request
-  link keys, languages and themes. `make soak` streams up to 100 GiB through
-  the real API. `nix flake check` adds a NixOS VM test of the module.
+  link keys, languages and themes.
+- `nix flake check`: reference builds, `go vet` and Go tests, web typecheck
+  and tests.

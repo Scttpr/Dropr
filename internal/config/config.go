@@ -1,7 +1,7 @@
 // Package config loads and validates dropr.toml.
 //
 // Loading is strict: unknown keys are rejected, every value is validated, and
-// the production-mode refusal rules of PLAN.md (§5.1.2, §7, §10) are enforced
+// the production-mode refusal rules of DESIGN.md (§5.1.2, §7, §10) are enforced
 // here so that a misconfigured instance never starts. Secrets are read from
 // files only, never from the TOML file itself or the environment.
 package config
@@ -42,7 +42,7 @@ const (
 	ClientAuthSecret        = "client_secret"
 )
 
-// Allowed link expiries (PLAN.md §6).
+// Allowed link expiries (DESIGN.md §6).
 var allowedExpiries = map[string]time.Duration{
 	"1h":  time.Hour,
 	"1d":  24 * time.Hour,
@@ -102,7 +102,7 @@ type Limits struct {
 	DiskHeadroomBytes    int64         `toml:"-"` // 0 = automatic: max(1 GiB, 5% of the file system)
 }
 
-// OIDC holds the relying-party configuration (PLAN.md §5.1).
+// OIDC holds the relying-party configuration (DESIGN.md §5.1).
 type OIDC struct {
 	Issuer                string            `toml:"issuer"`
 	ClientID              string            `toml:"client_id"`
@@ -263,7 +263,7 @@ func (c *Config) validate() error {
 			fail(`trust_unix_socket_proxy is only valid with tls = "proxy"`)
 		}
 	case TLSProxy:
-		// PLAN §7: refuse to start behind a proxy unless the public URL is
+		// DESIGN.md §7: refuse to start behind a proxy unless the public URL is
 		// https. Dev mode may use http://localhost (validated above).
 		if pub != nil && pub.Scheme != "https" && c.Production() {
 			fail(`tls = "proxy" requires an https:// public_url`)

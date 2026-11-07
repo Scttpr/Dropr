@@ -15,7 +15,7 @@
 
       version = self.shortRev or self.dirtyShortRev or "dev";
 
-      # Only what each build needs, so editing docs/ or deploy/ never rebuilds.
+      # Only what each build needs, so editing docs/ or dev/ never rebuilds.
       webFiles = lib.fileset.unions [
         ./web/package.json
         ./web/package-lock.json
@@ -29,7 +29,7 @@
       goSrc = lib.fileset.toSource {
         root = ./.;
         fileset = lib.fileset.difference
-          (lib.fileset.unions [ ./go.mod ./go.sum ./cmd ./internal ./deploy/dropr.example.toml ./deploy/dropr.dev.toml ])
+          (lib.fileset.unions [ ./go.mod ./go.sum ./cmd ./internal ./dropr.example.toml ./dev/dropr.toml ])
           # Build output of the TypeScript build; it comes from web-assets.
           (lib.fileset.fileFilter
             (f: f.hasExt "js" || f.name == "manifest.json")
@@ -76,49 +76,8 @@
               mainProgram = "dropr";
             };
           };
-
-          image = pkgs.dockerTools.buildLayeredImage {
-            name = "dropr";
-            tag = "latest";
-            created = "1970-01-01T00:00:01Z";
-            contents = [ dropr pkgs.cacert pkgs.tzdata ];
-            # /data must be writable by the unprivileged user.
-            fakeRootCommands = ''
-              mkdir -p data tmp etc/dropr
-              chown 65532:65532 data
-              chmod 0700 data
-              chmod 1777 tmp
-            '';
-            config = {
-              Entrypoint = [ "/bin/dropr" "serve" "--config" "/etc/dropr/dropr.toml" ];
-              User = "65532:65532";
-              WorkingDir = "/data";
-              ExposedPorts = { "8443/tcp" = { }; };
-              # The image has no shell: the binary probes its own /healthz.
-              # Durations are nanoseconds (Docker image config).
-              Healthcheck = {
-                Test = [ "CMD" "/bin/dropr" "healthcheck" "--config" "/etc/dropr/dropr.toml" ];
-                Interval = 30000000000;
-                Timeout = 5000000000;
-                StartPeriod = 20000000000;
-                Retries = 3;
-              };
-              Volumes = { "/data" = { }; };
-              Env = [
-                "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
-                "ZONEINFO=/share/zoneinfo"
-              ];
-              Labels = {
-                "org.opencontainers.image.title" = "dropr";
-                "org.opencontainers.image.description" = "Self-hosted, end-to-end encrypted file drop";
-                "org.opencontainers.image.source" = "https://github.com/scttpr/dropr";
-                "org.opencontainers.image.licenses" = "MIT";
-                "org.opencontainers.image.version" = version;
-              };
-            };
-          };
         in
-        { inherit web-assets dropr image; default = dropr; };
+        { inherit web-assets dropr; default = dropr; };
 
       mkChecks = pkgs:
         let
@@ -162,15 +121,11 @@
           inherit (p) dropr web-assets;
           go-test = goCheck;
           web = webCheck;
-          image = p.image;
-          nixos-vm = import ./nix/vm-test.nix { inherit pkgs self; };
         };
     in
     {
       packages = forAll mkPackages;
       checks = forAll mkChecks;
-
-      nixosModules.default = import ./nix/module.nix { inherit self; };
 
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
@@ -191,10 +146,6 @@
             curl
             podman-compose
             playwright-driver
-            skopeo
-            cosign
-            syft
-            gh
           ];
           env = {
             CGO_ENABLED = "0";

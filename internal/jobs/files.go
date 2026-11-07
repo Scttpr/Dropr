@@ -20,7 +20,7 @@ const (
 )
 
 // FileTasks returns the cleanup tasks for links, uploads, tokens and blob
-// files (PLAN.md §4, §6). Rows are deleted first, in one transaction each,
+// files (DESIGN.md §4, §6). Rows are deleted first, in one transaction each,
 // then the files; files whose removal fails are picked up by the orphan
 // sweep on a later run.
 func FileTasks(st *store.Store, blobs *blob.Store, now func() time.Time) []Task {

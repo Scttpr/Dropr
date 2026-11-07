@@ -1,5 +1,5 @@
 /**
- * Observatory-style checks that need a real browser (PLAN.md §7, PAGES.md
+ * Observatory-style checks that need a real browser (DESIGN.md §7, PAGES.md
  * §9-10): no inline script or style, SRI present and correct on every script
  * and stylesheet, and no CSP violation reported by any browser on the real
  * pages. The exact headers per response type, cookie attributes and the 429

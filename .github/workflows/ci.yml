@@ -25,10 +25,6 @@ jobs:
         with: { persist-credentials: false }
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
-      - name: Enable KVM for the NixOS VM test
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
       - run: nix flake check -L
       - name: Reproducibility (web assets build twice, identical)
         run: |
@@ -71,12 +67,12 @@ jobs:
         with: { persist-credentials: false }
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
-      - name: Start Keycloak (image pinned in deploy/compose.dev.yaml)
+      - name: Start Keycloak (image pinned in dev/compose.yaml)
         run: |
-          image=$(grep -oE 'quay.io/keycloak/keycloak:[^ ]+' deploy/compose.dev.yaml | head -1)
+          image=$(grep -oE 'quay.io/keycloak/keycloak:[^ ]+' dev/compose.yaml | head -1)
           docker run -d --name keycloak -p 127.0.0.1:8180:8180 \
             -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
-            -v "$PWD/deploy/keycloak/dropr-realm.json:/opt/keycloak/data/import/dropr-realm.json:ro" \
+            -v "$PWD/dev/keycloak/dropr-realm.json:/opt/keycloak/data/import/dropr-realm.json:ro" \
             "$image" start-dev --import-realm --http-port=8180
           for i in $(seq 1 90); do
             curl -fsS http://localhost:8180/realms/dropr/.well-known/openid-configuration >/dev/null && exit 0
@@ -95,10 +91,10 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
       - name: Start Keycloak
         run: |
-          image=$(grep -oE 'quay.io/keycloak/keycloak:[^ ]+' deploy/compose.dev.yaml | head -1)
+          image=$(grep -oE 'quay.io/keycloak/keycloak:[^ ]+' dev/compose.yaml | head -1)
           docker run -d --name keycloak -p 127.0.0.1:8180:8180 \
             -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
-            -v "$PWD/deploy/keycloak/dropr-realm.json:/opt/keycloak/data/import/dropr-realm.json:ro" \
+            -v "$PWD/dev/keycloak/dropr-realm.json:/opt/keycloak/data/import/dropr-realm.json:ro" \
             "$image" start-dev --import-realm --http-port=8180
           for i in $(seq 1 90); do
             curl -fsS http://localhost:8180/realms/dropr/.well-known/openid-configuration >/dev/null && exit 0
@@ -126,16 +122,13 @@ jobs:
           if-no-files-found: ignore
 
   release:
-    name: release (image, asset hashes, signature, SBOM)
+    name: release (binaries, asset hashes, signature)
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [flake-check, checks, audit, keycloak-integration]
     runs-on: ubuntu-24.04
     permissions:
       contents: write     # create the GitHub release
-      packages: write     # push the image to ghcr.io
       id-token: write     # keyless cosign signing
-    env:
-      IMAGE: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, fetch-depth: 0 }
@@ -155,8 +148,7 @@ jobs:
             | sort -k2 > "dropr-assets-${GITHUB_REF_NAME}.sha256"
           cat "dropr-assets-${GITHUB_REF_NAME}.sha256"
 
-      # Static binaries for the bare-metal install (deploy/debian/install.sh
-      # --version). They embed exactly the web assets hashed above.
+      # Static binaries. They embed exactly the web assets hashed above.
       - name: Build the release binaries
         run: |
           cp -r web-assets/. internal/web/static/
@@ -173,41 +165,13 @@ jobs:
           cosign sign-blob --yes --bundle "dropr-${GITHUB_REF_NAME}-SHA256SUMS.sigstore.json" \
             "dropr-${GITHUB_REF_NAME}-SHA256SUMS"
 
-      - name: Build the image and push by digest
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          nix build -o image .#image
-          nix shell nixpkgs#skopeo -c skopeo copy --dest-creds "${{ github.actor }}:${GHCR_TOKEN}" \
-            "docker-archive:$(readlink -f image)" "docker://${IMAGE}:${GITHUB_REF_NAME}"
-          digest=$(nix shell nixpkgs#skopeo -c skopeo inspect --creds "${{ github.actor }}:${GHCR_TOKEN}" \
-            --format '{{.Digest}}' "docker://${IMAGE}:${GITHUB_REF_NAME}")
-          echo "DIGEST=${digest}" >> "$GITHUB_ENV"
-          echo "Image: ${IMAGE}@${digest}"
-
-      - name: Sign the image (keyless)
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
-
-      - name: SBOM (SPDX)
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          image: ${{ env.IMAGE }}@${{ env.DIGEST }}
-          format: spdx-json
-          output-file: dropr-${{ github.ref_name }}.spdx.json
-          upload-artifact: false
-
-      - name: Attest the SBOM
-        run: |
-          cosign attest --yes --type spdxjson \
-            --predicate "dropr-${GITHUB_REF_NAME}.spdx.json" "${IMAGE}@${DIGEST}"
-
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          printf 'Image: `%s@%s`\n\nVerify: see SECURITY.md.\n' "${IMAGE}" "${DIGEST}" > notes.md
+          printf 'Verify: see SECURITY.md.\n' > notes.md
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
             --notes-file notes.md \
-            "dropr-assets-${GITHUB_REF_NAME}.sha256" "dropr-${GITHUB_REF_NAME}.spdx.json" \
+            "dropr-assets-${GITHUB_REF_NAME}.sha256" \
             "dropr-${GITHUB_REF_NAME}-linux-amd64" "dropr-${GITHUB_REF_NAME}-linux-arm64" \
             "dropr-${GITHUB_REF_NAME}-SHA256SUMS" "dropr-${GITHUB_REF_NAME}-SHA256SUMS.sigstore.json"

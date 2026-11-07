@@ -25,7 +25,7 @@ const (
 	// partReadTimeout bounds a stall while a part body arrives; it slides
 	// with progress.
 	partReadTimeout = 2 * time.Minute
-	// UploadMaxAge is how long an upload may stay incomplete (PLAN.md §4).
+	// UploadMaxAge is how long an upload may stay incomplete (DESIGN.md §4).
 	UploadMaxAge = 24 * time.Hour
 )
 

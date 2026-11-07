@@ -1,6 +1,6 @@
 /**
  * Cross-site request forgery (ARCHITECTURE.md §3 "State-changing request
- * protection"; PLAN.md §7).
+ * protection"; DESIGN.md §7).
  *
  * An attacker page is served by a second local HTTP server:
  * - on http://127.0.0.1:<other> (cross-site: different host), and

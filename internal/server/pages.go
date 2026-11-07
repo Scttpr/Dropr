@@ -12,7 +12,7 @@ import (
 	"github.com/scttpr/dropr/internal/web"
 )
 
-// Plain-language dead-link messages (PLAN.md §9), also the English API
+// Plain-language dead-link messages (DESIGN.md §9), also the English API
 // messages; pages translate them.
 var (
 	msgLinkUnknown   = i18n.N("This link does not exist or has been revoked.")
