@@ -23,10 +23,10 @@
  * @module
  */
 
-import { type Bytes, concat, subtle, utf8 } from "./bytes.ts";
+import { type Bytes, concat, utf8 } from "./bytes.ts";
 import { DecryptionError, FormatError } from "./errors.ts";
 import { requestInfo } from "./filekey.ts";
-import { HPKE_ENC_SIZE, HPKE_TAG_SIZE, type HpkeRecipient, open, seal } from "./hpke.ts";
+import { generateX25519KeyPair, HPKE_ENC_SIZE, HPKE_TAG_SIZE, type HpkeRecipient, open, seal } from "./hpke.ts";
 import { PAD_MIN, pad, unpad } from "./pad.ts";
 
 /** Maximum request label length, in UTF-8 bytes (also the largest padded length). */
@@ -44,9 +44,8 @@ export interface RequestKeyPair extends HpkeRecipient {
 }
 
 /** Generate a fresh key pair for a new request link (private half non-extractable). */
-export async function generateRequestKeyPair(): Promise<RequestKeyPair> {
-  const kp = (await subtle.generateKey({ name: "X25519" }, false, ["deriveBits"])) as CryptoKeyPair;
-  return { privateKey: kp.privateKey, publicKey: new Uint8Array(await subtle.exportKey("raw", kp.publicKey)) };
+export function generateRequestKeyPair(): Promise<RequestKeyPair> {
+  return generateX25519KeyPair();
 }
 
 /**
