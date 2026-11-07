@@ -1,0 +1,86 @@
+#!/bin/sh
+# Dropr self-check, run by dropr-check.timer every 15 minutes. Exits non-zero
+# listing every failed check, which starts dropr-alert@dropr-check.service.
+# Thresholds: `sudo systemctl edit dropr-check.service` and set
+#   Environment=DROPR_CHECK_MIN_FREE_PERCENT=10      free space on /var/lib/dropr
+#   Environment=DROPR_CHECK_BACKUP_MAX_HOURS=26      age of the newest database backup
+#   Environment=DROPR_CHECK_TLS_MIN_DAYS=14          certificate served on :443
+#   Environment=DROPR_CHECK_OIDC_MIN_DAYS=30         /etc/dropr/oidc_cert.pem
+# Not checked here: the served browser code against the release hashes, which
+# belongs on another host (SECURITY.md "Check what a running instance serves").
+#
+# Installed as /usr/local/lib/dropr/check by install.sh.
+set -eu
+
+failures=""
+fail() { echo "<3>FAIL: $*"; failures="$failures
+  - $*"; }
+pass() { echo "ok: $*"; }
+age_hours() { echo $(( ($(date +%s) - $(stat -c %Y "$1")) / 3600 )); }
+
+min_free=${DROPR_CHECK_MIN_FREE_PERCENT:-10}
+backup_max=${DROPR_CHECK_BACKUP_MAX_HOURS:-26}
+tls_days=${DROPR_CHECK_TLS_MIN_DAYS:-14}
+oidc_days=${DROPR_CHECK_OIDC_MIN_DAYS:-30}
+
+# 1. The server answers /healthz.
+if /usr/local/lib/dropr/run-with-credentials healthcheck >/dev/null 2>&1; then
+  pass "healthcheck"
+else
+  fail "dropr does not answer /healthz (journalctl --namespace=dropr -e)"
+fi
+
+# 2. Disk space for uploads (Dropr also refuses uploads below disk_headroom).
+free=$(df --output=pcent /var/lib/dropr | tail -n 1 | tr -dc 0-9)
+free=$((100 - free))
+if [ "$free" -ge "$min_free" ]; then pass "disk ${free}% free"; else
+  fail "only ${free}% free on /var/lib/dropr (threshold ${min_free}%)"
+fi
+
+# 3. A recent database backup.
+newest=$(find /var/backups/dropr -maxdepth 1 -type f -name 'dropr-*.db' -printf '%T@ %p\n' 2>/dev/null \
+  | sort -n | tail -n 1 | cut -d' ' -f2-)
+if [ -z "$newest" ]; then
+  fail "no database backup in /var/backups/dropr (systemctl status dropr-backup.timer)"
+elif [ "$(age_hours "$newest")" -le "$backup_max" ]; then
+  pass "backup $(basename "$newest")"
+else
+  fail "newest database backup is $(age_hours "$newest") h old (threshold ${backup_max} h)"
+fi
+
+# 4. Off-site copy, once configured.
+if [ -e /etc/dropr/credentials/restic_env.cred ]; then
+  last=/var/lib/dropr-offsite/last-success
+  if [ ! -e "$last" ]; then
+    fail "off-site backup configured but never succeeded (systemctl status dropr-offsite)"
+  elif [ "$(age_hours "$last")" -le "$backup_max" ]; then
+    pass "off-site backup"
+  else
+    fail "last off-site backup is $(age_hours "$last") h old (threshold ${backup_max} h)"
+  fi
+fi
+
+# 5. The certificate served on :443 (built-in ACME renews 30 days ahead).
+host=$(sed -n 's#^public_url[[:space:]]*=[[:space:]]*"https://\([^/:"]*\).*#\1#p' /etc/dropr/dropr.toml)
+if [ -n "$host" ]; then
+  if echo | openssl s_client -connect 127.0.0.1:443 -servername "$host" 2>/dev/null \
+      | openssl x509 -noout -checkend $((tls_days * 86400)) >/dev/null 2>&1; then
+    pass "TLS certificate for $host"
+  else
+    fail "the certificate for $host on :443 is missing or expires within ${tls_days} days"
+  fi
+fi
+
+# 6. The OIDC client certificate (Dropr refuses to start once it has expired).
+if [ -r /etc/dropr/oidc_cert.pem ]; then
+  if openssl x509 -in /etc/dropr/oidc_cert.pem -noout -checkend $((oidc_days * 86400)) >/dev/null 2>&1; then
+    pass "OIDC client certificate"
+  else
+    fail "the OIDC client certificate expires within ${oidc_days} days: rotate it (operations.md \"Key rotation\")"
+  fi
+fi
+
+if [ -n "$failures" ]; then
+  printf 'Dropr self-check failed:%s\n' "$failures" >&2
+  exit 1
+fi

@@ -1,13 +1,14 @@
-# Dropr on a Debian or Ubuntu host (systemd >= 247). Installed by
-# deploy/debian/install.sh as /etc/systemd/system/dropr.service.
+# Dropr on Debian 13 (systemd >= 257). Installed by deploy/debian/install.sh
+# as /etc/systemd/system/dropr.service.
 #
 # Local changes go into a drop-in (`systemctl edit dropr`), not into this file:
 # install.sh overwrites it on upgrade.
 #
-# Secrets are passed with LoadCredential: systemd (root) reads them from
-# /etc/dropr/credentials (root-only) and exposes read-only copies to this
-# service under /run/credentials/dropr.service/. The dropr user itself cannot
-# read the originals.
+# Secrets are encrypted credentials (systemd-creds, sealed to the TPM2 when
+# the host has one): systemd decrypts /etc/dropr/credentials/*.cred and
+# exposes read-only copies to this service under
+# /run/credentials/dropr.service/. A copy of the disk is useless without the
+# TPM, and the dropr user cannot read the originals.
 #
 # Logs go to a dedicated journal namespace with its own 7-day retention
 # (/etc/systemd/journald@dropr.conf): `journalctl --namespace=dropr -f`.
@@ -19,6 +20,7 @@ Wants=network-online.target
 After=network-online.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
+OnFailure=dropr-alert@%n.service
 
 [Service]
 Type=simple
@@ -33,22 +35,31 @@ Group=dropr
 StateDirectory=dropr
 StateDirectoryMode=0700
 UMask=0077
-LoadCredential=refresh_key:/etc/dropr/credentials/refresh_key
-LoadCredential=oidc_key:/etc/dropr/credentials/oidc_key.pem
+LoadCredentialEncrypted=refresh_key:/etc/dropr/credentials/refresh_key.cred
+LoadCredentialEncrypted=oidc_key:/etc/dropr/credentials/oidc_key.cred
 LogNamespace=dropr
 
 # Binding :443 (and :80 with redirect_http) needs this one capability and
-# nothing else. Behind a reverse proxy on 127.0.0.1:8080, remove it with a
-# drop-in containing empty `CapabilityBoundingSet=` and `AmbientCapabilities=`.
+# nothing else, and those are the only ports the service may bind. Behind a
+# reverse proxy on 127.0.0.1:8080, use a drop-in with empty
+# `CapabilityBoundingSet=` and `AmbientCapabilities=`, and
+# `SocketBindAllow=tcp:8080`. (No PrivateUsers=: a capability held in a user
+# namespace does not allow binding :443 in the host network namespace.)
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+SocketBindAllow=tcp:443
+SocketBindAllow=tcp:80
+SocketBindDeny=any
 NoNewPrivileges=true
 
-# File system: everything read-only except the state directory.
+# File system: everything read-only except the state directory, and nothing
+# executable but the binary itself.
 ProtectSystem=strict
 ProtectHome=true
-PrivateTmp=true
+PrivateTmp=disconnected
 PrivateDevices=true
+NoExecPaths=/
+ExecPaths=/usr/local/bin/dropr
 ProtectProc=invisible
 ProcSubset=pid
 InaccessiblePaths=-/etc/dropr/credentials
@@ -57,9 +68,10 @@ InaccessiblePaths=-/etc/dropr/credentials
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
-ProtectControlGroups=true
+ProtectControlGroups=strict
 ProtectClock=true
-ProtectHostname=true
+ProtectHostname=private
+PrivateIPC=true
 KeyringMode=private
 
 # Process.
@@ -69,10 +81,14 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 RestrictNamespaces=true
 RemoveIPC=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# TCP only: a unix: listen socket (proxy mode) needs AF_UNIX in a drop-in.
+RestrictAddressFamilies=AF_INET AF_INET6
+# Link-local covers cloud metadata endpoints (169.254.169.254).
+IPAddressDeny=link-local multicast
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
-SystemCallFilter=~@privileged
+# @resources: systemd sets LimitNOFILE; Go ignores EPERM from setrlimit.
+SystemCallFilter=~@privileged @resources
 SystemCallErrorNumber=EPERM
 
 # Resource ceilings (raise if needed; memory is dominated by 32 MiB part

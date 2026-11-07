@@ -1,70 +1,171 @@
-# Deploying Dropr on Debian or Ubuntu
+# Deploying Dropr on Debian 13
 
-This guide covers a production install on one Debian 12/13 or Ubuntu
-22.04/24.04 server, in one of two ways:
+This guide covers a production install on one server. The recommended path is
+a dedicated **Debian 13** host with Dropr installed as a sandboxed systemd
+service by `install.sh`. Docker Compose is the
+alternative for other distributions or for hosts that already run Docker.
 
-| | [Bare metal (systemd)](#bare-metal-systemd) | [Docker (Compose)](#docker-compose) |
+| | [Debian 13 (systemd)](#debian-13-systemd) | [Docker (Compose)](#docker-compose) |
 |---|---|---|
 | Kit | `deploy/debian/` | `deploy/docker/` |
-| Entry point | `sudo deploy/debian/install.sh` | `sudo deploy/docker/setup.sh` |
-| Runs as | system user `dropr`, systemd sandbox (exposure score 1.5) | UID 65532 in a distroless image, read-only root, no capabilities |
-| Secrets | `LoadCredential` from root-only `/etc/dropr/credentials` (optionally TPM-sealed) | bind-mounted files, 0400, owned by the container user |
+| Entry point | `deploy/debian/install.sh` | `deploy/docker/setup.sh` |
+| Host | Debian 13 only (systemd >= 257) | any Linux with Docker |
+| Runs as | system user `dropr`: systemd sandbox (exposure 1.4) plus an AppArmor profile | UID 65532 in a distroless image, read-only root, no capabilities |
+| Secrets | `systemd-creds`, sealed to the TPM2 when there is one | bind-mounted files, 0400 |
+| Operations | backups, off-site copies (restic), self-check, failure hook | backup timer; the rest is yours |
 | Upgrades | `install.sh` again: backup, atomic swap, health check | `setup.sh --image`: backup, recreate, health check |
-| Choose it when | you want the smallest stack and the tightest sandbox | you already run Docker and pin images by digest |
 
-Both run the same binary with the same config keys, and both have built-in
-Let's Encrypt, so the only open ports are 443 (and 80 for the redirect). Read
-[operations.md](operations.md) for the configuration reference, backups,
-key rotation and capacity planning, and [THREAT_MODEL.md](THREAT_MODEL.md)
-before real use.
+Both run the same binary with the same config keys and terminate TLS
+themselves with Let's Encrypt, so the only open ports are 443, 80 for the
+redirect, and SSH. Read [operations.md](operations.md) for the configuration
+reference, backups, key rotation and capacity planning, and
+[THREAT_MODEL.md](THREAT_MODEL.md) before real use.
 
-Run both scripts from a checkout of a verified release tag:
+Run the scripts from a checkout of a verified release tag:
 
 ```sh
 git clone https://github.com/scttpr/dropr && cd dropr
 git verify-tag v0.1.0 && git checkout v0.1.0
 ```
 
-## 1. Server baseline
-
-These steps apply to both workflows. The scripts check some of them but never
-change your firewall, SSH or Docker daemon settings.
+## 1. Before you start
 
 * **A dedicated host or VM.** Dropr's guarantees depend on the server serving
   genuine JavaScript (THREAT_MODEL.md), so anyone with root on the host can
-  defeat them. Keep the host single-purpose and the list of administrators short.
-* **Security updates**: `apt install unattended-upgrades` and keep it enabled
-  (`dpkg-reconfigure -plow unattended-upgrades`).
-* **SSH**: key authentication only (`PasswordAuthentication no`,
-  `PermitRootLogin no` in a file under `/etc/ssh/sshd_config.d/`).
-* **Clock**: keep NTP running (`timedatectl` shows `System clock synchronized:
-  yes`). OIDC client assertions and tokens are rejected when the clock drifts.
-* **DNS**: an A/AAAA record for the host in `public_url`, and a CAA record
-  `0 issue "letsencrypt.org"`. Choose the name once: request link keys are stored per
-  origin in the owners' browsers
+  defeat them. Keep the host single-purpose and the list of administrators
+  short.
+* **A TPM2 and Secure Boot**, if you can choose: physical servers, and VMs
+  with a vTPM (Azure Trusted Launch, GCE Shielded VM, AWS NitroTPM, Proxmox).
+  With a TPM2, a copy of the disk cannot decrypt Dropr's secrets.
+* **Disk**: put `/var/lib/dropr` on a local ext4 or XFS file system sized as in
+  [Capacity planning](operations.md#capacity-planning), never on NFS/SMB (SQLite
+  WAL is not safe there), ideally its own mount with `nodev,nosuid,noexec`.
+* **An admin account** with an SSH key in `~/.ssh/authorized_keys` and `sudo`,
+  before you turn off passwords and root logins.
+* **DNS**: an A/AAAA record for the name in `public_url`, and a CAA record
+  `0 issue "letsencrypt.org"`. Choose the name once: request link keys are stored
+  per origin in the owners' browsers
   ([Changing the domain](operations.md#changing-the-domain)).
-* **Firewall**: allow 22 (preferably from your admin addresses only), 80 and
-  443. With ufw on the bare-metal install:
-
-  ```sh
-  ufw default deny incoming && ufw allow OpenSSH && ufw allow 80,443/tcp && ufw enable
-  ```
-
-  For Docker, see [the firewall note](#docker-and-the-host-firewall): Docker
-  bypasses ufw.
-* **Disk**: put the data directory (`/var/lib/dropr` or `/opt/dropr/data`) on
-  a local ext4 or XFS file system sized as in
-  [Capacity planning](operations.md#capacity-planning), never on NFS/SMB
-  (SQLite WAL is not safe there). A separate mount with `nodev,nosuid,noexec`
-  is a good idea.
-* **Identity provider**: register the application first:
-  [Entra ID](setup-entra.md) or [Keycloak](setup-keycloak.md). Both scripts
-  generate the client key pair and leave the public certificate next to the
+* **Identity provider**: register the application:
+  [Entra ID](setup-entra.md) or [Keycloak](setup-keycloak.md). The install
+  generates the client key pair and leaves the public certificate next to the
   config for you to upload.
 
-## Bare metal (systemd)
+## Debian 13 (systemd)
 
-### Get the binary
+### 2. Host baseline
+
+Generic Debian hardening, not specific to Dropr: apply it with your own tooling
+(Ansible, a cloud image, a company baseline) or by hand from the snippets
+below. Keep a root shell open while changing SSH and the firewall, and test a
+new login before closing it.
+
+**SSH**: key-only logins for named admins, no root, no forwarding, modern
+algorithms. `/etc/ssh/sshd_config.d/10-hardening.conf` (the first value sshd
+reads wins, so `10-` beats cloud-init's `50-`), then `sshd -t && systemctl
+reload ssh`:
+
+```
+AllowUsers alice
+PermitRootLogin no
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+MaxAuthTries 3
+LoginGraceTime 20
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding no
+AllowStreamLocalForwarding no
+PermitTunnel no
+KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+```
+
+**Firewall**: inbound SSH from your admin addresses, 80 and 443, nothing else.
+`apt install nftables`, write `/etc/nftables.conf`, then
+`nft -c -f /etc/nftables.conf && systemctl enable --now nftables`:
+
+```
+#!/usr/sbin/nft -f
+flush ruleset
+
+table inet filter {
+	set admin4 { type ipv4_addr; flags interval; elements = { 203.0.113.7/32 } }
+	set admin6 { type ipv6_addr; flags interval; }
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+		ct state established,related accept
+		ct state invalid drop
+		iif lo accept
+		icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
+		icmp type echo-request limit rate 5/second accept
+		icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
+		icmpv6 type echo-request limit rate 5/second accept
+		udp sport 67 udp dport 68 accept
+		ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
+		tcp dport 22 ip saddr @admin4 accept
+		tcp dport 22 ip6 saddr @admin6 accept
+		tcp dport { 80, 443 } accept
+	}
+	chain forward { type filter hook forward priority filter; policy drop; }
+}
+```
+
+Outbound stays open: Dropr reaches the identity provider and Let's Encrypt,
+and the host needs time servers, apt and the off-site backup repository. Not
+on a Docker host: `flush ruleset` would remove Docker's rules.
+
+**Kernel**: `/etc/sysctl.d/90-hardening.conf`, then `sysctl --system`:
+
+```
+kernel.kptr_restrict = 2
+kernel.dmesg_restrict = 1
+kernel.unprivileged_bpf_disabled = 1
+net.core.bpf_jit_harden = 2
+kernel.unprivileged_userns_clone = 0
+kernel.perf_event_paranoid = 3
+kernel.yama.ptrace_scope = 2
+kernel.kexec_load_disabled = 1
+kernel.sysrq = 0
+fs.suid_dumpable = 0
+fs.protected_fifos = 2
+fs.protected_regular = 2
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_source_route = 0
+```
+
+**Security updates**: `apt install unattended-upgrades` and
+`dpkg-reconfigure -plow unattended-upgrades`; to let kernel and libc fixes take
+effect, add `/etc/apt/apt.conf.d/52reboot` (Dropr starts again on boot):
+
+```
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:00";
+```
+
+**Time**: OIDC tokens and client assertions fail on a drifting clock, and
+plain NTP can be spoofed. `apt install chrony`, comment out the `pool` line in
+`/etc/chrony/chrony.conf`, then add `/etc/chrony/sources.d/nts.sources` and
+`systemctl restart chrony`; `chronyc -N authdata` should list them as `NTS`:
+
+```
+server time.cloudflare.com iburst nts
+server nts.netnod.se iburst nts
+server ptbtime1.ptb.de iburst nts
+```
+
+**AppArmor** is on by default in Debian 13; keep it (`aa-enabled` prints
+`Yes`): `install.sh` loads a profile for Dropr.
+
+### 3. Get the binary
 
 Pick one:
 
@@ -83,7 +184,7 @@ nix build .#dropr && scp result/bin/dropr server:
 sudo deploy/debian/install.sh --binary ~/dropr
 ```
 
-### Install
+### 4. Install
 
 | Option | Effect |
 |---|---|
@@ -92,17 +193,22 @@ sudo deploy/debian/install.sh --binary ~/dropr
 | `--skip-signature` | with `--version`: accept the binary when cosign is not installed (checksum only; avoid) |
 | `--no-oidc-key` | do not generate the OIDC client key and certificate (bring your own) |
 | `--no-start` | install files only; do not start or restart the service |
+| `--unsupported-os` | continue on a system other than Debian 13 (systemd >= 257 is still required) |
 
 The first run of `install.sh`:
 
 1. creates the system user `dropr` (no shell, no home outside the state directory);
-2. installs `/usr/local/bin/dropr`, `/usr/local/sbin/dropr-admin` and
-   `/usr/local/lib/dropr/run-with-credentials`;
-3. creates `/etc/dropr` (root:dropr 0750) with `dropr.toml` (0640) and
-   `/etc/dropr/credentials` (root 0700) with a fresh `refresh_key` and, unless
-   `--no-oidc-key`, `oidc_key.pem` plus the public `/etc/dropr/oidc_cert.pem`;
-4. installs `dropr.service`, `dropr-backup.service` and `.timer`, and a
-   journal namespace with 7-day retention (`/etc/systemd/journald@dropr.conf`);
+2. installs `/usr/local/bin/dropr`, the admin tools `dropr-admin`,
+   `dropr-credential` and `dropr-offsite` in `/usr/local/sbin`, and their
+   helpers in `/usr/local/lib/dropr`;
+3. creates `/etc/dropr` (root:dropr 0750) with `dropr.toml` (0640), and
+   `/etc/dropr/credentials` (root 0700) with the refresh key, the OIDC client key
+   (unless `--no-oidc-key`; its public certificate goes to
+   `/etc/dropr/oidc_cert.pem`) and the alert settings, each **encrypted** with
+   `systemd-creds`;
+4. installs and loads the AppArmor profile, the units (service, backup timer,
+   off-site backup, self-check timer, alerts) and a journal namespace with
+   7-day retention;
 5. stops there while the config still contains placeholders.
 
 Then:
@@ -111,66 +217,117 @@ Then:
    *Certificates & secrets*, Keycloak: client *Keys*).
 2. Edit `/etc/dropr/dropr.toml`: `public_url`, `acme_email` and every `<...>`.
    The secret paths under `/run/credentials/dropr.service/` stay as they are.
-3. Start and watch the startup checks:
+3. Run `install.sh` again with the same arguments: it starts Dropr, the
+   self-check timer, and waits for `/healthz`. Watch the startup checks with
+   `journalctl --namespace=dropr -f`.
 
-   ```sh
-   sudo systemctl enable --now dropr
-   journalctl --namespace=dropr -f
-   ```
+The service listens on 443 directly and on 80 for the redirect. The first
+HTTPS request obtains the certificate.
 
-The service listens on 443 directly (the only capability it holds is
-`CAP_NET_BIND_SERVICE`) and on 80 for the redirect. The first HTTPS request
-obtains the certificate.
+### What protects what
 
-### What the sandbox does
+* **systemd sandbox** (`systemd-analyze security dropr`, exposure 1.4):
+  `dropr` runs unprivileged with only `CAP_NET_BIND_SERVICE`, may bind only
+  :443 and :80, sees the file system read-only except `/var/lib/dropr`, cannot
+  execute anything but its own binary, has private `/tmp`, `/dev` and IPC, a
+  hidden `/proc`, no access to `/home` or the credential store, a
+  `@system-service` system-call allow-list without privileged or resource
+  calls, `MemoryDenyWriteExecute`, no namespaces, TCP only, and no route to
+  link-local addresses (cloud metadata services).
+* **AppArmor** (`/etc/apparmor.d/usr.local.bin.dropr`, enforce mode): a second,
+  independent wall around every `dropr` process (service, backup, self-check,
+  admin CLI): its config, its data and backups, the decrypted credentials of
+  its own units, and nothing else. Denials appear in `journalctl -k -g apparmor`;
+  local additions go in `/etc/apparmor.d/local/usr.local.bin.dropr`.
+* **Sealed secrets**: `/etc/dropr/credentials/*.cred` are encrypted with
+  `systemd-creds --with-key=auto` (the host key and, when present, the TPM2).
+  systemd decrypts them only into the memory of the units that load them.
+  Without a TPM2 they are sealed to `/var/lib/systemd/credential.secret`
+  only, which a full disk copy includes. If the TPM is replaced or the disk
+  moves to other hardware, nothing can decrypt them: generate new ones
+  (`head -c 32 /dev/urandom | base64 | sudo dropr-credential set refresh_key -`
+  signs everyone out; a new OIDC key needs its certificate uploaded, see
+  [Key rotation](operations.md#key-rotation)).
+* **The host**: the [baseline](#2-host-baseline) above. Local changes to the units go into
+  drop-ins (`sudo systemctl edit dropr`), which upgrades keep.
 
-`dropr.service` runs as `dropr` with `ProtectSystem=strict` (everything
-read-only except `/var/lib/dropr`), private `/tmp` and `/dev`, hidden `/proc`,
-no access to `/home` or to `/etc/dropr/credentials`, a `@system-service`
-system-call allow-list without privileged calls, `MemoryDenyWriteExecute`, no
-new privileges, no namespaces, and only IPv4/IPv6/Unix sockets. Check it with
-`systemd-analyze security dropr`. Local changes go into a drop-in
-(`sudo systemctl edit dropr`), which upgrades keep.
-
-**Optional: TPM-sealed secrets.** On a host with a TPM2 (most physical
-servers and many VMs), seal the credentials to the machine so a copy of the
-disk is useless without it:
-
-```sh
-cd /etc/dropr/credentials
-systemd-creds encrypt --with-key=tpm2 --name=refresh_key refresh_key refresh_key.cred
-systemd-creds encrypt --with-key=tpm2 --name=oidc_key oidc_key.pem oidc_key.cred
-sudo systemctl edit dropr     # then the same for dropr-backup:
-#   [Service]
-#   LoadCredential=
-#   LoadCredentialEncrypted=refresh_key:/etc/dropr/credentials/refresh_key.cred
-#   LoadCredentialEncrypted=oidc_key:/etc/dropr/credentials/oidc_key.cred
-```
-
-Restart, confirm that logins work, then `shred -u` the plaintext files (keep
-an offline copy of them in your secret store: they cannot be unsealed on other
-hardware). `dropr-admin` reads the plaintext paths; adjust its
-`LoadCredential` lines the same way if you remove them.
-
-### Admin, backups, logs
+### Admin, credentials, logs
 
 ```sh
 sudo dropr-admin user list               # any `dropr` admin command (operations.md "Admin CLI")
-sudo dropr-admin version
-sudo systemctl start dropr-backup        # backup now; the timer runs daily
-ls -l /var/backups/dropr                 # kept 14 days (DROPR_BACKUP_KEEP_DAYS)
+sudo dropr-credential list               # sealed credentials
+sudo dropr-credential edit restic_env    # decrypt, edit, re-seal (plaintext stays on /run)
 journalctl --namespace=dropr --since -1h # request logs, kept 7 days
-systemctl list-timers dropr-backup
+systemctl list-timers 'dropr-*'
 ```
 
-`dropr-admin` runs the CLI as the `dropr` user in a transient unit with the
-same credentials, so the secrets are never readable by a login account.
+`dropr-admin` and `dropr-offsite` run as the `dropr` user in transient units
+with the same credentials and sandbox as the services, so no login account
+ever reads the secrets.
 
-The backup timer copies the **database** only. Ship `/var/backups/dropr` and
-then `/var/lib/dropr/blobs` off the host, encrypted, with your backup tool
-(restic, borg), in that order; see [Backups](operations.md#backups) for why and
-for the restore procedure. Back up `/etc/dropr` (config and credentials)
-separately.
+### Backups and off-site copies
+
+`dropr-backup.timer` takes a consistent copy of the **database** every day into
+`/var/backups/dropr` (kept 14 days, `DROPR_BACKUP_KEEP_DAYS`). After each
+successful backup, `dropr-offsite.service` copies the newest database backup
+and then the blobs to a [restic](https://restic.net) repository, encrypted, and
+prunes it (14 daily, 8 weekly, 12 monthly snapshots). It stays off until you
+configure it:
+
+```sh
+sudo apt install restic
+sudo dropr-credential edit restic_env
+#   RESTIC_REPOSITORY=s3:https://s3.example.com/dropr-backups
+#   RESTIC_PASSWORD=<long random value: keep a copy off this host>
+#   AWS_ACCESS_KEY_ID=...
+#   AWS_SECRET_ACCESS_KEY=...
+sudo dropr-offsite init
+sudo systemctl start dropr-backup        # backup now, then the off-site copy
+sudo dropr-offsite snapshots
+sudo dropr-offsite restore-test          # restore the latest database and verify it; do it monthly
+```
+
+Any restic backend that needs no external program works (S3-compatible,
+B2, Azure, GCS, rest-server); give the repository its own credentials with
+write access to that bucket only, and object lock or versioning if the
+provider has them, so a compromised host cannot delete the history. Without
+`RESTIC_PASSWORD` the backups are unreadable.
+
+Recovery after losing the host: harden and install a new one, stop Dropr,
+`sudo dropr-offsite restic restore latest --tag db --target /var/cache/dropr-offsite/restore`
+and the same with `--tag blobs`, then put the database and blobs in place as in
+[Backups](operations.md#backups). Keep a copy of `/etc/dropr/dropr.toml` with
+your other configuration; the credentials are bound to the old machine and
+are regenerated as above.
+
+### Monitoring and alerts
+
+`dropr-check.timer` runs every 15 minutes and checks `/healthz`, free space on
+`/var/lib/dropr` (10%), the age of the newest database backup and off-site copy
+(26 h), and the expiry of the certificate served on :443 (14 days) and of the
+OIDC client certificate (30 days). Thresholds are `Environment=` lines in
+`sudo systemctl edit dropr-check` (see `/usr/local/lib/dropr/check`).
+
+A failure of the check, the service, the backup or the off-site copy starts
+`dropr-alert@<unit>.service`. Out of the box it only writes a critical line to
+the journal; connect it to whatever alerting you already use with a drop-in,
+for example ntfy:
+
+```sh
+sudo systemctl edit dropr-alert@.service
+#   [Service]
+#   ExecStart=
+#   ExecStart=/usr/bin/curl -fsS --max-time 20 -H "Title: Dropr: %i failed" \
+#     -d "%i failed on %H" https://ntfy.sh/<a-long-random-topic>
+sudo systemctl start dropr-alert@test.service
+```
+
+Drop-ins are world-readable: a webhook URL that contains a token belongs in a
+credential (`LoadCredentialEncrypted=` in the same drop-in) rather than on the
+command line.
+
+Also watch the host from outside (`/healthz`, the served code against the
+release hashes): see [After every deploy](#after-every-deploy).
 
 ### Upgrade and rollback
 
@@ -181,31 +338,56 @@ sudo deploy/debian/install.sh --version v0.2.0     # or --binary FILE
 
 On a running service this backs up the database (and stops if that fails),
 keeps the old binary as `/usr/local/bin/dropr.previous`, swaps in the new one,
-refreshes the units, restarts and waits for `/healthz`. Migrations run at
-startup and are not reversible; to roll back, stop the service, restore the
-pre-upgrade backup (newest file in `/var/backups/dropr`, see
-[Backups](operations.md#backups)) and move `dropr.previous` back.
+refreshes the units and the AppArmor profile, restarts and waits for
+`/healthz`. Plaintext secrets from an install made before sealed credentials
+are sealed and shredded. Migrations run at startup and are not reversible; to
+roll back, stop the service, restore the pre-upgrade backup (newest file in
+`/var/backups/dropr`, see [Backups](operations.md#backups)) and move
+`dropr.previous` back.
 
 ### Behind nginx or Caddy
 
-Only when Dropr must share ports 80/443 with other sites. In `dropr.toml` set
-`tls = "proxy"`, `listen = "127.0.0.1:8080"`, `trusted_proxies =
-["127.0.0.1"]` and remove `redirect_http`/`redirect_listen`. Drop the
-capability:
+Only when Dropr must share ports 80/443 with other sites; the default setup
+keeps one less daemon running as root. In `dropr.toml` set `tls = "proxy"`,
+`listen = "127.0.0.1:8080"`, `trusted_proxies = ["127.0.0.1"]` and remove
+`redirect_http` and `redirect_listen`. Then adjust the sandbox:
 
 ```sh
 sudo systemctl edit dropr
 #   [Service]
 #   CapabilityBoundingSet=
 #   AmbientCapabilities=
+#   SocketBindAllow=tcp:8080
+#   # for listen = "unix:/run/dropr/dropr.sock" instead:
+#   # RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+#   # RuntimeDirectory=dropr
 ```
 
-`deploy/debian/nginx-dropr.conf` is a complete nginx site (no buffering, 64 MiB
-bodies, long timeouts, X-Forwarded-For overwritten rather than appended). Caddy:
-`reverse_proxy 127.0.0.1:8080 { flush_interval -1 }`. Requirements in
-[TLS modes](operations.md#tls-modes).
+and open the proxy's own ports in the firewall if they differ from 80/443.
+`deploy/debian/nginx-dropr.conf` is a complete nginx site for Debian 13 (no
+buffering, 64 MiB bodies, long timeouts, X-Forwarded-For overwritten rather
+than appended). Caddy: `reverse_proxy 127.0.0.1:8080 { flush_interval -1 }`.
+Requirements in [TLS modes](operations.md#tls-modes).
+
+### Testing the kit
+
+`test/debian/vm.sh up` (a development tool, not part of the deploy kit)
+boots the official Debian 13 cloud image in QEMU and runs `test/debian/smoke.sh`:
+a fresh install, a start behind nginx against a stub IdP over local TLS, an
+upgrade, the admin CLI, backups, an off-site copy to a local restic repository
+with a restore test, the self-check and failure hook, and AppArmor confinement
+without denials. It takes a static
+binary in `BIN` (default `result/bin/dropr` from `nix build .#dropr`).
+`vm.sh browse` then switches the VM to the dev Keycloak realm and opens
+Chromium on it, to use the installed Dropr by hand.
 
 ## Docker (Compose)
+
+For other distributions, or hosts that already run Docker. [Before you
+start](#1-before-you-start) applies here too, and so does the
+[host baseline](#2-host-baseline) except its firewall: Docker manages its own
+rules, which `flush ruleset` would remove; filter as in
+[the firewall note](#docker-and-the-host-firewall).
 
 ### Install Docker
 
@@ -321,7 +503,7 @@ It prints the previous image for a rollback; if the new version migrated the
 schema, restore the pre-upgrade backup from `/opt/dropr/backups` first
 ([Backups](operations.md#backups)).
 
-## 2. After every deploy
+## After every deploy
 
 * `curl -fsS https://drop.example.com/healthz` prints `ok`, from outside.
 * Check the TLS setup from outside, e.g. `testssl.sh drop.example.com` (TLS 1.2+

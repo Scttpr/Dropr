@@ -20,6 +20,6 @@ exec systemd-run --quiet "$mode" --wait --collect --unit=dropr-admin \
   --property=RuntimeDirectory=dropr-admin --property=RuntimeDirectoryMode=0700 \
   --property=UMask=0077 --property=NoNewPrivileges=yes \
   --property=ProtectSystem=strict --property=ProtectHome=yes --property=PrivateTmp=yes \
-  --property=LoadCredential=refresh_key:/etc/dropr/credentials/refresh_key \
-  --property=LoadCredential=oidc_key:/etc/dropr/credentials/oidc_key.pem \
+  --property=LoadCredentialEncrypted=refresh_key:/etc/dropr/credentials/refresh_key.cred \
+  --property=LoadCredentialEncrypted=oidc_key:/etc/dropr/credentials/oidc_key.cred \
   /usr/local/lib/dropr/run-with-credentials "$@"

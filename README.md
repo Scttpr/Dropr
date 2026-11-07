@@ -82,7 +82,7 @@ After changing Go or npm dependencies run `make hashes` to refresh
 ## Deploy
 
 [docs/operations.md](docs/operations.md) covers the NixOS module, Compose
-(`deploy/docker/`), binary + systemd (`deploy/debian/`, step by step in [docs/deploy-debian.md](docs/deploy-debian.md)), TLS modes, backups, upgrades, the
+(`deploy/docker/`), hardened Debian 13 + systemd (`deploy/debian/`, step by step in [docs/deploy-debian.md](docs/deploy-debian.md)), TLS modes, backups, upgrades, the
 admin CLI and capacity planning for 100 GB files.
 
 ## Documentation
@@ -91,7 +91,7 @@ admin CLI and capacity planning for 100 GB files.
 |---|---|
 | [docs/setup-entra.md](docs/setup-entra.md) | Microsoft Entra ID setup, step by step |
 | [docs/setup-keycloak.md](docs/setup-keycloak.md) | Keycloak realm, client and mappers |
-| [docs/deploy-debian.md](docs/deploy-debian.md) | Production install on Debian/Ubuntu: Docker or bare-metal systemd |
+| [docs/deploy-debian.md](docs/deploy-debian.md) | Production install: hardened Debian 13 with systemd, or Docker Compose |
 | [docs/operations.md](docs/operations.md) | Install, configure, back up, upgrade, rotate |
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Assets, attackers, STRIDE, residual risks |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | HTTP surface, data model, contracts |
