@@ -1,0 +1,100 @@
+# Dependency automation that Dependabot cannot do alone. Commits are made
+# through the API with the dropr-deps GitHub App token, so they are signed
+# and, unlike GITHUB_TOKEN pushes, trigger CI.
+#
+#   fix-hashes      Dependabot PR touching go.sum or web/package-lock.json:
+#                   recompute nix/hashes.nix and commit it to the PR
+#   update-flake    weekly: bump flake.lock (Go, Node, browsers, linters),
+#                   sync e2e's @playwright/test, recompute hashes, open a PR
+#
+# Needs DEPS_APP_CLIENT_ID and DEPS_APP_PRIVATE_KEY, as Actions secrets and as
+# Dependabot secrets (Dependabot-triggered runs only see the latter). The App
+# needs Contents and Pull requests read/write on this repository only.
+name: deps
+
+on:
+  pull_request:
+    paths: [go.sum, web/package-lock.json]
+  schedule:
+    - cron: "7 4 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  fix-hashes:
+    name: Update nix/hashes.nix on the Dependabot PR
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: deps-hashes-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: hashes }
+      # Fixed-output fetches only (go mod download, npm cache): no dependency
+      # code runs here. The App token is created after it, for the commit.
+      - run: scripts/update-hashes.sh
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.DEPS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPS_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          scripts/ci/commit-via-api.sh "$BRANCH" "build(nix): update fixed-output hashes"
+
+  update-flake:
+    name: Bump flake.lock and open a PR
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with: { egress-policy: audit }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup-nix
+        with: { cache-key: hashes }
+      - run: scripts/ci/update-flake.sh
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.DEPS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPS_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          branch="deps/flake-update-$(date -u +%F)"
+          if [ -z "$(scripts/ci/commit-via-api.sh "$branch" "build(nix): update flake.lock")" ]; then
+            echo "flake.lock is current"
+            exit 0
+          fi
+          {
+            echo "Weekly toolchain bump: \`nix flake update\`, @playwright/test synced to nixpkgs, \`make hashes\`."
+            echo
+            echo '```'
+            git diff -- flake.lock e2e/package.json nix/hashes.nix
+            echo '```'
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+            --title "build(nix): update flake.lock" --body-file "$RUNNER_TEMP/body.md"

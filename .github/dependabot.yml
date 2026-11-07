@@ -1,20 +1,54 @@
-# Weekly dependency update PRs (audit 2026-11b L-6).
-# Go and web/ updates change the fixed-output hashes in nix/hashes.nix:
-# run `make hashes` on the PR branch (CONTRIBUTING.md).
+# Weekly dependency update PRs, grouped so each ecosystem opens one PR for
+# minor and patch bumps; majors arrive one per PR.
+#
+# cooldown: a release is only proposed after 7 days, so a hijacked package
+#   version is usually yanked before it reaches a PR.
+# nix/hashes.nix: Go and web/ updates change the fixed-output hashes;
+#   deps.yml recomputes them and pushes to the PR (CONTRIBUTING.md).
+# flake.lock (Go, Node, browsers, linters) is bumped by deps.yml, not here.
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    commit-message: { prefix: "build(deps)" }
+    groups:
+      go:
+        update-types: [minor, patch]
+
   - package-ecosystem: npm
     directory: /web
-    schedule: { interval: weekly }
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    commit-message: { prefix: "build(deps)" }
+    groups:
+      web:
+        update-types: [minor, patch]
+    ignore:
+      # Must follow the Node major of the dev shell (nodejs_24 in flake.nix).
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+
   - package-ecosystem: npm
     directory: /e2e
-    schedule: { interval: weekly }
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    commit-message: { prefix: "build(deps)" }
+    groups:
+      e2e:
+        update-types: [minor, patch]
     ignore:
-      # Must equal the nixpkgs playwright-driver version (flake.nix).
+      # Must equal the nixpkgs playwright-driver version; deps.yml syncs it.
       - dependency-name: "@playwright/test"
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+
   - package-ecosystem: github-actions
-    directory: /
-    schedule: { interval: weekly }
+    directories: [/, /.github/actions/*]
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    commit-message: { prefix: "ci" }
+    groups:
+      actions:
+        patterns: ["*"]
