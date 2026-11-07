@@ -2,7 +2,7 @@
  * Revocation from the /links page: the recipient (or sender) then sees the
  * plain "does not exist or has been revoked" state, the API answers 404, an
  * already-issued download token stops working, and the blob directory is
- * removed from disk (PLAN.md §6, ARCHITECTURE.md §3 Link lifecycle).
+ * removed from disk (DESIGN.md §6, ARCHITECTURE.md §3 Link lifecycle).
  */
 
 import {

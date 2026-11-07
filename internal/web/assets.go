@@ -164,7 +164,7 @@ func (a *Assets) Integrity(logical string) (string, error) {
 	return as.Integrity, nil
 }
 
-// Hashes lists "integrity  /assets/public" lines for publication (PLAN.md §7
+// Hashes lists "integrity  /assets/public" lines for publication (DESIGN.md §7
 // "published asset hashes").
 func (a *Assets) Hashes() []string {
 	out := make([]string, 0, len(a.byPublic))

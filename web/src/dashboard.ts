@@ -37,7 +37,7 @@ function expiryFrom(select: HTMLSelectElement | null, fallback: ExpiresIn): Expi
   return isExpiry(v) ? v : fallback;
 }
 
-/** `data-default-expiry` if valid, else 7 days (PLAN.md §6). */
+/** `data-default-expiry` if valid, else 7 days (DESIGN.md §6). */
 function defaultExpiryOf(main: HTMLElement): ExpiresIn {
   const d = main.dataset["defaultExpiry"];
   return isExpiry(d) ? d : "7d";

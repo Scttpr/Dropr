@@ -9,7 +9,7 @@ import (
 	"github.com/scttpr/dropr/internal/auth/session"
 )
 
-// Revalidation (PLAN.md §5.1): every revalidate_every, the stored refresh
+// Revalidation (DESIGN.md §5.1): every revalidate_every, the stored refresh
 // token is redeemed and the result must pass every login check again, carry
 // the same subject and still hold the role. Any failure, including the
 // provider being unreachable, kills the session.

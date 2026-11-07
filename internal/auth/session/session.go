@@ -1,4 +1,4 @@
-// Package session implements server-side sessions (PLAN.md §5.3).
+// Package session implements server-side sessions (DESIGN.md §5.3).
 //
 // The cookie __Host-dropr_session holds a random 256-bit ID; the database
 // stores only its SHA-256. Sessions expire after 30 minutes of inactivity or
@@ -26,7 +26,7 @@ import (
 // Path=/ and no Domain, so the cookie is bound to this exact origin.
 const CookieName = "__Host-dropr_session"
 
-// Default lifetimes (PLAN.md §5.3).
+// Default lifetimes (DESIGN.md §5.3).
 const (
 	DefaultIdleTimeout     = 30 * time.Minute
 	DefaultAbsoluteTimeout = 8 * time.Hour

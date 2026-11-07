@@ -1,4 +1,4 @@
-# Local development against the Keycloak of compose.dev.yaml.
+# Local development against the Keycloak of dev/compose.yaml.
 # Run from the repository root: `make dev`.
 #
 # public_url uses http://localhost, which only dev mode allows. The session
@@ -25,7 +25,7 @@ default_expiry = "7d"
 issuer           = "http://localhost:8180/realms/dropr"
 client_id        = "dropr"
 client_auth      = "client_secret"                 # dev mode only
-client_secret_file = "./deploy/dev/client_secret"  # "dropr-dev-secret"
+client_secret_file = "./dev/client_secret"  # "dropr-dev-secret"
 # Keycloak's offline_access scope yields offline tokens that survive SSO
 # logout; plain refresh tokens are what revalidation needs.
 scopes           = ["openid", "profile"]
@@ -37,6 +37,6 @@ revalidate_every = "15m"
 # To exercise private_key_jwt instead (as production requires):
 #   client_id       = "dropr-pkjwt"
 #   client_auth     = "private_key_jwt"
-#   client_key_file = "./deploy/keycloak/test-keys/dropr-pkjwt.TEST-ONLY.pem"
+#   client_key_file = "./dev/keycloak/test-keys/dropr-pkjwt.TEST-ONLY.pem"
 #   client_key_id   = "dropr-dev-test"
 # and remove client_secret_file.

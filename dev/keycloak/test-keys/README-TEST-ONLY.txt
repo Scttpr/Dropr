@@ -12,7 +12,6 @@ anyone can impersonate the "dropr-pkjwt" client of the dev realm with it.
 The matching public key is embedded in ../dropr-realm.json (client
 "dropr-pkjwt", attribute jwks.string, kid "dropr-dev-test").
 
-For a real deployment generate your own key pair, e.g.:
-  openssl req -x509 -newkey rsa:3072 -nodes -days 730 -subj "/CN=dropr" \
-    -keyout key.pem -out cert.pem && cat key.pem cert.pem > dropr-oidc.pem
-and upload cert.pem as the app credential at your provider.
+dev/dropr.toml shows how to use this key (its last comment). For a real
+deployment generate your own key pair as described in docs/oidc.md and
+upload its certificate to your provider.

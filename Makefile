@@ -4,12 +4,12 @@
 NIX      ?= $(if $(IN_NIX_SHELL),,nix develop -c)
 GO       ?= $(NIX) go
 NPM      ?= $(NIX) npm
-COMPOSE  ?= $(NIX) podman-compose -f deploy/compose.dev.yaml
+COMPOSE  ?= $(NIX) podman-compose -f dev/compose.yaml
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 FUZZTIME ?= 20s
 
 .PHONY: build build-go web web-deps test test-race lint vuln fuzz check dev keycloak-up keycloak-down \
-	test-keycloak e2e e2e-deps soak hashes nix-build clean
+	test-keycloak e2e e2e-deps hashes nix-build clean
 
 # Browser bundles: content-hashed page modules, sw.js and manifest.json are
 # written into internal/web/static (gitignored) and embedded by go:embed.
@@ -54,7 +54,7 @@ dev: web-deps
 	@mkdir -p .dev-data && chmod 700 .dev-data
 	@test -f .dev-data/refresh_key || (umask 077 && $(NIX) openssl rand -base64 32 > .dev-data/refresh_key)
 	cd web && $(NPM) run build -- --dev
-	$(GO) run ./cmd/dropr serve --config deploy/dropr.dev.toml
+	$(GO) run ./cmd/dropr serve --config dev/dropr.toml
 
 keycloak-up:
 	$(COMPOSE) up -d
@@ -80,19 +80,13 @@ e2e/node_modules/.package-lock.json: e2e/package-lock.json
 e2e: build e2e-deps
 	cd e2e && $(NIX) npx playwright test $(foreach p,$(E2E_PROJECTS),--project=$(p))
 
-# Soak/perf (not part of e2e): streams SOAK_SIZE (default 2GiB; up to 100GiB)
-# through the real HTTP API with the browser crypto modules and reports
-# throughput and peak RSS. Needs Keycloak. SOAK_DIR defaults to ~/.cache/dropr-soak.
-soak: build
-	cd e2e && $(NIX) node --experimental-strip-types soak/soak.ts
-
 # Recompute nix/hashes.nix (vendorHash, npmDepsHash) after dependency changes.
 hashes:
 	scripts/update-hashes.sh
 
-# Reference builds: binary, web assets, OCI image.
+# Reference builds: binary and web assets.
 nix-build:
-	nix build .#dropr .#web-assets .#image
+	nix build .#dropr .#web-assets
 
 clean:
 	rm -rf bin .dev-data

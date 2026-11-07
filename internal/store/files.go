@@ -707,7 +707,7 @@ func (s *Store) DeleteExpiredDownloadTokens(ctx context.Context, now time.Time) 
 }
 
 // DeleteExpiredLinks deletes expired share links and expired request links
-// with every file they received (PLAN.md §6: expiring deletes the blobs). It
+// with every file they received (DESIGN.md §6: expiring deletes the blobs). It
 // returns the blob IDs to remove from disk.
 func (s *Store) DeleteExpiredLinks(ctx context.Context, now time.Time) ([]string, error) {
 	var blobs []string

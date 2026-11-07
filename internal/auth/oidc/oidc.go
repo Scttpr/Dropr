@@ -1,5 +1,5 @@
 // Package oidc implements Dropr's generic OpenID Connect relying party
-// (PLAN.md §5.1): discovery with issuer pinning and capability checks,
+// (DESIGN.md §5.1): discovery with issuer pinning and capability checks,
 // Authorization Code + PKCE (S256) with state and nonce, private_key_jwt
 // client authentication, strict ID token verification, just-in-time
 // provisioning, periodic revalidation through the refresh token, and
@@ -148,7 +148,7 @@ func New(ctx context.Context, o Options) (*Provider, []string, error) {
 	defer cancel()
 
 	// go-oidc requires the discovered "issuer" to equal the configured one
-	// exactly (no normalization), which is the pinning PLAN.md asks for.
+	// exactly (no normalization), which is the pinning DESIGN.md asks for.
 	op, err := gooidc.NewProvider(discCtx, o.OIDC.Issuer)
 	if err != nil {
 		return nil, nil, fmt.Errorf("oidc: discovery for %s failed: %w", o.OIDC.Issuer, err)
@@ -220,7 +220,7 @@ func New(ctx context.Context, o Options) (*Provider, []string, error) {
 }
 
 // checkCapabilities verifies the discovery document against what Dropr
-// requires (PLAN.md §5.1.2, §10). Hard requirements fail in every mode;
+// requires (DESIGN.md §5.1.2, §10). Hard requirements fail in every mode;
 // "production" requirements fail in production and warn in dev.
 func (p *Provider) checkCapabilities() ([]string, error) {
 	m := p.meta

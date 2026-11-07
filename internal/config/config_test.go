@@ -322,7 +322,7 @@ func FuzzParseDuration(f *testing.F) {
 // The shipped example and dev configs must stay valid (strict keys, rules).
 func TestShippedConfigs(t *testing.T) {
 	t.Parallel()
-	for _, p := range []string{"../../deploy/dropr.example.toml", "../../deploy/dropr.dev.toml"} {
+	for _, p := range []string{"../../dropr.example.toml", "../../dev/dropr.toml"} {
 		data, err := os.ReadFile(p)
 		if err != nil {
 			t.Fatal(err)

@@ -1,4 +1,4 @@
-# Dropr configuration (production). See docs/ARCHITECTURE.md §5 and PLAN.md §5.1.
+# Dropr configuration (production). Keys: docs/ARCHITECTURE.md §5. OIDC: docs/oidc.md.
 public_url   = "https://drop.example.com"
 mode         = "production"
 data_dir     = "/data"

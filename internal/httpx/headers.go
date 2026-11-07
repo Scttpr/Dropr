@@ -16,7 +16,7 @@ type HeaderOptions struct {
 	FormActionOrigins []string
 }
 
-// CSP builds the Content-Security-Policy of PLAN.md §7.
+// CSP builds the Content-Security-Policy of DESIGN.md §7.
 func CSP(formActionOrigins []string) string {
 	sources := []string{"'self'"}
 	for _, o := range formActionOrigins {
@@ -61,7 +61,7 @@ const PermissionsPolicy = "accelerometer=(), ambient-light-sensor=(), autoplay=(
 	"publickey-credentials-create=(), publickey-credentials-get=(), screen-wake-lock=(), " +
 	"serial=(), storage-access=(), usb=(), web-share=(), window-management=(), xr-spatial-tracking=()"
 
-// HSTS is sent in both TLS modes (PLAN.md §7). Browsers ignore it over
+// HSTS is sent in both TLS modes (DESIGN.md §7). Browsers ignore it over
 // plain HTTP, so dev on http://localhost is unaffected.
 const HSTS = "max-age=63072000; includeSubDomains; preload"
 

@@ -1,5 +1,5 @@
 -- Dropr schema v3: fixes from the 2026-11 security audit. See
--- docs/ARCHITECTURE.md §4 and docs/security-audit-2026-11.md.
+-- docs/ARCHITECTURE.md §4.
 
 -- Passkey management grants (audit M-1). A fresh user-verified assertion
 -- made for a specific purpose ("add" a passkey, "delete" one given passkey)

@@ -38,7 +38,7 @@ const (
 	verifyRefresh
 )
 
-// verifyIDToken applies every ID token check of PLAN.md §5.1:
+// verifyIDToken applies every ID token check of DESIGN.md §5.1:
 //
 //   - signature against the discovered JWKS, asymmetric algorithms only
 //     (go-oidc, restricted to asymmetricAlgs);
