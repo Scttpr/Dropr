@@ -434,7 +434,7 @@ noscript:
 
 | Attribute | Required | Value |
 |---|---|---|
-| `data-request-id` | yes | the 22-char request id from the path |
+| `data-request-id` | yes | the 22-char request id from the path; the page reads the id from `location.pathname` and refuses to upload ("link damaged") if the two differ |
 | `data-max-files` | no | files this link still accepts (`max_files − files_received`; `1` for a single-use link, which closes on its first file) |
 | `data-max-bytes` | no | plaintext bytes it still accepts (`max_bytes − bytes_received`) |
 

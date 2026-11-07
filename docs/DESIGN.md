@@ -49,7 +49,7 @@ Non-goals: local accounts, public sign-up, folders, previews, comments, editing,
   1. `showSaveFilePicker()` (File System Access API) where available (Chromium), otherwise
   2. a service worker that serves a streamed `Content-Disposition: attachment` response (Firefox, Safari).
   Downloads never load the whole file into memory and can resume.
-- **Download counting** (`max_downloads`): the server issues a short-lived download token per session. The count goes up when the token is first used, and Range requests within that token don't count again.
+- **Download counting** (`max_downloads`): the server issues a short-lived download token per session. The count goes up on the token's first GET that serves bytes (a zero-byte answer such as a 416 does not count), and later Range requests with that token don't count again.
 - **Storage**: the server checks free disk space before accepting an upload and enforces a total quota per owner. Blobs are stored in sharded directories (`ab/cd/<id>`).
 
 ## 5. Authentication
@@ -72,7 +72,7 @@ required_claims = { tid = "<tenant-id>" }  # optional exact-match checks
 revalidate_every = "15m"
 ```
 
-- **Issuer pinning**: one issuer, loaded via discovery at startup. `iss` must match it exactly. Multi-tenant or "common" issuers are refused.
+- **Issuer pinning**: one issuer, loaded via discovery at startup (discovery, JWKS and every other provider response body capped at 1 MiB). `iss` must match it exactly. Multi-tenant or "common" issuers are refused.
 - **Flow**: Authorization Code + PKCE (S256), with `state` and `nonce`. These are kept in a short-lived `__Host-` cookie with `SameSite=Lax`, which is required so the browser sends it back on the cross-site redirect from the provider. The callback deletes it. Redirect URI: `https://<host>/auth/callback`, exact match.
 - **Callback landing**: the callback sets the session cookie and answers with a small same-origin page that then goes to the dashboard. Browsers don't send `SameSite=Strict` cookies within a redirect chain that started cross-site.
 - **Client authentication**: `private_key_jwt` (RFC 7523) with a certificate or key. A client secret is accepted only in dev mode.
@@ -80,9 +80,9 @@ revalidate_every = "15m"
 - **User identity**: `(iss, sub)`, the standard stable identifier. Never email, `preferred_username` or `name`; those are display only.
 - **Authorization**: `role_claim` must contain `required_role` on every login and every revalidation. Otherwise access is denied (403 page, no account created).
 - **MFA**: delegated to the provider. Dropr doesn't do MFA itself; [oidc.md](oidc.md) covers enforcing it.
-- **Revalidation**: the server stores the refresh token (AES-256-GCM encrypted at rest) and refreshes it every `revalidate_every`. The new ID token must pass all checks above, carry the same `sub`, and still have the role. If the refresh fails or any check fails, the session is killed. Providers refuse refresh tokens for disabled users and revoked sessions.
-- **Logout**: ends the local session, then RP-initiated logout via the discovered `end_session_endpoint` when the provider has one. Front-channel logout is also supported when the provider offers it.
-- **Provisioning**: an account is created just-in-time on first successful login. Removing the role blocks access. The data stays until an admin purges it.
+- **Revalidation**: the server stores the refresh token (AES-256-GCM encrypted at rest) and refreshes it every `revalidate_every`. The new ID token must pass all checks above, carry the same `sub`, and still have the role. If the refresh fails or any check fails, the session is killed. Providers refuse refresh tokens for disabled users and revoked sessions. Only a missing role or required claim also counts as a loss of access (the user's share links expire, their request links pause, §5.4); an unreachable provider or a rejected refresh token only kills the session.
+- **Logout**: ends the local session, then RP-initiated logout via the discovered `end_session_endpoint` when the provider has one. When discovery advertises a `revocation_endpoint`, the session's refresh token is also revoked there (RFC 7009), in the background and best effort: logout never waits for it. `dropr user revoke`, `dropr user disable` and a failed revalidation only drop the refresh token locally. Front-channel logout is also supported when the provider offers it and puts the `sid` claim in ID tokens (sessions are matched by `sid`).
+- **Provisioning**: an account is created just-in-time on first successful login. The display name is refreshed at each login and cleaned before use: controls (C0, DEL, C1), bidi and other default-ignorable or invisible characters are stripped and runs of spaces collapse to one (no Unicode normalization, unlike file names). Removing the role blocks access; once a login or revalidation finds it missing, the user's share links expire and their request links pause until a login with the role. The data stays until an admin purges it.
 - **Changing provider**: changes every user's `(iss, sub)`. `dropr user migrate --from-issuer ... --map file.csv` relinks existing accounts and their data to the new identities.
 
 ### 5.1.1 Microsoft Entra ID (officially supported)
@@ -91,8 +91,9 @@ revalidate_every = "15m"
 - `sub` in Entra is pairwise per app registration, so it stays stable as long as you keep the same app registration. Don't recreate it.
 - Define the app role `Dropr.User` (`role_claim = "roles"`). In the Enterprise Application, set "Assignment required = Yes" and assign users or groups. App roles are used instead of group claims to avoid group-overage issues.
 - Upload the certificate as the app credential (`private_key_jwt`).
+- Front-channel logout matches sessions by `sid`: check that ID tokens carry it and enable the `sid` optional claim if not ([oidc.md](oidc.md)).
 - MFA: a Conditional Access policy targeting the app, ideally with phishing-resistant authentication strength.
-- Disabling a user or using "Revoke sessions" makes the next refresh fail, so the Dropr session dies within 15 min.
+- Disabling a user or using "Revoke sessions" makes the next refresh fail, so the Dropr session dies within 15 min. A rejected refresh is not a definitive loss of access (an ended SSO session looks the same), so it does not expire share links: remove the role, or run `dropr user disable`.
 
 ### 5.1.2 Other providers (best-effort)
 
@@ -103,7 +104,7 @@ revalidate_every = "15m"
 ### 5.2 Request link keys (browser only)
 
 - **No setup step**: the first login lands on the dashboard. There is no key endpoint and no unlock.
-- **Creation**: the dashboard generates the link's key pair, creates the request on the server, then stores the private key in IndexedDB under the request ID. If storing fails, the browser deletes the new request: a link is never handed out without its key. It also asks for persistent storage so the browser does not evict the keys.
+- **Creation**: the dashboard generates the link's key pair, creates the request on the server, then stores the private key in IndexedDB under the request ID. If storing fails, the browser deletes the new request: a link is never handed out without its key. A stored key is never overwritten: if the server returns the ID of a link this browser already holds a key for, creation fails and that link is left alone. It also asks for persistent storage so the browser does not evict the keys.
 - **Use**: the inbox opens each received file with the key of its link. Files received through a link created in another browser are listed without a name and cannot be downloaded there; they can still be deleted.
 - **Cleanup**: revoking a link deletes its key. Keys of links that expired or were revoked elsewhere are pruned when the link list loads.
 - Flow A (upload and share) needs OIDC only.
@@ -112,14 +113,15 @@ revalidate_every = "15m"
 
 - Server-side sessions with a `__Host-` cookie, `Secure; HttpOnly; SameSite=Strict`. The cookie holds a random 256-bit ID; the database stores only its SHA-256 hash.
 - 30 min idle timeout, 8 h absolute timeout, plus OIDC revalidation every 15 min.
-- The session ID rotates at login.
+- The session ID rotates at login. Signing in again ends the browser's previous session: its hash travels in the sealed OIDC state cookie and that session is deleted at a successful callback (a cancelled or refused sign-in keeps it).
 
 ### 5.4 Admin CLI
 
 Admin access is shell access to the host. There is no admin web UI.
 
 - `dropr user list`
-- `dropr user revoke <user>`: kills all sessions now
+- `dropr user revoke <user>`: kills all sessions now, expires their share links (a later login does not bring them back) and pauses their request links until their next login. It does not block that login (the provider decides).
+- `dropr user disable <user>`: local lockout. Sets `disabled_at`, kills all sessions and expires their share links. Login and session load refuse the account and its request links stay closed until `dropr user enable <user>`, which clears `disabled_at` only (expired share links stay expired).
 - `dropr user purge <user>`: deletes the user and all their data
 - `dropr user migrate`: relinks accounts after a provider change (§5.1)
 - `dropr gc`, `dropr backup --out FILE`, `dropr healthcheck`
@@ -219,7 +221,7 @@ The product constraints the code enforces:
 | Network | TLS 1.2+ (AEAD only) + HSTS. Nothing readable. |
 | Database or disk theft | Ciphertext, sizes, timestamps, HPKE-wrapped file keys, encrypted refresh tokens. No plaintext, no filenames, no private keys. |
 | Stolen provider credentials | Attacker can share new files and see link metadata, but **cannot read the inbox** without the owner's browser profile. Mitigated by MFA at the provider (Conditional Access in Entra). |
-| Departed user | Role removed or account disabled at the provider, so the session dies within 15 min. `dropr user revoke` for immediate effect. |
+| Departed user | Role removed or account disabled at the provider, so the session dies within 15 min; a revalidation or login that finds the role missing expires their share links and pauses their request links. `dropr user revoke` does the same at once but is not a lockout (the next login with the role reopens the request links, not the shares); `dropr user disable` is. `dropr user purge` deletes their links and files. |
 | Link interception | Whoever holds a share link can read the file until expiry or revocation. Use short expiry and download limits. |
 | Malicious uploader | Can only reach owners through their request links. Bounded by caps. Files are never rendered. |
 | Compromised server serving malicious JS | **Residual risk** of browser E2E. Mitigated by minimal dependencies, reproducible builds and published hashes. |

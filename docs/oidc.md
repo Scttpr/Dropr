@@ -29,7 +29,11 @@ Details:
 * **Logout**: `https://<host>/login` is the post-logout redirect URI
   (RP-initiated logout, when discovery has an `end_session_endpoint`).
   `https://<host>/auth/frontchannel-logout` is the front-channel logout URL;
-  when the provider calls it, Dropr ends the matching sessions.
+  when the provider calls it, Dropr ends the matching sessions. Sessions are
+  matched by the `sid` claim of the ID token they were opened with: if the
+  provider does not put `sid` in ID tokens, front-channel logout matches
+  nothing (the call still succeeds) and Dropr logs a warning. Check that your
+  provider emits `sid`.
 * **Role claim**: `role_claim` is a claim name or a dotted path
   (`realm_access.roles`). The value may be a string or an array of strings.
   Without `required_role` in it, login is refused with a 403 page and no
@@ -39,9 +43,23 @@ Details:
   every login check, carry the same `sub` and still hold the role. Any failure,
   including an unreachable provider, ends the session. Disabling a user or
   revoking their sessions at the provider therefore takes effect within that
-  interval. `dropr user revoke <user>` is immediate. If a refresh returns no ID
-  token, Dropr checks the userinfo endpoint instead and fails closed when it
-  lacks the role.
+  interval. If a refresh returns no ID token, Dropr checks the userinfo
+  endpoint instead and fails closed when it lacks the role.
+* **Lost access**: when a revalidation or login finds the role (or a
+  required claim) missing, the user's share links expire for good and their
+  request links pause until a login with the role. Other revalidation failures
+  (provider unreachable, refresh token rejected, bad token) only end the
+  session.
+* **`dropr user revoke <user>`** ends the user's sessions at once, expires
+  their share links and pauses their request links. It is not a lockout: it
+  does not stop the next login, and a successful login (with the role) reopens
+  the request links (the shares stay expired).
+* **`dropr user disable <user>`** is the local lockout: Dropr refuses the
+  account's logins and sessions, and its request links stay closed, until
+  `dropr user enable <user>`; it also ends the sessions and expires the share
+  links. To remove someone, take the role away (or disable the account) at the
+  provider first, then run `dropr user disable`; `dropr user purge` deletes
+  their links and files.
 * **`required_claims`**: optional exact string matches on ID token claims, for
   example `{ tid = "<tenant-id>" }`. They cannot override registered claims
   (`iss`, `aud`, `sub`, `exp`, ...).
@@ -92,8 +110,12 @@ Upload `cert.pem` to the provider. Keep `oidc_key.pem` on the Dropr host only.
    phishing-resistant MFA is strongly recommended.
 
 The `roles`, `sub`, `tid` and `name` claims are in the v2.0 ID token by
-default; no optional claims are needed. Leave public client flows and implicit
-grant disabled.
+default. Front-channel logout also needs `sid` in the ID token: check that
+your tenant emits it, and if not, enable it as an optional claim (Token
+configuration → Add optional claim → ID → `sid`). Dropr logs one WARN per
+process ("ID token has no sid claim") when a login's ID token lacks it, so
+sign in once after setup and check the log. Leave public client flows and
+implicit grant disabled.
 
 ```toml
 [oidc]
