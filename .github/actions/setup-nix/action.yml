@@ -29,14 +29,19 @@ runs:
         # .drv files that Nix's evaluation cache still points to; a restored
         # eval cache then fails with "store path ... does not exist".
         # Re-evaluating the flake costs seconds.
+        # Store optimisation hard-links files into /nix/store/.links, which
+        # the saved archive cannot recreate on restore ("Cannot hard link"),
+        # leaving a half-restored store with missing libraries.
         extra-conf: |
           eval-cache = false
+          auto-optimise-store = false
 
     - if: inputs.cache == 'true'
       uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
       with:
-        # Bump v<n> to discard every saved store (v1 held a stale eval cache).
-        primary-key: nix-v2-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/hashes.nix') }}
-        restore-prefixes-first-match: nix-v2-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-
+        # Bump v<n> to discard every saved store (v1 held a stale eval cache,
+        # v2 hard links into /nix/store/.links).
+        primary-key: nix-v3-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/hashes.nix') }}
+        restore-prefixes-first-match: nix-v3-${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}-
         gc-max-store-size-linux: ${{ inputs.store-size }}
         save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
