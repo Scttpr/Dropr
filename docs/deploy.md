@@ -2,7 +2,8 @@
 
 **English** · [Français](fr/deploiement.md)
 
-A production deployment on one Linux host (amd64 or arm64) with systemd.
+A production deployment on one Linux host (amd64 or arm64), run by systemd or
+Docker.
 Reference material lives elsewhere: every configuration key in
 [dropr.example.toml](../dropr.example.toml) and
 [ARCHITECTURE.md §5](ARCHITECTURE.md#5-config-droprtoml), the identity
@@ -166,13 +167,79 @@ the script in
 [SECURITY.md](../SECURITY.md#check-what-a-running-instance-serves). Any `DIFF`
 means the instance does not serve the released code.
 
-## 6. Operations
+## 6. Or run with Docker
 
-Admin commands run as the service account: `sudo -u dropr dropr help`.
+Docker Engine with Compose v2 can run the signed image instead of the binary
+and unit (§2, §5), with the same account, secrets and configuration (§3, §4).
+The image is the release binary on distroless: no shell, no package manager.
+Releases after v1.0.1 publish it.
+
+Verify the image and note its digest, then create the data directory that
+systemd would otherwise create:
+
+```sh
+V=<version>
+cosign verify ghcr.io/scttpr/dropr:$V \
+  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  | jq -r '.[0].critical.image."docker-manifest-digest"'
+install -d -m 0700 -o dropr -g dropr /var/lib/dropr
+id dropr    # uid and gid for the compose file
+```
+
+`/etc/dropr/compose.yaml`:
+
+```yaml
+services:
+  dropr:
+    image: ghcr.io/scttpr/dropr:<version>@sha256:<digest>
+    user: "<uid>:<gid>"
+    restart: unless-stopped
+    stop_grace_period: 35s
+    ports:
+      - "443:443"
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    volumes:
+      - /etc/dropr:/etc/dropr:ro
+      - /var/lib/dropr:/var/lib/dropr
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    logging:
+      driver: local
+```
+
+```sh
+cd /etc/dropr && docker compose up -d
+docker compose logs -f
+```
+
+* The container runs as `dropr`, so it reads the secrets and data with the
+  permissions of §3. The sysctl lets it bind port 443 inside its own network
+  namespace without root or capabilities. The image's health check runs
+  `dropr healthcheck`; `docker compose ps` shows the result.
+* **Published ports bypass the host firewall**: ufw and firewalld rules do not
+  apply to them. Publish only 443, and give an address (`"203.0.113.10:443:443"`)
+  if the host has several.
+* Run one container only: the SQLite database does not support several
+  instances on the same data.
+* **Behind a reverse proxy** on the host, use the proxy settings of §4 and
+  replace `ports` and `sysctls` with `network_mode: host`. Dropr then listens
+  on the host's `127.0.0.1:8080` and nothing is published.
+
+Then sign in and check the served code as in §5.
+
+## 7. Operations
+
+Admin commands run as the service account: `sudo -u dropr dropr help`, or with
+Docker `docker compose exec dropr dropr help` from `/etc/dropr`.
 
 * **Backups.** `sudo -u dropr dropr backup --out <file>` writes a consistent
   copy of the database while Dropr runs; also copy `/var/lib/dropr/blobs`
-  (already encrypted). Keep `refresh_key` out of these backups.
+  (already encrypted). With Docker, `--out` must be under `/var/lib/dropr`,
+  the only writable path. Keep `refresh_key` out of these backups.
 * **Request link keys are not on the server.** They live in the owner's
   browser profile: clearing site data, a private window or a lost device makes
   received files unreadable. Tell users to create request links in their usual
@@ -183,5 +250,6 @@ Admin commands run as the service account: `sudo -u dropr dropr help`.
 * **Offboarding.** Remove the role at the provider, then
   `sudo -u dropr dropr user disable <user>`.
 * **Upgrades.** Verify the new binary (§2), back up, replace it,
-  `systemctl restart dropr`, check the served code (§5). Only the latest
-  release gets security fixes.
+  `systemctl restart dropr`, check the served code (§5). With Docker, verify
+  the new image (§6), back up, change the image line, `docker compose up -d`.
+  Only the latest release gets security fixes.

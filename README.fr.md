@@ -57,8 +57,8 @@ make build           # bin/dropr (depuis `nix develop`)
 
 Vous obtenez un binaire statique unique, avec les modules navigateur, les
 gabarits et les styles embarqués. Des binaires Linux amd64 et arm64 sont publiés
-à chaque version avec des sommes de contrôle signées
-([vérifier une version](docs/fr/deploiement.md#2-installer-un-binaire-vérifié)).
+à chaque version avec des sommes de contrôle signées, ainsi qu'une image
+conteneur signée ([vérifier une version](docs/fr/deploiement.md#2-installer-un-binaire-vérifié)).
 
 ```sh
 (umask 077; openssl rand -base64 32 > refresh_key)   # chiffre les refresh tokens stockés

@@ -37,6 +37,9 @@ the browser bundle is built reproducibly and its hashes are published.
 * GitHub attestations: SLSA build provenance for the binaries and the asset
   hashes, and an SBOM attestation per binary. They tie each file to the
   workflow run and commit that built it.
+* A container image `ghcr.io/scttpr/dropr:<version>` (amd64 and arm64) that
+  packages those same binaries on distroless, signed with cosign keyless and
+  with a SLSA provenance attestation. Its digest is in the release notes.
 * `dropr-<version>-SHA256SUMS`, the binaries' checksums, and its keyless
   cosign bundle `dropr-<version>-SHA256SUMS.sigstore.json` (signed with the
   GitHub OIDC identity of the release workflow).
@@ -76,6 +79,20 @@ gh attestation verify dropr-$V-linux-amd64 --repo Scttpr/Dropr \
 
 Releases up to v1.0.0 were signed by `ci.yml` instead of `release.yml`: use
 `ci\.yml` in the identity above, and they have no attestations or SBOMs.
+
+### Verify the container image
+
+```sh
+V=v0.1.0
+cosign verify ghcr.io/scttpr/dropr:$V \
+  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify oci://ghcr.io/scttpr/dropr:$V --repo Scttpr/Dropr \
+  --signer-workflow Scttpr/Dropr/.github/workflows/release.yml
+```
+
+Then run it by the digest these commands print, not by the tag. Images are
+published from the first release after v1.0.1.
 
 ### Verify the asset hashes
 

@@ -50,7 +50,8 @@ make build           # bin/dropr (from `nix develop`)
 
 Either way you get one static binary with the browser modules, templates and
 styles embedded. Release binaries for Linux amd64 and arm64 are published with
-signed checksums ([verifying a release](SECURITY.md#verifying-a-release)).
+signed checksums, along with a signed container image
+([verifying a release](SECURITY.md#verifying-a-release)).
 
 ## Run
 
