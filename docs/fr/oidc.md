@@ -141,7 +141,7 @@ flux de client public et l'octroi implicite.
 issuer          = "https://login.microsoftonline.com/<tenant-id>/v2.0"
 client_id       = "<application-id>"
 client_auth     = "private_key_jwt"
-client_key_file = "/run/secrets/oidc_key"
+client_key_file = "/etc/dropr/oidc_key"
 scopes          = ["openid", "profile", "offline_access"]
 role_claim      = "roles"
 required_role   = "Dropr.User"
@@ -194,7 +194,7 @@ Pour un vrai realm :
 issuer          = "https://auth.example.com/realms/<realm>"
 client_id       = "dropr"
 client_auth     = "private_key_jwt"
-client_key_file = "/run/secrets/oidc_key"
+client_key_file = "/etc/dropr/oidc_key"
 client_key_id   = "<kid de l'onglet Keys>"
 scopes          = ["openid", "profile"]
 role_claim      = "realm_access.roles"

@@ -63,7 +63,7 @@ Dropr uses only standard OIDC: discovery, Authorization Code, refresh tokens, RP
 issuer          = "https://login.microsoftonline.com/<tenant-id>/v2.0"
 client_id       = "..."
 client_auth     = "private_key_jwt"        # or "client_secret" (dev mode only)
-client_key_file = "/run/secrets/oidc_key"  # PEM key + cert for private_key_jwt
+client_key_file = "/etc/dropr/oidc_key"  # PEM key + cert for private_key_jwt
 scopes          = ["openid", "profile", "offline_access"]
 role_claim      = "roles"                  # dotted path allowed, e.g. "realm_access.roles"
 required_role   = "Dropr.User"
