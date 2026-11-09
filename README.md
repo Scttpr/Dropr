@@ -83,7 +83,6 @@ admin commands: `user list|revoke|disable|enable|purge|migrate`, `gc`, `backup`,
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | HTTP surface, data model, configuration, contracts |
 | [docs/FORMAT.md](docs/FORMAT.md) | Normative byte formats and test vectors |
 | [docs/PAGES.md](docs/PAGES.md) | Page and browser module DOM contract |
-| [docs/security-audit-2026-11.md](docs/security-audit-2026-11.md) | Pre-release internal audit: findings and fixes |
 | [SECURITY.md](SECURITY.md) | Reporting, supported versions, verifying releases |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup and tests |
 

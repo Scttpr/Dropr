@@ -4,7 +4,7 @@ Status: draft for external review. Scope: Dropr as specified in
 `docs/DESIGN.md`, `docs/ARCHITECTURE.md` and `docs/FORMAT.md`, deployed as one
 instance with Microsoft Entra ID (or another OIDC provider) for login. Every
 mitigation listed is implemented; the "Code" column names where it lives.
-Fixes from the [2026-11 internal audit](security-audit-2026-11.md) are cited
+Fixes from the 2026-11 internal audit are cited
 as "audit X-n" in ARCHITECTURE.md and the code, and covered by regression
 tests. Treat this document as a
 checklist to re-verify against the code before each release.
