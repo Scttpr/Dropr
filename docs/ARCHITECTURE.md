@@ -4,7 +4,7 @@ This document is the **binding contract** between the Go server, the browser
 modules and the tests. [DESIGN.md](DESIGN.md) is the product spec; this file pins the
 details the design leaves open. Change it only deliberately, and update every
 side at once. "Audit X-n" cites a finding of the
-[2026-11 internal audit](security-audit-2026-11.md).
+2026-11 internal audit.
 
 ## 0. Environment
 
