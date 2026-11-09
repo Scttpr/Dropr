@@ -44,10 +44,9 @@ clair, sombre et système.
 
 ## Déployer
 
-Le guide complet, en français, est dans
-**[docs/fr/deploiement.md](docs/fr/deploiement.md)** : prérequis, binaire et
-vérification, configuration, TLS (ACME ou reverse proxy), fournisseur
-d'identité, exploitation (sauvegardes, comptes, rotation des secrets).
+Le guide de production est dans
+**[docs/fr/deploiement.md](docs/fr/deploiement.md)** : binaire vérifié,
+secrets, configuration, unité systemd durcie, sauvegardes.
 
 En bref :
 
@@ -59,7 +58,7 @@ make build           # bin/dropr (depuis `nix develop`)
 Vous obtenez un binaire statique unique, avec les modules navigateur, les
 gabarits et les styles embarqués. Des binaires Linux amd64 et arm64 sont publiés
 à chaque version avec des sommes de contrôle signées
-([vérifier une version](docs/fr/deploiement.md#2-obtenir-et-vérifier-le-binaire)).
+([vérifier une version](docs/fr/deploiement.md#2-installer-un-binaire-vérifié)).
 
 ```sh
 (umask 077; openssl rand -base64 32 > refresh_key)   # chiffre les refresh tokens stockés
@@ -88,7 +87,7 @@ En français :
 
 | Document | Contenu |
 |---|---|
-| [docs/fr/deploiement.md](docs/fr/deploiement.md) | Guide de déploiement et d'exploitation |
+| [docs/fr/deploiement.md](docs/fr/deploiement.md) | Déploiement de production : binaire, secrets, unité systemd, exploitation |
 | [docs/fr/oidc.md](docs/fr/oidc.md) | Exigences du fournisseur d'identité, Entra ID et Keycloak |
 
 En anglais (référence) :
@@ -101,7 +100,6 @@ En anglais (référence) :
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Surface HTTP, modèle de données, configuration, contrats |
 | [docs/FORMAT.md](docs/FORMAT.md) | Formats binaires normatifs et vecteurs de test |
 | [docs/PAGES.md](docs/PAGES.md) | Contrat DOM des pages et des modules navigateur |
-| [docs/security-audit-2026-11.md](docs/security-audit-2026-11.md) | Audit interne avant publication : constats et correctifs |
 | [SECURITY.md](SECURITY.md) | Signalement, versions maintenues, vérification des versions |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Environnement de développement et tests |
 
