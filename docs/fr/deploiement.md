@@ -3,7 +3,8 @@
 [English](../deploy.md) · **Français** — traduction de
 [docs/deploy.md](../deploy.md), qui fait foi en cas de divergence.
 
-Un déploiement de production sur un hôte Linux (amd64 ou arm64) avec systemd.
+Un déploiement de production sur un hôte Linux (amd64 ou arm64), géré par
+systemd ou Docker.
 La référence est ailleurs : toutes les clés de configuration dans
 [dropr.example.toml](../../dropr.example.toml) et
 [ARCHITECTURE.md §5](../ARCHITECTURE.md#5-config-droprtoml), le fournisseur
@@ -172,15 +173,83 @@ serveur, avec le script de
 [SECURITY.md](../../SECURITY.md#check-what-a-running-instance-serves). Toute
 ligne `DIFF` signifie que l'instance ne sert pas le code publié.
 
-## 6. Exploitation
+## 6. Ou avec Docker
+
+Docker Engine avec Compose v2 peut faire tourner l'image signée à la place du
+binaire et de l'unité (§2, §5), avec le même compte, les mêmes secrets et la
+même configuration (§3, §4). L'image est le binaire publié sur distroless :
+ni shell, ni gestionnaire de paquets. Les versions postérieures à v1.0.1 la
+publient.
+
+Vérifiez l'image et notez son empreinte (digest), puis créez le répertoire de
+données que systemd créerait sinon :
+
+```sh
+V=<version>
+cosign verify ghcr.io/scttpr/dropr:$V \
+  --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  | jq -r '.[0].critical.image."docker-manifest-digest"'
+install -d -m 0700 -o dropr -g dropr /var/lib/dropr
+id dropr    # uid et gid pour le fichier compose
+```
+
+`/etc/dropr/compose.yaml` :
+
+```yaml
+services:
+  dropr:
+    image: ghcr.io/scttpr/dropr:<version>@sha256:<digest>
+    user: "<uid>:<gid>"
+    restart: unless-stopped
+    stop_grace_period: 35s
+    ports:
+      - "443:443"
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    volumes:
+      - /etc/dropr:/etc/dropr:ro
+      - /var/lib/dropr:/var/lib/dropr
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    logging:
+      driver: local
+```
+
+```sh
+cd /etc/dropr && docker compose up -d
+docker compose logs -f
+```
+
+* Le conteneur tourne sous `dropr` : il lit les secrets et les données avec
+  les permissions du §3. Le sysctl lui permet d'écouter sur le port 443 dans
+  son propre espace de noms réseau, sans root ni capacités. Le contrôle de
+  santé de l'image lance `dropr healthcheck` ; `docker compose ps` en affiche
+  le résultat.
+* **Les ports publiés contournent le pare-feu de l'hôte** : les règles ufw et
+  firewalld ne s'y appliquent pas. Ne publiez que le 443, et précisez une
+  adresse (`"203.0.113.10:443:443"`) si l'hôte en a plusieurs.
+* Un seul conteneur : la base SQLite ne supporte pas plusieurs instances sur
+  les mêmes données.
+* **Derrière un reverse proxy** sur l'hôte, reprenez les réglages proxy du §4
+  et remplacez `ports` et `sysctls` par `network_mode: host`. Dropr écoute alors
+  sur `127.0.0.1:8080` de l'hôte et rien n'est publié.
+
+Connectez-vous ensuite et vérifiez le code servi comme au §5.
+
+## 7. Exploitation
 
 Les commandes d'administration tournent sous le compte de service :
-`sudo -u dropr dropr help`.
+`sudo -u dropr dropr help`, ou avec Docker
+`docker compose exec dropr dropr help` depuis `/etc/dropr`.
 
 * **Sauvegardes.** `sudo -u dropr dropr backup --out <fichier>` écrit une copie
   cohérente de la base pendant que Dropr tourne ; copiez aussi
-  `/var/lib/dropr/blobs` (déjà chiffrés). Gardez `refresh_key` hors de ces
-  sauvegardes.
+  `/var/lib/dropr/blobs` (déjà chiffrés). Avec Docker, `--out` doit être sous
+  `/var/lib/dropr`, seul chemin accessible en écriture. Gardez `refresh_key`
+  hors de ces sauvegardes.
 * **Les clés des liens de demande ne sont pas sur le serveur.** Elles vivent
   dans le profil de navigateur du propriétaire : effacer les données du site,
   une fenêtre privée ou un appareil perdu rendent les fichiers reçus
@@ -192,5 +261,7 @@ Les commandes d'administration tournent sous le compte de service :
 * **Départ d'un utilisateur.** Retirez le rôle chez le fournisseur, puis
   `sudo -u dropr dropr user disable <user>`.
 * **Mises à jour.** Vérifiez le nouveau binaire (§2), sauvegardez, remplacez-le,
-  `systemctl restart dropr`, vérifiez le code servi (§5). Seule la dernière
-  version reçoit les correctifs de sécurité.
+  `systemctl restart dropr`, vérifiez le code servi (§5). Avec Docker,
+  vérifiez la nouvelle image (§6), sauvegardez, changez la ligne `image`,
+  `docker compose up -d`. Seule la dernière version reçoit les correctifs de
+  sécurité.
