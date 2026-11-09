@@ -52,3 +52,10 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # Dockerfile's distroless base, pinned by digest.
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
+    commit-message: { prefix: "build(deps)" }
