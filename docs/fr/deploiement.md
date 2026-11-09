@@ -30,7 +30,7 @@ Téléchargez `dropr-<version>-linux-amd64` (ou `-arm64`) et les fichiers
 signature avec [cosign](https://github.com/sigstore/cosign) :
 
 ```sh
-V=v1.0.1
+V=v1.1.0
 cosign verify-blob --bundle dropr-$V-SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -178,14 +178,13 @@ ligne `DIFF` signifie que l'instance ne sert pas le code publié.
 Docker Engine avec Compose v2 peut faire tourner l'image signée à la place du
 binaire et de l'unité (§2, §5), avec le même compte, les mêmes secrets et la
 même configuration (§3, §4). L'image est le binaire publié sur distroless :
-ni shell, ni gestionnaire de paquets. Les versions postérieures à v1.0.1 la
-publient.
+ni shell, ni gestionnaire de paquets. Elle est publiée depuis v1.1.0.
 
 Vérifiez l'image et notez son empreinte (digest), puis créez le répertoire de
 données que systemd créerait sinon :
 
 ```sh
-V=<version>
+V=v1.1.0
 cosign verify ghcr.io/scttpr/dropr:$V \
   --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -199,7 +198,7 @@ id dropr    # uid et gid pour le fichier compose
 ```yaml
 services:
   dropr:
-    image: ghcr.io/scttpr/dropr:<version>@sha256:<digest>
+    image: ghcr.io/scttpr/dropr:v1.1.0@sha256:<digest>
     user: "<uid>:<gid>"
     restart: unless-stopped
     stop_grace_period: 35s
