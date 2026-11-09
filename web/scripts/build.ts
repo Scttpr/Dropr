@@ -22,7 +22,7 @@
  */
 
 import { build, type BuildOptions } from "esbuild";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { gzipSync } from "node:zlib";
@@ -83,8 +83,9 @@ writeFileSync(manifestPath, JSON.stringify(sorted, null, 2) + "\n");
 
 for (const [name, file] of Object.entries(sorted)) {
   const path = join(outdir, file);
-  const raw = statSync(path).size;
-  const gz = gzipSync(readFileSync(path), { level: 9 }).length;
+  const buf = readFileSync(path);
+  const raw = buf.length;
+  const gz = gzipSync(buf, { level: 9 }).length;
   console.log(`  ${name.padEnd(14)} ${file.padEnd(28)} ${(raw / 1024).toFixed(1).padStart(6)} KiB  (${(gz / 1024).toFixed(1)} KiB gzip)`);
 }
 console.log(`wrote ${manifestPath} (${Object.keys(sorted).length} entries)`);
