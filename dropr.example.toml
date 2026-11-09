@@ -1,14 +1,14 @@
 # Dropr configuration (production). Keys: docs/ARCHITECTURE.md §5. OIDC: docs/oidc.md.
 public_url   = "https://drop.example.com"
 mode         = "production"
-data_dir     = "/data"
+data_dir     = "/var/lib/dropr"
 listen       = ":8443"
 tls          = "acme"              # or "proxy" (then listen on 127.0.0.1:8080 or unix:/run/dropr.sock)
 acme_email   = "admin@example.com"
 redirect_http = false
 trusted_proxies = []               # proxy mode: REQUIRED (the proxy's address, e.g. ["127.0.0.1"])
 # trust_unix_socket_proxy = false  # proxy mode on unix:/run/dropr.sock: trust its X-Forwarded-For
-refresh_key_file = "/run/secrets/refresh_key"   # openssl rand -base64 32
+refresh_key_file = "/etc/dropr/refresh_key"   # openssl rand -base64 32
 login_label  = "Sign in with Microsoft"
 
 [limits]
@@ -24,7 +24,7 @@ default_expiry = "7d"              # 1h, 1d, 7d or 30d
 issuer          = "https://login.microsoftonline.com/<tenant-id>/v2.0"
 client_id       = "<application-id>"
 client_auth     = "private_key_jwt"
-client_key_file = "/run/secrets/oidc_key"   # PEM private key followed by its certificate
+client_key_file = "/etc/dropr/oidc_key"   # PEM private key followed by its certificate
 scopes          = ["openid", "profile", "offline_access"]
 role_claim      = "roles"
 required_role   = "Dropr.User"

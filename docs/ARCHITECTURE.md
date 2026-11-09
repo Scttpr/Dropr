@@ -410,13 +410,13 @@ AES-256-GCM ciphertext under the file-loaded `refresh_key`.
 ```toml
 public_url   = "https://drop.example.com"
 mode         = "production"          # or "dev" (allows client_secret, http://localhost)
-data_dir     = "/data"
+data_dir     = "/var/lib/dropr"
 listen       = ":8443"               # proxy mode: "127.0.0.1:8080" or "unix:/run/dropr.sock"
 tls          = "acme"                # or "proxy"
 acme_email   = "admin@example.com"
 redirect_http = false                # listen :8080 → 301 https
 trusted_proxies = []                 # CIDRs, proxy mode only
-refresh_key_file = "/run/secrets/refresh_key"   # 32 random bytes (raw or base64)
+refresh_key_file = "/etc/dropr/refresh_key"   # 32 random bytes (raw or base64)
 login_label  = "Sign in"
 
 [limits]
