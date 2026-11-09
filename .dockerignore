@@ -1,0 +1,4 @@
+# The image only needs the release binaries (Dockerfile).
+*
+!dist/dropr-*-linux-*
+dist/*.cdx.json
