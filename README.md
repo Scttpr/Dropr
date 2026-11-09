@@ -1,5 +1,7 @@
 # Dropr
 
+**English** · [Français](README.fr.md)
+
 [![ci](https://github.com/Scttpr/Dropr/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Scttpr/Dropr/actions/workflows/ci.yml)
 [![security](https://github.com/Scttpr/Dropr/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/Scttpr/Dropr/actions/workflows/security.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Scttpr/Dropr/badge)](https://scorecard.dev/viewer/?uri=github.com/Scttpr/Dropr)
@@ -78,6 +80,7 @@ admin commands: `user list|revoke|disable|enable|purge|migrate`, `gc`, `backup`,
 | Document | Content |
 |---|---|
 | [docs/oidc.md](docs/oidc.md) | Identity provider requirements, Entra ID and Keycloak |
+| [docs/fr/deploiement.md](docs/fr/deploiement.md) | Deployment and operations guide, in French |
 | [docs/DESIGN.md](docs/DESIGN.md) | Scope, decisions and their rationale |
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Assets, attackers, STRIDE, residual risks |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | HTTP surface, data model, configuration, contracts |
