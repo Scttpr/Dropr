@@ -60,7 +60,8 @@ dropr serve --config dropr.toml
 ```
 
 [`dropr.example.toml`](dropr.example.toml) is the commented configuration
-reference. Dropr needs:
+reference, and [docs/deploy.md](docs/deploy.md) the production deployment
+guide (verified binary, hardened systemd unit, backups). Dropr needs:
 
 * an OIDC provider where you can register a client and issue a role claim
   ([docs/oidc.md](docs/oidc.md));
@@ -80,7 +81,7 @@ admin commands: `user list|revoke|disable|enable|purge|migrate`, `gc`, `backup`,
 | Document | Content |
 |---|---|
 | [docs/oidc.md](docs/oidc.md) | Identity provider requirements, Entra ID and Keycloak |
-| [docs/fr/deploiement.md](docs/fr/deploiement.md) | Deployment and operations guide, in French |
+| [docs/deploy.md](docs/deploy.md) | Production deployment: binary, secrets, systemd unit, operations |
 | [docs/DESIGN.md](docs/DESIGN.md) | Scope, decisions and their rationale |
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Assets, attackers, STRIDE, residual risks |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | HTTP surface, data model, configuration, contracts |
