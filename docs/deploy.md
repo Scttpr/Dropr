@@ -27,7 +27,7 @@ Download `dropr-<version>-linux-amd64` (or `-arm64`) and the
 signature with [cosign](https://github.com/sigstore/cosign):
 
 ```sh
-V=v1.0.1
+V=v1.1.0
 cosign verify-blob --bundle dropr-$V-SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -172,13 +172,13 @@ means the instance does not serve the released code.
 Docker Engine with Compose v2 can run the signed image instead of the binary
 and unit (§2, §5), with the same account, secrets and configuration (§3, §4).
 The image is the release binary on distroless: no shell, no package manager.
-Releases after v1.0.1 publish it.
+It has been published since v1.1.0.
 
 Verify the image and note its digest, then create the data directory that
 systemd would otherwise create:
 
 ```sh
-V=<version>
+V=v1.1.0
 cosign verify ghcr.io/scttpr/dropr:$V \
   --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -192,7 +192,7 @@ id dropr    # uid and gid for the compose file
 ```yaml
 services:
   dropr:
-    image: ghcr.io/scttpr/dropr:<version>@sha256:<digest>
+    image: ghcr.io/scttpr/dropr:v1.1.0@sha256:<digest>
     user: "<uid>:<gid>"
     restart: unless-stopped
     stop_grace_period: 35s
