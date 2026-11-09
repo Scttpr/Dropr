@@ -10,7 +10,8 @@ work if they meet the requirements below.
 
 The `[oidc]` keys are documented in [dropr.example.toml](../dropr.example.toml)
 and [ARCHITECTURE.md](ARCHITECTURE.md) §5. The design is in
-[DESIGN.md](DESIGN.md) §5.1.
+[DESIGN.md](DESIGN.md) §5.1. The full deployment is in
+[deploy.md](deploy.md).
 
 ## What Dropr requires
 
@@ -124,7 +125,7 @@ implicit grant disabled.
 issuer          = "https://login.microsoftonline.com/<tenant-id>/v2.0"
 client_id       = "<application-id>"
 client_auth     = "private_key_jwt"
-client_key_file = "/run/secrets/oidc_key"
+client_key_file = "/etc/dropr/oidc_key"
 scopes          = ["openid", "profile", "offline_access"]
 role_claim      = "roles"
 required_role   = "Dropr.User"
@@ -172,7 +173,7 @@ For a real realm:
 issuer          = "https://auth.example.com/realms/<realm>"
 client_id       = "dropr"
 client_auth     = "private_key_jwt"
-client_key_file = "/run/secrets/oidc_key"
+client_key_file = "/etc/dropr/oidc_key"
 client_key_id   = "<kid from the Keys tab>"
 scopes          = ["openid", "profile"]
 role_claim      = "realm_access.roles"
