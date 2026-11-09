@@ -1,0 +1,6 @@
+# OSV-Scanner configuration (security.yml). Ignores need a reason and an expiry.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+ignoreUntil = 2027-02-09
+reason = "golang.org/x/crypto/openpgp is unmaintained; Dropr never imports it (go list -deps shows none) and no tagged x/crypto release carries a fix yet"
