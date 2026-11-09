@@ -1,5 +1,7 @@
 # Identity provider (OIDC)
 
+**English** · [Français](fr/oidc.md)
+
 Dropr has no local accounts. Every login goes through one OpenID Connect
 provider, and access is granted by a role claim in the ID token. Microsoft
 Entra ID is the officially supported provider. Keycloak is used in development
