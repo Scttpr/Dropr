@@ -22,6 +22,7 @@ side at once. "Audit X-n" cites a finding of the
 flake.nix                 dev shell, packages (dropr, web-assets), checks
 nix/                      hashes.nix: vendorHash and npmDepsHash (`make hashes`, scripts/update-hashes.sh)
 Makefile                  developer tasks (CONTRIBUTING.md)
+Dockerfile                release image: the release binaries on distroless (release.yml)
 .github/workflows/        CI, security scans, nightly fuzzing, releases (CONTRIBUTING.md)
 dropr.example.toml        commented production configuration
 go.mod                    module github.com/scttpr/dropr

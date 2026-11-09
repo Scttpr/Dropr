@@ -58,7 +58,7 @@ they can be run and read outside a workflow.
 | `security.yml` | PRs, main, daily | CodeQL, dependency review (PRs), govulncheck, npm audit, OSV-Scanner |
 | `scorecard.yml` | main, weekly | OpenSSF Scorecard |
 | `nightly.yml` | daily | 5 minutes of fuzzing per target, corpus kept between nights |
-| `release.yml` | `v*` tags | verify the tag, reproducible build, SBOMs, signatures, attestations, release |
+| `release.yml` | `v*` tags | verify the tag, reproducible build, SBOMs, signatures, attestations, container image, release |
 | `deps.yml` | Dependabot PRs, weekly | `make hashes` on Dependabot PRs; weekly `flake.lock` bump PR |
 
 * On a PR, `ci.yml` runs only the jobs whose inputs changed (a docs-only PR
