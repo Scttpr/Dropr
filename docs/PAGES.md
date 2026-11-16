@@ -152,8 +152,10 @@ share one browser profile without touching each other's keys
       <option value="7d" selected>7 days</option>   <!-- selected = data-default-expiry -->
       <option value="30d">30 days</option>
     </select>
-    <label for="max-downloads">Download limit (optional)</label>
-    <input type="number" id="max-downloads" name="max_downloads" min="1" max="999999" inputmode="numeric">
+    <label for="max-downloads">Maximum number of downloads (optional)</label>
+    <input type="number" id="max-downloads" name="max_downloads" min="1" max="999999" inputmode="numeric"
+           aria-describedby="max-downloads-hint">
+    <p id="max-downloads-hint">The link stops working after this many downloads. Leave empty for no limit.</p>
   </form>
 
   <div id="upload-panel" hidden>

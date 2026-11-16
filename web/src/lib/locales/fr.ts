@@ -111,7 +111,7 @@ export const fr: Messages = {
 
   // ---- Dashboard ---------------------------------------------------------
   fileTooLarge: (have, limit) => `Ce fichier est trop volumineux (${have}). La limite est de ${limit}.`,
-  downloadLimitInvalid: "La limite de téléchargements doit être un nombre entier d'au moins 1, ou rester vide pour aucune limite.",
+  downloadLimitInvalid: "Le nombre maximal de téléchargements doit être un nombre entier d'au moins 1, ou rester vide pour ne pas limiter.",
   maxFilesInvalid: "Le nombre de fichiers doit être un nombre entier d'au moins 1.",
   uploadReady: "Envoi terminé. Votre lien est prêt.",
   creatingRequest: "Création du lien de dépôt…",
