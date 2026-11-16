@@ -105,8 +105,14 @@ func TestProductionDefaults(t *testing.T) {
 	if len(c.RefreshKey) != 32 {
 		t.Error("refresh key")
 	}
+	if c.AutoLogin {
+		t.Error("auto_login is on by default")
+	}
 	if len(c.Warnings) != 0 {
 		t.Errorf("warnings: %v", c.Warnings)
+	}
+	if c, err := Parse([]byte(f.prod("auto_login = true"))); err != nil || !c.AutoLogin {
+		t.Errorf("auto_login = true: %v", err)
 	}
 }
 

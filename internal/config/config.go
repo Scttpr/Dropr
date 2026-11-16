@@ -68,7 +68,10 @@ type Config struct {
 	TrustUnixSocketProxy bool   `toml:"trust_unix_socket_proxy"`
 	RefreshKeyFile       string `toml:"refresh_key_file"`
 	LoginLabel           string `toml:"login_label"`
-	LogLevel             string `toml:"log_level"`
+	// AutoLogin sends visitors of owner pages straight to the identity
+	// provider instead of showing the sign-in page (/login still shows it).
+	AutoLogin bool   `toml:"auto_login"`
+	LogLevel  string `toml:"log_level"`
 
 	Limits Limits `toml:"limits"`
 	OIDC   OIDC   `toml:"oidc"`

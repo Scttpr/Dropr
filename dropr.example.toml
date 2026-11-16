@@ -10,6 +10,7 @@ trusted_proxies = []               # proxy mode: REQUIRED (the proxy's address, 
 # trust_unix_socket_proxy = false  # proxy mode on unix:/run/dropr.sock: trust its X-Forwarded-For
 refresh_key_file = "/etc/dropr/refresh_key"   # openssl rand -base64 32
 login_label  = "Sign in with Microsoft"
+# auto_login = false               # true: owner pages go straight to the provider (SSO), /login keeps its button
 
 [limits]
 max_file_size  = "5GB"             # at most 100GB (binary units)

@@ -105,6 +105,26 @@ cat key.pem cert.pem > oidc_key.pem    # oidc.client_key_file
 Déposez `cert.pem` chez le fournisseur. Gardez `oidc_key.pem` sur l'hôte Dropr
 uniquement.
 
+## Connexion automatique
+
+`auto_login = true` (au niveau racine, `false` par défaut) saute la page de
+connexion : un visiteur sans session qui ouvre `/`, `/inbox` ou `/links` est
+envoyé directement chez le fournisseur, puis revient sur la page demandée.
+Avec Entra ID et l'authentification unique (SSO) sur des postes gérés, ouvrir
+Dropr connecte alors l'utilisateur sans un clic.
+
+* `/login` garde son bouton et ne redirige jamais d'elle-même. C'est l'URI de
+  redirection après déconnexion : sans cette exception, se déconnecter
+  reconnecterait aussitôt l'utilisateur par SSO.
+* Les pages de lien (`/s/…`, `/r/…`) ne demandent jamais de compte, avec ou
+  sans `auto_login`. Les erreurs de connexion et la page « pas d'accès »
+  affichent toujours une page.
+* Chaque chargement de page sans session passe désormais par `/auth/login`,
+  dont le débit est limité par adresse client (30 par minute, rafale de 10).
+  Quand de nombreux postes atteignent Dropr par une même adresse (NAT, proxy
+  sortant), l'affluence du matin peut atteindre cette limite et recevoir une
+  erreur 429.
+
 ## Microsoft Entra ID
 
 1. **Inscription d'application** (App registration) : mono-locataire

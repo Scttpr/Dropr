@@ -176,7 +176,7 @@ blobs     (id, parts, size, complete, created_at)
 
 ## 9. UX
 
-**Login**: one button, "Sign in" (the label is configurable, e.g. "Sign in with Microsoft"). Signing in lands straight on the dashboard.
+**Login**: one button, "Sign in" (the label is configurable, e.g. "Sign in with Microsoft"). Signing in lands straight on the dashboard, or on the owner page the user asked for. With `auto_login = true` there is no button to press: owner pages go straight to the identity provider, and only `/login` (where logout lands) still shows the button.
 
 **Owner dashboard**
 ```

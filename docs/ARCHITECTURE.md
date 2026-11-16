@@ -123,10 +123,10 @@ base64url (22 chars). Anything not listed returns 404.
 ### Pages (server-rendered, `html/template`, no inline JS/CSS)
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| GET | `/` | session → dashboard, else login page | |
+| GET | `/` | session → dashboard, else login page | with `auto_login`, no session → 303 `/auth/login` |
 | GET | `/login` | – | "Sign in" button → `/auth/login`, carrying `next` when it is an owner page other than `/`; with a session, 303 to `next`. Never starts the sign-in by itself: it is the `post_logout_redirect_uri` |
-| GET | `/inbox` | session | list received files (encrypted names, decrypted client-side); without a session, 303 to `/login?next=%2Finbox` |
-| GET | `/links` | session | active share + request links; without a session, 303 to `/login?next=%2Flinks` |
+| GET | `/inbox` | session | list received files (encrypted names, decrypted client-side); without a session, 303 to `/login?next=%2Finbox` (`/auth/login?next=%2Finbox` with `auto_login`) |
+| GET | `/links` | session | active share + request links; without a session, 303 to `/login?next=%2Flinks` (`/auth/login?next=%2Flinks` with `auto_login`) |
 | GET | `/s/{id}` | – | share recipient page; dead links render a plain 404/410 page without the script |
 | GET | `/r/{id}` | – | request uploader page; dead, closed or full links render a plain 404/410 page |
 | GET | `/assets/{hash-name}` | – | immutable, long cache |
@@ -440,6 +440,7 @@ Additional keys (all optional; unknown keys are rejected):
 |---|---|---|
 | `redirect_listen` | `":8080"` | address of the `redirect_http` server (ACME mode only) |
 | `log_level` | `"info"` | `debug`, `info`, `warn`, `error` |
+| `auto_login` | `false` | owner pages (`/`, `/inbox`, `/links`) without a session go straight to `/auth/login` instead of the login page; `/login` and link pages never redirect (docs/oidc.md) |
 | `oidc.client_key_id` | – | `kid` header of client assertions (Keycloak matches keys by kid; Entra uses `x5t#S256`) |
 | `oidc.client_assertion_alg` | auto | `PS256`/`RS256` (RSA) or `ES256` (P-256); auto = first advertised, PS256 if none advertised |
 | `oidc.client_assertion_x5t_sha1` | `false` | also send the legacy SHA-1 `x5t` header |
