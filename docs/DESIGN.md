@@ -147,7 +147,7 @@ Admin access is shell access to the host. There is no admin web UI.
 - **CSRF**: SameSite=Strict session cookie, plus checks on `Origin` and `Sec-Fetch-Site` for every state-changing request. The OIDC callback is the only cross-site entry point and is protected by `state` + PKCE.
 - **Uploaded content** is never rendered. The browser decrypts it and saves it as a download.
 - **Abuse limits on request links**: size/count caps per link, per-IP rate limits (in memory, keyed by a hash), and a quota per owner. The inbox UI warns that files come from outside.
-- **Logs**: JSON lines on standard output (`log/slog`), with no plaintext IPs (keyed hashes only), tokens or link fragments (fragments never reach the server anyway). Retention is the log collector's job; 7 days is enough.
+- **Logs**: JSON lines on standard output (`log/slog`), with no plaintext IPs (keyed hashes only), tokens or link fragments (fragments never reach the server anyway). Owner actions, downloads, received files and sign-ins carry a stable `event` name and keyed link references, never link IDs (ARCHITECTURE.md §5). Retention is the operator's decision and the log collector's job; traceability requirements (e.g. health sector) usually call for months.
 - **Browser code integrity**: no third-party JS, minimal dependencies, reproducible build, published asset hashes.
 - **Secrets**: the OIDC client key and the refresh-token encryption key are loaded from files, never from the configuration file, environment variables or the database.
 

@@ -294,6 +294,25 @@ Docker `docker compose exec dropr dropr help` from `/etc/dropr`.
 * **Restore only a database newer than the open request links.** An older one
   that lacks a live link makes the owner's browser delete that link's key, and
   its files are lost.
+* **Logs and audit trail.** Dropr writes JSON lines to standard output
+  (journald, or `docker compose logs`). Lines with an `event` attribute trace
+  every share, download, received file and sign-in (list in
+  [ARCHITECTURE.md](ARCHITECTURE.md) §5). They never hold link IDs, only
+  keyed references; `dropr log-ref` gives the reference of an ID or a client
+  address. Pass the bare ID (after `/s/` or `/r/`), not the full share link:
+  its key, after `#`, would stay in your shell history.
+
+  ```sh
+  # Everything about one link, from creation to purge:
+  sudo -u dropr dropr log-ref <link-id>          # prints: link 1a2b3c4d5e6f
+  journalctl -u dropr -o cat | jq -c 'select(.link == "1a2b3c4d5e6f")'
+  # Files received per day:
+  journalctl -u dropr -o cat | jq -r 'select(.event == "request.file_received") | .time[:10]' | sort | uniq -c
+  ```
+
+  Keeping the logs, for how long, and protecting them from tampering is the
+  job of your log collector or SIEM: forward standard output there and set
+  the retention your traceability rules require (often months).
 * **Offboarding.** Remove the role at the provider, then
   `sudo -u dropr dropr user disable <user>`.
 * **Upgrades.** Verify the new binary (§2), back up, replace it,

@@ -41,3 +41,23 @@ func TestEvent(t *testing.T) {
 		t.Fatal(a)
 	}
 }
+
+// The derivation is part of the log format: operators correlate references
+// across releases, and `dropr log-ref` must keep matching old logs. A change
+// here needs a release note.
+func TestRefsForIsStable(t *testing.T) {
+	t.Parallel()
+	r, err := RefsFor(bytes.Repeat([]byte{1}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Link("AAAAAAAAAAAAAAAAAAAAAA"); got != "897dde919087" {
+		t.Errorf("link reference changed: %s", got)
+	}
+	if got := r.File("AAAAAAAAAAAAAAAAAAAAAA"); got != "14b6f2127af0" {
+		t.Errorf("file reference changed: %s", got)
+	}
+	if _, err := RefsFor(make([]byte, 16)); err == nil {
+		t.Error("short refresh key accepted")
+	}
+}

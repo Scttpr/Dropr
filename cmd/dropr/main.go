@@ -22,10 +22,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -37,7 +40,9 @@ import (
 	"github.com/scttpr/dropr/internal/config"
 	"github.com/scttpr/dropr/internal/db"
 	"github.com/scttpr/dropr/internal/httpx"
+	"github.com/scttpr/dropr/internal/ids"
 	"github.com/scttpr/dropr/internal/jobs"
+	"github.com/scttpr/dropr/internal/seal"
 	"github.com/scttpr/dropr/internal/server"
 	"github.com/scttpr/dropr/internal/store"
 )
@@ -65,9 +70,13 @@ Commands:
   gc                        run the cleanup jobs once
   backup --out FILE         write a consistent online backup of the database
   healthcheck [--url URL]   probe GET /healthz of the local server (exit 0 if healthy)
+  log-ref <arg>...          print the log reference of a link ID, link URL or client address
   version                   print version information
 
 <user> is a user ID or a subject that matches exactly one account.
+log-ref takes link IDs (the part after /s/ or /r/), link URLs or IP
+addresses. Prefer the bare ID: a full share link holds its key after "#",
+which your shell history would keep (log-ref ignores and never prints it).
 Every command except version accepts --config (default `+defaultConfig+`).
 `)
 }
@@ -89,6 +98,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		err = cmdBackup(args[1:], stdout, stderr)
 	case "healthcheck":
 		err = cmdHealthcheck(args[1:], stdout, stderr)
+	case "log-ref":
+		err = cmdLogRef(args[1:], stdout, stderr)
 	case "version", "--version", "-version":
 		printVersion(stdout)
 	case "help", "-h", "--help":
@@ -471,6 +482,68 @@ func readMapping(r io.Reader) ([]store.IdentityMapping, error) {
 		return nil, errors.New("map: no mappings")
 	}
 	return out, nil
+}
+
+// cmdLogRef prints the references the logs use for link IDs and client
+// addresses (ARCHITECTURE.md §5, Logging), one line per argument: "link
+// <ref>" or "ip <hash>". It only reads the configuration, so it writes no
+// admin action line. An invalid argument is reported by position only: it
+// may be a link with its key.
+func cmdLogRef(args []string, stdout, stderr io.Writer) error {
+	fs, cfgPath := newFlags("log-ref", stderr)
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) == 0 {
+		return usageError{"log-ref needs at least one link ID, link URL or IP address"}
+	}
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	refs, err := audit.RefsFor(cfg.RefreshKey)
+	if err != nil {
+		return err
+	}
+	ipKey, err := seal.Derive(cfg.RefreshKey, seal.InfoIPHash)
+	if err != nil {
+		return err
+	}
+	hasher := httpx.NewIPHasher(ipKey)
+	var bad []string
+	for i, arg := range pos {
+		if id, ok := linkID(arg); ok {
+			_, _ = fmt.Fprintln(stdout, "link", refs.Link(id))
+		} else if a, err := netip.ParseAddr(arg); err == nil {
+			// As the server sees it (httpx.ClientIP): unmapped, no zone.
+			_, _ = fmt.Fprintln(stdout, "ip", hasher.Short(a.Unmap().WithZone("")))
+		} else {
+			bad = append(bad, strconv.Itoa(i+1))
+		}
+	}
+	if len(bad) > 0 {
+		return usageError{"log-ref: argument " + strings.Join(bad, ", ") + " is not a link ID, link URL or IP address"}
+	}
+	return nil
+}
+
+// linkID extracts the link ID from a bare ID, a /s/ or /r/ path, or a link
+// URL. The query and fragment (the key of a share link) are ignored.
+func linkID(arg string) (string, bool) {
+	if ids.Valid(arg) {
+		return arg, true
+	}
+	u, err := url.Parse(arg)
+	if err != nil {
+		return "", false
+	}
+	for _, prefix := range []string{"/s/", "/r/"} {
+		if id, ok := strings.CutPrefix(u.Path, prefix); ok && ids.Valid(id) {
+			return id, true
+		}
+	}
+	return "", false
 }
 
 func cmdGC(args []string, stdout, stderr io.Writer) error {

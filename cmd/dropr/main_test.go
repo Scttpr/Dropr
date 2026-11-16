@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -14,9 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/scttpr/dropr/internal/audit"
 	"github.com/scttpr/dropr/internal/config"
 	"github.com/scttpr/dropr/internal/db"
+	"github.com/scttpr/dropr/internal/httpx"
 	"github.com/scttpr/dropr/internal/ids"
+	"github.com/scttpr/dropr/internal/seal"
 	"github.com/scttpr/dropr/internal/server"
 	"github.com/scttpr/dropr/internal/store"
 )
@@ -351,5 +355,42 @@ func TestFileCleanupCommands(t *testing.T) {
 	}
 	if _, err := os.Stat(liveDir); err == nil {
 		t.Error("purge left blob files")
+	}
+}
+
+// log-ref prints the references the server logs: the same derivation from
+// the refresh_key, the fragment of a link URL ignored and never echoed.
+func TestLogRef(t *testing.T) {
+	t.Parallel()
+	p, cfg := writeConfig(t)
+	refs, err := audit.RefsFor(cfg.RefreshKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ipKey, _ := seal.Derive(cfg.RefreshKey, seal.InfoIPHash)
+	hasher := httpx.NewIPHasher(ipKey)
+	id := ids.New()
+	key := "c2VjcmV0LWtleS1vZi10aGUtbGluaw"
+	code, out, errOut := runCLI(t, "", "log-ref", "--config", p, id, "https://drop.example/s/"+id+"#"+key, "/r/"+id,
+		"192.0.2.7", "::ffff:192.0.2.7", "2001:db8::1")
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, errOut)
+	}
+	link := "link " + refs.Link(id)
+	ip4 := "ip " + hasher.Short(netip.MustParseAddr("192.0.2.7"))
+	want := strings.Join([]string{link, link, link, ip4, ip4, "ip " + hasher.Short(netip.MustParseAddr("2001:db8::1"))}, "\n") + "\n"
+	if out != want {
+		t.Fatalf("output:\n%s\nwant:\n%s", out, want)
+	}
+	if strings.Contains(out+errOut, key) {
+		t.Error("the link key was printed")
+	}
+
+	code, out, errOut = runCLI(t, "", "log-ref", "--config", p, id, "https://drop.example/x/abc#"+key, "not-an-id")
+	if code != 2 || out != link+"\n" || !strings.Contains(errOut, "argument 2, 3") || strings.Contains(errOut, key) || strings.Contains(errOut, "not-an-id") {
+		t.Fatalf("invalid: %d %q %q", code, out, errOut)
+	}
+	if code, _, _ := runCLI(t, "", "log-ref", "--config", p); code != 2 {
+		t.Errorf("no argument: %d", code)
 	}
 }

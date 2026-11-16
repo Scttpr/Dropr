@@ -79,7 +79,7 @@ En mode production, Dropr refuse de démarrer sur une configuration dangereuse
 (HTTP en clair, secret client, fournisseur sans PKCE ni refresh tokens, proxy
 sans `trusted_proxies`, fichiers secrets lisibles par tous). `dropr help` liste
 les commandes d'administration : `user list|revoke|disable|enable|purge|migrate`,
-`gc`, `backup`, `healthcheck`, `version`. Il n'y a pas d'interface web
+`gc`, `backup`, `healthcheck`, `log-ref`, `version`. Il n'y a pas d'interface web
 d'administration.
 
 ## Documentation
