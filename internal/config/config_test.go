@@ -108,6 +108,12 @@ func TestProductionDefaults(t *testing.T) {
 	if c.AutoLogin {
 		t.Error("auto_login is on by default")
 	}
+	if c.SessionCookie != SessionCookiePersistent {
+		t.Errorf("session_cookie default %q", c.SessionCookie)
+	}
+	if c, err := Parse([]byte(f.prod(`session_cookie = "browser"`))); err != nil || c.SessionCookie != SessionCookieBrowser {
+		t.Errorf("session_cookie = browser: %v", err)
+	}
 	if len(c.Warnings) != 0 {
 		t.Errorf("warnings: %v", c.Warnings)
 	}
@@ -174,6 +180,7 @@ func TestRefusals(t *testing.T) {
 		"override iss":         {strings.Replace(base, "tid = ", "iss = \"x\", tid = ", 1), "registered claim"},
 		"revalidate too slow":  {strings.Replace(base, "[oidc]", "[oidc]\nrevalidate_every = \"2h\"", 1), "revalidate_every"},
 		"bad mode":             {f.prod(`mode = "staging"`), "mode must be"},
+		"bad session cookie":   {f.prod(`session_cookie = "session"`), "session_cookie must be"},
 		"bad role path":        {strings.Replace(base, "[oidc]", "[oidc]\nrole_claim = \"a..b\"", 1), "role_claim"},
 		// Audit L-1.
 		"proxy without trusted_proxies": {f.prod(`tls = "proxy"`), "needs trusted_proxies"},

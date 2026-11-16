@@ -113,6 +113,14 @@ auth_rate_per_minute = 300
 auth_burst           = 100
 ```
 
+**Sign out when the browser closes.** By default the session cookie lasts
+until the 8-hour limit, even across browser restarts. On shared workstations
+set `session_cookie = "browser"`: closing every browser window then ends the
+session (the 30-minute idle and 8-hour limits still apply). Chrome and Edge
+keep session cookies when they restore the previous session ("Continue where
+you left off"); disable it by policy (`RestoreOnStartup` set to a value other
+than 1) for this to work.
+
 **Name and logo.** The interface can carry the organization's name and logo
 instead of Dropr's. The footer then credits Dropr in one line.
 

@@ -113,6 +113,7 @@ revalidate_every = "15m"
 
 - Server-side sessions with a `__Host-` cookie, `Secure; HttpOnly; SameSite=Strict`. The cookie holds a random 256-bit ID; the database stores only its SHA-256 hash.
 - 30 min idle timeout, 8 h absolute timeout, plus OIDC revalidation every 15 min.
+- By default the cookie lasts until the absolute timeout, across browser restarts. `session_cookie = "browser"` makes it a browser-session cookie (no `Max-Age`): closing the browser signs the user out, unless the browser restores the previous session ("Continue where you left off" keeps session cookies).
 - The session ID rotates at login. Signing in again ends the browser's previous session: its hash travels in the sealed OIDC state cookie and that session is deleted at a successful callback (a cancelled or refused sign-in keeps it).
 
 ### 5.4 Admin CLI

@@ -150,6 +150,10 @@ cookie. The redirects that carry it are `Cache-Control: no-store`.
 | GET | `/auth/frontchannel-logout` | `iss` + `sid` → kill matching sessions |
 
 Session cookie: `__Host-dropr_session`, `Secure; HttpOnly; SameSite=Strict; Path=/`.
+With `session_cookie = "persistent"` (default) it carries `Max-Age` up to the
+8 h absolute timeout and survives a browser restart; with `"browser"` it has
+no `Max-Age` and the browser drops it when it closes. The server-side
+timeouts (30 min idle, 8 h absolute) apply in both modes.
 
 Display settings: `__Host-dropr_lang` (`en`, `fr`) and `__Host-dropr_theme` (`light`, `dark`, `system`; default `light`), `Secure; SameSite=Lax; Path=/; Max-Age=1 year`. Not HttpOnly: `prefs.js` sets them so a change keeps the URL fragment. They carry no secret.
 
@@ -440,6 +444,7 @@ Additional keys (all optional; unknown keys are rejected):
 |---|---|---|
 | `redirect_listen` | `":8080"` | address of the `redirect_http` server (ACME mode only) |
 | `log_level` | `"info"` | `debug`, `info`, `warn`, `error` |
+| `session_cookie` | `"persistent"` | `"browser"`: the session cookie has no `Max-Age`, so closing the browser ends the session (browsers that restore the previous session keep it); server-side timeouts unchanged |
 | `auto_login` | `false` | owner pages (`/`, `/inbox`, `/links`) without a session go straight to `/auth/login` instead of the login page; `/login` and link pages never redirect (docs/oidc.md) |
 | `oidc.client_key_id` | – | `kid` header of client assertions (Keycloak matches keys by kid; Entra uses `x5t#S256`) |
 | `oidc.client_assertion_alg` | auto | `PS256`/`RS256` (RSA) or `ES256` (P-256); auto = first advertised, PS256 if none advertised |

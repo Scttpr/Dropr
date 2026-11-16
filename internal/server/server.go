@@ -98,7 +98,7 @@ func New(ctx context.Context, d Deps) (*Server, error) {
 	if s.pages, err = web.NewRenderer(assets, web.Options{LoginLabel: cfg.LoginLabel, Brand: brand}, d.Logger); err != nil {
 		return nil, err
 	}
-	if s.sessions, err = session.NewManager(d.Store, cfg.RefreshKey, session.Config{Now: d.Now}, d.Logger); err != nil {
+	if s.sessions, err = session.NewManager(d.Store, cfg.RefreshKey, session.Config{Now: d.Now, BrowserCookie: cfg.SessionCookie == config.SessionCookieBrowser}, d.Logger); err != nil {
 		return nil, err
 	}
 	ipKey, err := seal.Derive(cfg.RefreshKey, seal.InfoIPHash)

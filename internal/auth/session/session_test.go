@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -100,6 +101,47 @@ func TestCookieAttributes(t *testing.T) {
 	// Only the hash is stored.
 	if _, err := e.st.SessionByHash(t.Context(), []byte(c.Value)); err == nil {
 		t.Error("raw ID usable as key")
+	}
+}
+
+// session_cookie = "browser": no Max-Age and no Expires, so the browser
+// drops the cookie when it closes; the other attributes stay. Signing in
+// again (rotation) issues the same kind of cookie.
+func TestBrowserSessionCookie(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, Config{BrowserCookie: true})
+	_, first := e.login(t, nil)
+	w := httptest.NewRecorder()
+	if _, err := e.m.Create(t.Context(), w, reqWith(first), NewParams{User: e.user, RefreshToken: "rt-2"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range w.Result().Header.Values("Set-Cookie") {
+		if !strings.HasPrefix(raw, CookieName+"=") {
+			continue
+		}
+		low := strings.ToLower(raw)
+		if strings.Contains(low, "max-age") || strings.Contains(low, "expires") {
+			t.Errorf("browser cookie has a lifetime: %s", raw)
+		}
+		for _, attr := range []string{"; Path=/", "; HttpOnly", "; Secure", "; SameSite=Strict"} {
+			if !strings.Contains(raw, attr) {
+				t.Errorf("browser cookie lacks %s: %s", attr, raw)
+			}
+		}
+	}
+	if c := sessionCookie(t, w); c.Value == first.Value || c.MaxAge != 0 || !c.Expires.IsZero() {
+		t.Errorf("rotated cookie: %+v", c)
+	}
+	// The server-side timeouts still apply.
+	e.clk.Add(31 * time.Minute)
+	if s, err := e.m.Load(t.Context(), reqWith(sessionCookie(t, w))); err == nil && s != nil {
+		t.Error("idle session survived with a browser cookie")
+	}
+	// Logout still expires it.
+	cl := httptest.NewRecorder()
+	ClearCookie(cl)
+	if sessionCookie(t, cl).MaxAge >= 0 {
+		t.Error("clear cookie does not expire")
 	}
 }
 
