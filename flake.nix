@@ -15,6 +15,11 @@
 
       version = self.shortRev or self.dirtyShortRev or "dev";
 
+      # Go toolchain, pinned to the go.mod release line rather than following
+      # nixpkgs' default `go`, so a flake.lock bump never silently moves the
+      # build to a new major Go. Bump it together with the `go` line in go.mod.
+      goFor = pkgs: pkgs.go_1_26;
+
       # Only what each build needs, so editing docs/ or dev/ never rebuilds.
       webFiles = lib.fileset.unions [
         ./web/package.json
@@ -54,7 +59,7 @@
             dontFixup = true;
           };
 
-          dropr = pkgs.buildGoModule {
+          dropr = (pkgs.buildGoModule.override { go = goFor pkgs; }) {
             pname = "dropr";
             inherit version;
             src = goSrc;
@@ -132,7 +137,7 @@
           # What CI's lint, test, scan and release jobs need. No browsers: the
           # Playwright bundle is ~1 GB and only the e2e jobs use it.
           ciPackages = with pkgs; [
-            go
+            (goFor pkgs)
             golangci-lint
             govulncheck
             nodejs_24
