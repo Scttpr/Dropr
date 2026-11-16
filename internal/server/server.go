@@ -106,7 +106,7 @@ func New(ctx context.Context, d Deps) (*Server, error) {
 		Trusted:       cfg.TrustedProxyNs,
 		TrustUnixPeer: cfg.TLS == config.TLSProxy && (cfg.TrustUnixSocketProxy || len(cfg.TrustedProxyNs) > 0),
 	}
-	s.authRL = httpx.NewRateLimiter(s.hasher, 30, 10, 100_000)
+	s.authRL = httpx.NewRateLimiter(s.hasher, float64(cfg.Limits.AuthRatePerMinute), cfg.Limits.AuthBurst, 100_000)
 	s.linkRL = httpx.NewRateLimiter(s.hasher, 60, 30, 100_000)
 	s.uploadRL = httpx.NewRateLimiter(s.hasher, 900, 200, 100_000)
 	s.dlRL = httpx.NewRateLimiter(s.hasher, 120, 60, 100_000)

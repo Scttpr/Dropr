@@ -20,6 +20,8 @@ default_expiry = "7d"              # 1h, 1d, 7d or 30d
 # max_transfers = 512              # concurrent part uploads + downloads
 # max_transfers_per_ip = 32
 # min_transfer_rate = "4KB"        # per second over 60 s; "0" disables
+# auth_rate_per_minute = 30        # sign-ins per client address; raise behind a shared NAT address
+# auth_burst = 10
 
 [oidc]
 issuer          = "https://login.microsoftonline.com/<tenant-id>/v2.0"

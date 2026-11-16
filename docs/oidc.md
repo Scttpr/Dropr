@@ -109,7 +109,9 @@ the user in without a click.
 * Every page load without a session now goes through `/auth/login`, which is
   rate-limited per client address (30 per minute, burst 10). When many
   workstations reach Dropr through one shared address (NAT, outbound proxy),
-  the morning rush can hit that limit and get a 429.
+  the morning rush can hit that limit and get a 429: raise
+  `limits.auth_rate_per_minute` and `limits.auth_burst` (see
+  [deploy.md](deploy.md) §4).
 
 ## Microsoft Entra ID
 

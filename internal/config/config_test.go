@@ -184,6 +184,10 @@ func TestRefusals(t *testing.T) {
 		"per-ip above total": {f.prod("[limits]\nmax_transfers = 4\nmax_transfers_per_ip = 8"), "max_transfers"},
 		"negative transfers": {f.prod("[limits]\nmax_transfers = -1"), "max_transfers"},
 		"bad min rate":       {f.prod("[limits]\nmin_transfer_rate = \"fast\""), "min_transfer_rate"},
+		"negative auth rate": {f.prod("[limits]\nauth_rate_per_minute = -1"), "auth_rate_per_minute"},
+		"huge auth rate":     {f.prod("[limits]\nauth_rate_per_minute = 10001"), "auth_rate_per_minute"},
+		"negative burst":     {f.prod("[limits]\nauth_burst = -5"), "auth_burst"},
+		"huge burst":         {f.prod("[limits]\nauth_burst = 10001"), "auth_burst"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -407,6 +411,13 @@ func TestTransferLimits(t *testing.T) {
 	c, err := Parse([]byte(f.prod("")))
 	if err != nil || c.Limits.MaxTransfers != 512 || c.Limits.MaxTransfersPerIP != 32 || c.Limits.MinTransferRateBytes != 4*KiB {
 		t.Fatalf("defaults: %v %+v", err, c)
+	}
+	if c.Limits.AuthRatePerMinute != 30 || c.Limits.AuthBurst != 10 {
+		t.Errorf("auth rate defaults: %+v", c.Limits)
+	}
+	if c, err := Parse([]byte(f.prod("[limits]\nauth_rate_per_minute = 300\nauth_burst = 100"))); err != nil ||
+		c.Limits.AuthRatePerMinute != 300 || c.Limits.AuthBurst != 100 {
+		t.Errorf("auth rate: %v", err)
 	}
 	c, err = Parse([]byte(f.prod("[limits]\nmax_transfers = 8\nmax_transfers_per_ip = 2\nmin_transfer_rate = \"0\"")))
 	if err != nil || c.Limits.MaxTransfers != 8 || c.Limits.MaxTransfersPerIP != 2 || c.Limits.MinTransferRateBytes != 0 {

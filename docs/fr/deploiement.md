@@ -105,6 +105,20 @@ doit transmettre `X-Forwarded-For`, accepter des corps de requête d'au moins
 requêtes ni les réponses, et laisser intacts les en-têtes de sécurité posés
 par Dropr.
 
+**De nombreux postes derrière une même adresse.** Le débit de la connexion est
+limité par adresse client : 30 requêtes par minute, rafale de 10. Quand tous
+les postes d'un site atteignent Dropr par une même adresse de NAT ou de proxy
+sortant, l'affluence du matin (ou `auto_login`, où chaque chargement de page
+sans session passe par la connexion) peut la dépasser et recevoir des erreurs
+429. Relevez la limite dans ce cas, puis ajustez-la d'après le nombre de 429
+dans les logs :
+
+```toml
+[limits]
+auth_rate_per_minute = 300
+auth_burst           = 100
+```
+
 ## 5. Unité systemd
 
 `/etc/systemd/system/dropr.service` :

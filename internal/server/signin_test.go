@@ -93,3 +93,27 @@ func TestAutoLogin(t *testing.T) {
 		t.Fatalf("inbox after sign-in: %d %s", resp.StatusCode, body)
 	}
 }
+
+// limits.auth_rate_per_minute and limits.auth_burst set the sign-in limit.
+func TestAuthRateLimitConfigurable(t *testing.T) {
+	t.Parallel()
+	count := func(extra string) int {
+		e := newTestEnvWith(t, testOpts{extraConfig: extra})
+		e.noRedirects()
+		for i := range 40 {
+			if resp, _ := e.do(http.MethodGet, "/auth/login", nil); resp.StatusCode == http.StatusTooManyRequests {
+				if resp.Header.Get("Retry-After") == "" {
+					t.Error("429 without Retry-After")
+				}
+				return i
+			}
+		}
+		return -1
+	}
+	if n := count("[limits]\nauth_rate_per_minute = 1\nauth_burst = 2"); n != 2 {
+		t.Errorf("burst 2: limited after %d requests", n)
+	}
+	if n := count("[limits]\nauth_rate_per_minute = 1\nauth_burst = 30"); n != 30 {
+		t.Errorf("burst 30: limited after %d requests", n)
+	}
+}
