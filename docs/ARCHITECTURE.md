@@ -124,9 +124,9 @@ base64url (22 chars). Anything not listed returns 404.
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/` | session → dashboard, else login page | |
-| GET | `/login` | – | "Sign in" button → `/auth/login` |
-| GET | `/inbox` | session | list received files (encrypted names, decrypted client-side) |
-| GET | `/links` | session | active share + request links |
+| GET | `/login` | – | "Sign in" button → `/auth/login`, carrying `next` when it is an owner page other than `/`; with a session, 303 to `next`. Never starts the sign-in by itself: it is the `post_logout_redirect_uri` |
+| GET | `/inbox` | session | list received files (encrypted names, decrypted client-side); without a session, 303 to `/login?next=%2Finbox` |
+| GET | `/links` | session | active share + request links; without a session, 303 to `/login?next=%2Flinks` |
 | GET | `/s/{id}` | – | share recipient page; dead links render a plain 404/410 page without the script |
 | GET | `/r/{id}` | – | request uploader page; dead, closed or full links render a plain 404/410 page |
 | GET | `/assets/{hash-name}` | – | immutable, long cache |
@@ -138,8 +138,14 @@ base64url (22 chars). Anything not listed returns 404.
 ### Auth
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/auth/login` | sets `__Host-dropr_oidc` (Lax, 10 min) with state/nonce/PKCE verifier and the hash of the browser's current session, if any (sealed AES-GCM), redirects to IdP |
-| GET | `/auth/callback` | verifies, creates session, rotates ID, deletes the previous session named in the state cookie, responds 200 with landing page that navigates to `/` (a refused or cancelled sign-in keeps the previous session) |
+| GET | `/auth/login` | sets `__Host-dropr_oidc` (Lax, 10 min) with state/nonce/PKCE verifier, the hash of the browser's current session, if any, and the return page `next` (sealed AES-GCM), redirects to IdP |
+| GET | `/auth/callback` | verifies, creates session, rotates ID, deletes the previous session named in the state cookie, responds 200 with landing page that navigates to the return page (a refused or cancelled sign-in keeps the previous session) |
+
+Return page (`next`): a closed list, `/`, `/inbox` or `/links`, compared
+exactly (no query, fragment or trailing slash); anything else becomes `/`.
+`oidc.ReturnPath` is the single check, applied when `/login` and
+`/auth/login` read the parameter and again when the callback opens the state
+cookie. The redirects that carry it are `Cache-Control: no-store`.
 | POST | `/auth/logout` | kills session, revokes its refresh token at the `revocation_endpoint` if discovery advertises one (background, best effort), redirects to `end_session_endpoint` if any |
 | GET | `/auth/frontchannel-logout` | `iss` + `sid` → kill matching sessions |
 

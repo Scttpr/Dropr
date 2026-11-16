@@ -3,7 +3,9 @@ package server
 import (
 	"errors"
 	"net/http"
+	"net/url"
 
+	"github.com/scttpr/dropr/internal/auth/oidc"
 	"github.com/scttpr/dropr/internal/auth/session"
 	"github.com/scttpr/dropr/internal/blob"
 	"github.com/scttpr/dropr/internal/i18n"
@@ -21,14 +23,31 @@ var (
 	msgLinkClosed    = i18n.N("This link no longer accepts files.")
 )
 
-// ownerPage loads the session of an owner-only page. It redirects to /login
-// without a session and then returns nil.
+// ownerPage loads the session of an owner-only page. Without a session it
+// redirects to /login, which returns to this page after sign-in, and then
+// returns nil.
 func ownerPage(w http.ResponseWriter, r *http.Request) *session.Session {
 	sess := session.FromContext(r.Context())
 	if sess == nil {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		redirect(w, r, loginURL("/login", r.URL.Path))
 	}
 	return sess
+}
+
+// loginURL is base (/login or /auth/login) with the next parameter that
+// returns to the owner page path after sign-in; "/" needs none.
+func loginURL(base, path string) string {
+	if next := oidc.ReturnPath(path); next != "/" {
+		return base + "?next=" + url.QueryEscape(next)
+	}
+	return base
+}
+
+// redirect answers 303 to a same-site target. The answer depends on the
+// session, so no cache may keep it (http.Redirect sets no Cache-Control).
+func redirect(w http.ResponseWriter, r *http.Request, target string) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, target, http.StatusSeeOther) //nolint:gosec // callers pass oidc.ReturnPath output or fixed paths
 }
 
 func (s *Server) serverError(w http.ResponseWriter, r *http.Request, what string, err error) {

@@ -284,12 +284,20 @@ func (s *Server) routes() *http.ServeMux {
 	return mux
 }
 
+// handleLogin serves the login page. Its next parameter (an owner page, see
+// oidc.ReturnPath) is where the sign-in returns to. It never starts the
+// sign-in by itself, even with auto_login: it is where logout lands.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	next := oidc.ReturnPath(r.URL.Query().Get("next"))
 	if session.FromContext(r.Context()) != nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		redirect(w, r, next)
 		return
 	}
-	s.pages.Render(w, r, http.StatusOK, web.PageLogin, web.PageData{})
+	data := web.PageData{}
+	if next != "/" {
+		data.Next = next
+	}
+	s.pages.Render(w, r, http.StatusOK, web.PageLogin, data)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

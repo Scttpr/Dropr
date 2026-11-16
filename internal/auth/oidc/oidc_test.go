@@ -48,6 +48,7 @@ func (c *clock) Add(d time.Duration) {
 type pages struct {
 	mu   sync.Mutex
 	last string
+	next string
 }
 
 func (p *pages) set(s string) { p.mu.Lock(); p.last = s; p.mu.Unlock() }
@@ -63,7 +64,10 @@ func (p *pages) Forbidden(w http.ResponseWriter, _ *http.Request) {
 	http.Error(w, "forbidden", http.StatusForbidden)
 }
 
-func (p *pages) CallbackLanding(w http.ResponseWriter, _ *http.Request) {
+func (p *pages) CallbackLanding(w http.ResponseWriter, _ *http.Request, next string) {
+	p.mu.Lock()
+	p.next = next
+	p.mu.Unlock()
 	p.set("landing")
 	_, _ = io.WriteString(w, "landing")
 }

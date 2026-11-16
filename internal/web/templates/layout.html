@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="{{.Theme.ColorScheme}}">
-{{- if .RefreshToRoot}}
-<meta http-equiv="refresh" content="0;url=/">
+{{- with .RefreshTo}}
+<meta http-equiv="refresh" content="0;url={{.}}">
 {{- end}}
 <title>{{block "title" .}}Dropr{{end}}</title>
 <link rel="stylesheet" href="{{asset "app.css"}}" integrity="{{integrity "app.css"}}">

@@ -52,18 +52,28 @@ func TestPagesHaveNoInlineCode(t *testing.T) {
 	}
 }
 
-func TestLandingRefreshesToRoot(t *testing.T) {
+func TestLandingRefreshesToNext(t *testing.T) {
 	t.Parallel()
 	r := newRenderer(t)
+	for _, next := range []string{"/", "/inbox", "/links"} {
+		w := httptest.NewRecorder()
+		r.CallbackLanding(w, httptest.NewRequest(http.MethodGet, "/auth/callback", nil), next)
+		body := w.Body.String()
+		if !strings.Contains(body, `<meta http-equiv="refresh" content="0;url=`+next+`">`) ||
+			!strings.Contains(body, `<a href="`+next+`">`) {
+			t.Fatalf("%s: %s", next, body)
+		}
+	}
 	w := httptest.NewRecorder()
-	r.CallbackLanding(w, httptest.NewRequest(http.MethodGet, "/auth/callback", nil))
-	if !strings.Contains(w.Body.String(), `<meta http-equiv="refresh" content="0;url=/">`) {
-		t.Fatal(w.Body.String())
+	r.Render(w, httptest.NewRequest(http.MethodGet, "/login", nil), http.StatusOK, PageLogin, PageData{})
+	if !strings.Contains(w.Body.String(), "Sign in with Test") || strings.Contains(w.Body.String(), "http-equiv") ||
+		!strings.Contains(w.Body.String(), `href="/auth/login"`) {
+		t.Fatal("login page wrong")
 	}
 	w = httptest.NewRecorder()
-	r.Render(w, httptest.NewRequest(http.MethodGet, "/login", nil), http.StatusOK, PageLogin, PageData{})
-	if !strings.Contains(w.Body.String(), "Sign in with Test") || strings.Contains(w.Body.String(), "http-equiv") {
-		t.Fatal("login page wrong")
+	r.Render(w, httptest.NewRequest(http.MethodGet, "/login?next=%2Finbox", nil), http.StatusOK, PageLogin, PageData{Next: "/inbox"})
+	if !strings.Contains(w.Body.String(), `href="/auth/login?next=%2finbox"`) {
+		t.Fatal(w.Body.String())
 	}
 }
 
