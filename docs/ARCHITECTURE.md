@@ -364,7 +364,7 @@ Per-IP rate limits (keyed hashes): `/s/{id}`, `/r/{id}`, `/api/s/{id}/download`
 and `/api/r/{id}/files` share one limiter (60/min, burst 30), `/upload/*`
 (900/min, burst 200), `/dl/*` (120/min, burst 60), and `/auth/login`,
 `/auth/callback`, `/auth/frontchannel-logout` share another (30/min, burst
-10). Part PUTs and `/dl/*` also count against the concurrent transfer caps
+10 by default; `limits.auth_rate_per_minute` and `limits.auth_burst`). Part PUTs and `/dl/*` also count against the concurrent transfer caps
 (see Downloads).
 
 Per-user owner write limit (audit 2026-11b M-3): creating and deleting shares
@@ -450,6 +450,8 @@ Additional keys (all optional; unknown keys are rejected):
 | `limits.max_transfers` | `512` | concurrent part uploads + downloads, instance-wide |
 | `limits.max_transfers_per_ip` | `32` | the same per client address (IPv6 per /56); ≤ `max_transfers` |
 | `limits.min_transfer_rate` | `"4KB"` | per second, averaged over 60 s; slower transfers are cut; `"0"` disables |
+| `limits.auth_rate_per_minute` | `30` | sign-in requests per minute and client address (`/auth/login`, `/auth/callback`, `/auth/frontchannel-logout`), 1–10000 |
+| `limits.auth_burst` | `10` | burst of the same limit, 1–10000; raise both when many workstations share one address |
 | `trust_unix_socket_proxy` | `false` | proxy mode on a `unix:` socket: trust the peer's X-Forwarded-For without `trusted_proxies` |
 
 Proxy mode (audit L-1): with a TCP listener, `trusted_proxies` must list the

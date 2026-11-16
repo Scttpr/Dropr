@@ -123,7 +123,8 @@ Dropr connecte alors l'utilisateur sans un clic.
   dont le débit est limité par adresse client (30 par minute, rafale de 10).
   Quand de nombreux postes atteignent Dropr par une même adresse (NAT, proxy
   sortant), l'affluence du matin peut atteindre cette limite et recevoir une
-  erreur 429.
+  erreur 429 : relevez `limits.auth_rate_per_minute` et `limits.auth_burst`
+  (voir [deploiement.md](deploiement.md) §4).
 
 ## Microsoft Entra ID
 

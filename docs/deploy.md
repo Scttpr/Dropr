@@ -100,6 +100,19 @@ must send `X-Forwarded-For`, accept request bodies of at least 33 MiB
 (`client_max_body_size 64m;` in nginx), buffer neither requests nor responses,
 and leave Dropr's security headers untouched.
 
+**Many workstations behind one address.** Sign-in is rate-limited per client
+address: 30 requests per minute, burst 10. When every workstation of a site
+reaches Dropr through one NAT or outbound proxy address, the morning rush (or
+`auto_login`, where every page load without a session signs in) can exceed it
+and get 429 errors. Raise the limit for that case, then adjust it from the
+429 count in the logs:
+
+```toml
+[limits]
+auth_rate_per_minute = 300
+auth_burst           = 100
+```
+
 ## 5. systemd unit
 
 `/etc/systemd/system/dropr.service`:

@@ -97,6 +97,10 @@ type Limits struct {
 	MaxTransfers      int    `toml:"max_transfers"`
 	MaxTransfersPerIP int    `toml:"max_transfers_per_ip"`
 	MinTransferRate   string `toml:"min_transfer_rate"`
+	// Per-client-address limit of /auth/login, /auth/callback and
+	// /auth/frontchannel-logout: requests per minute on average, and burst.
+	AuthRatePerMinute int `toml:"auth_rate_per_minute"`
+	AuthBurst         int `toml:"auth_burst"`
 
 	MinTransferRateBytes int64         `toml:"-"`
 	MaxFileSizeBytes     int64         `toml:"-"`
@@ -206,6 +210,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Limits.MaxTransfersPerIP == 0 {
 		c.Limits.MaxTransfersPerIP = 32
+	}
+	if c.Limits.AuthRatePerMinute == 0 {
+		c.Limits.AuthRatePerMinute = 30
+	}
+	if c.Limits.AuthBurst == 0 {
+		c.Limits.AuthBurst = 10
 	}
 	def(&c.OIDC.ClientAuth, ClientAuthPrivateKeyJWT)
 	def(&c.OIDC.RoleClaim, "roles")
@@ -352,7 +362,16 @@ func (c *Config) validateLimits(fail func(string, ...any)) {
 	if l.MaxTransfers < 1 || l.MaxTransfersPerIP < 1 || l.MaxTransfersPerIP > l.MaxTransfers {
 		fail("limits.max_transfers and limits.max_transfers_per_ip must be positive, the latter at most the former")
 	}
+	if l.AuthRatePerMinute < 1 || l.AuthRatePerMinute > maxAuthRate {
+		fail("limits.auth_rate_per_minute must be between 1 and %d", maxAuthRate)
+	}
+	if l.AuthBurst < 1 || l.AuthBurst > maxAuthRate {
+		fail("limits.auth_burst must be between 1 and %d", maxAuthRate)
+	}
 }
+
+// maxAuthRate bounds limits.auth_rate_per_minute and limits.auth_burst.
+const maxAuthRate = 10000
 
 func (c *Config) validateOIDC(fail func(string, ...any)) {
 	o := &c.OIDC
