@@ -316,6 +316,8 @@ Les commandes d'administration tournent sous le compte de service :
   `dropr log-ref` donne la référence d'un identifiant ou d'une adresse
   client. Passez l'identifiant seul (après `/s/` ou `/r/`), pas le lien de
   partage complet : sa clé, après `#`, resterait dans l'historique du shell.
+  Les références dérivent de `refresh_key` : la remplacer les change pour
+  toutes les lignes suivantes.
 
   ```sh
   # Tout ce qui concerne un lien, de sa création à sa purge :

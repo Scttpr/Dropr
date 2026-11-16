@@ -300,7 +300,8 @@ Docker `docker compose exec dropr dropr help` from `/etc/dropr`.
   [ARCHITECTURE.md](ARCHITECTURE.md) §5). They never hold link IDs, only
   keyed references; `dropr log-ref` gives the reference of an ID or a client
   address. Pass the bare ID (after `/s/` or `/r/`), not the full share link:
-  its key, after `#`, would stay in your shell history.
+  its key, after `#`, would stay in your shell history. References derive
+  from `refresh_key`: replacing it changes them for every later line.
 
   ```sh
   # Everything about one link, from creation to purge:

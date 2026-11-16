@@ -151,7 +151,10 @@ done < <(sed 's/  */ /' dropr-assets-v1.1.0.sha256)
 ```
 
 Any `DIFF`, or a page that references a script not in the release list, means
-the instance does not serve the released code. Do not enter secrets or open
+the instance does not serve the released code. Files under `/assets/brand/`
+are not in the list: they are the operator's logos and favicon
+(`[branding]`), images only (SVG, PNG or WebP), never loaded as scripts, and
+every SVG asset is served with a `sandbox` CSP. Do not enter secrets or open
 sensitive links there. Operators should run this check after every deploy and
 may run it from a monitoring host on a schedule. A compromised server can
 serve different bytes to different clients, so run the check from more than one
