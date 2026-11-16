@@ -73,8 +73,9 @@ type Config struct {
 	AutoLogin bool   `toml:"auto_login"`
 	LogLevel  string `toml:"log_level"`
 
-	Limits Limits `toml:"limits"`
-	OIDC   OIDC   `toml:"oidc"`
+	Limits   Limits   `toml:"limits"`
+	OIDC     OIDC     `toml:"oidc"`
+	Branding Branding `toml:"branding"`
 
 	// Derived.
 	Public         *url.URL       `toml:"-"` // parsed public_url, no trailing slash
@@ -173,11 +174,18 @@ func Parse(data []byte) (*Config, error) {
 		}
 		return nil, fmt.Errorf("config: unknown keys: %s", strings.Join(keys, ", "))
 	}
+	if md.IsDefined("branding", "name") && c.Branding.Name == "" {
+		// Not defaulted: an explicit empty name is a mistake.
+		c.Branding.Name = " "
+	}
 	c.applyDefaults()
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
 	if err := c.loadSecrets(); err != nil {
+		return nil, err
+	}
+	if err := c.loadBranding(); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -200,6 +208,7 @@ func (c *Config) applyDefaults() {
 	}
 	def(&c.RedirectListen, ":8080")
 	def(&c.LoginLabel, "Sign in")
+	def(&c.Branding.Name, DefaultBrandName)
 	def(&c.LogLevel, "info")
 	def(&c.Limits.MaxFileSize, "5GB")
 	def(&c.Limits.UserQuota, "50GB")
@@ -320,6 +329,7 @@ func (c *Config) validate() error {
 
 	c.validateLimits(fail)
 	c.validateOIDC(fail)
+	c.validateBranding(fail)
 	return joinErrs(errs)
 }
 

@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/scttpr/dropr/internal/ids"
+	"github.com/scttpr/dropr/internal/textclean"
 )
 
 // User is an account, identified by (Issuer, Subject).
@@ -50,59 +50,14 @@ func scanUser(r scanner) (*User, error) {
 const maxDisplayName = 200
 
 // cleanDisplayName makes the provider-supplied name safe to show to anyone
-// holding a request link. It uses the character class of the web client's
-// file-name sanitizer (web/src/crypto/meta.ts, audit I-4): controls (C0,
-// DEL, C1) and default-ignorable code points (bidi marks, embeddings,
-// overrides and isolates, zero-width and invisible separators, BOM, soft
-// hyphen, Hangul fillers…) are removed, as are U+061C, U+2028/2029 and the
-// Braille blank U+2800. ZWJ/ZWNJ, variation selectors and emoji tag
-// characters are kept. Runs of spaces of any width collapse to one ASCII
-// space (audit 2026-11 A03-1). Unlike the client, no NFC normalization is
-// applied: the server has no Unicode normalization tables.
+// holding a request link (textclean.DisplayText), within maxDisplayName
+// bytes.
 func cleanDisplayName(s string) string {
-	var b strings.Builder
-	space := false
-	for _, r := range s {
-		switch {
-		case stripInName(r):
-			continue
-		case unicode.Is(unicode.Zs, r):
-			space = true
-			continue
-		}
-		if space && b.Len() > 0 {
-			b.WriteByte(' ')
-		}
-		space = false
-		b.WriteRune(r)
-	}
-	s = b.String()
+	s = textclean.DisplayText(s)
 	if len(s) > maxDisplayName {
 		s = strings.TrimSpace(strings.ToValidUTF8(s[:maxDisplayName], ""))
 	}
 	return s
-}
-
-// stripInName reports whether r is removed from display names: \p{Cc},
-// \p{Default_Ignorable_Code_Point} (derived as in DerivedCoreProperties.txt:
-// Other_Default_Ignorable_Code_Point + Cf + Variation_Selector − White_Space −
-// U+FFF9..FFFB − U+13430..1343F − Prepended_Concatenation_Mark), U+061C,
-// U+2028, U+2029 and U+2800, minus the exceptions kept by the web client.
-func stripInName(r rune) bool {
-	switch {
-	case r == 0x200c || r == 0x200d, // ZWNJ, ZWJ
-		unicode.Is(unicode.Variation_Selector, r),
-		r >= 0xe0020 && r <= 0xe007f: // emoji tag characters
-		return false
-	case unicode.Is(unicode.Cc, r),
-		r == 0x061c, r == 0x2028, r == 0x2029, r == 0x2800,
-		unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r):
-		return true
-	case unicode.Is(unicode.Cf, r):
-		return (r < 0xfff9 || r > 0xfffb) && (r < 0x13430 || r > 0x1343f) &&
-			!unicode.Is(unicode.Prepended_Concatenation_Mark, r)
-	}
-	return false
 }
 
 // ProvisionUser returns the user for (issuer, subject), creating it just in
