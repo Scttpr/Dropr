@@ -31,6 +31,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/scttpr/dropr/internal/audit"
 	"github.com/scttpr/dropr/internal/auth/session"
 	"github.com/scttpr/dropr/internal/blob"
 	"github.com/scttpr/dropr/internal/config"
@@ -499,8 +500,12 @@ func cmdGC(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	refs, err := audit.RefsFor(cfg.RefreshKey)
+	if err != nil {
+		return err
+	}
 	var files int64
-	for _, t := range jobs.FileTasks(st, blobs, nil) {
+	for _, t := range jobs.FileTasks(st, blobs, nil, audit.PurgeLogger(log, refs)) {
 		run := t.Run
 		t.Run = func(ctx context.Context) (int64, error) {
 			n, err := run(ctx)

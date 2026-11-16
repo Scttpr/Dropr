@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -197,14 +198,26 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	id, err := p.verifyIDToken(ctx, tr.IDToken, st.Nonce, verifyLogin)
 	switch {
 	case errors.Is(err, ErrRoleMissing), errors.Is(err, ErrClaimMismatch):
-		p.log.InfoContext(ctx, "login refused: not authorized", audit.Event(audit.UserDenied), "reason", denialReason(err))
+		denied := []any{audit.Event(audit.UserDenied), "reason", denialReason(err)}
+		var (
+			uid     string
+			expired int64
+		)
 		if id != nil {
 			// An existing account that lost the role: its request links stop
 			// accepting uploads (audit I-3) and its share links expire (audit
 			// 2026-11b L-2).
-			if lerr := p.st.MarkAccessLost(ctx, id.Issuer, id.Subject, p.now()); lerr != nil {
+			var lerr error
+			if uid, expired, lerr = p.st.MarkAccessLost(ctx, id.Issuer, id.Subject, p.now()); lerr != nil {
 				p.log.ErrorContext(ctx, "record lost access", "err", lerr)
 			}
+		}
+		if uid != "" {
+			denied = append(denied, "user", uid)
+		}
+		p.log.InfoContext(ctx, "login refused: not authorized", denied...)
+		if uid != "" {
+			p.logAccessLost(ctx, uid, expired, "login")
 		}
 		p.pages.Forbidden(w, r)
 		return
@@ -316,6 +329,13 @@ func (p *Provider) HandleFrontchannelLogout(w http.ResponseWriter, r *http.Reque
 	p.log.InfoContext(ctx, "front-channel logout", "sessions", n)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
+}
+
+// logAccessLost records that an existing account lost access at the
+// provider (source: "login" or "revalidation").
+func (p *Provider) logAccessLost(ctx context.Context, userID string, sharesExpired int64, source string) {
+	p.log.InfoContext(ctx, "access lost recorded", audit.Event(audit.UserAccessLost), "user", userID,
+		"shares_expired", sharesExpired, "source", source)
 }
 
 // denialReason is the reason attribute of an auth.denied line.

@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -255,8 +257,18 @@ func TestLosingAccessExpiresShares(t *testing.T) {
 		name string
 		lose func(st *store.Store, owner string) error
 	}{
-		{"role withdrawn", func(st *store.Store, _ string) error {
-			return st.MarkAccessLost(ctx, "https://iss", "lose", t0)
+		{"role withdrawn", func(st *store.Store, owner string) error {
+			uid, n, err := st.MarkAccessLost(ctx, "https://iss", "lose", t0)
+			if err == nil && (uid != owner || n != 2) { // the complete share and the pending one
+				return fmt.Errorf("MarkAccessLost = %q, %d", uid, n)
+			}
+			if err == nil {
+				// Again: nothing left to expire.
+				if _, n, err = st.MarkAccessLost(ctx, "https://iss", "lose", t0); n != 0 {
+					return fmt.Errorf("second MarkAccessLost expired %d", n)
+				}
+			}
+			return err
 		}},
 		{"revoke", func(st *store.Store, owner string) error {
 			_, err := st.RevokeUser(ctx, owner, t0)
@@ -467,5 +479,48 @@ func TestCompleteUploadReportsClosing(t *testing.T) {
 	files, err := st.InboxByOwner(ctx, owner, t0)
 	if err != nil || len(files) != 4 {
 		t.Fatalf("inbox: %d %v", len(files), err)
+	}
+}
+
+// DeleteExpiredLinks names exactly the expired links it deleted.
+func TestDeleteExpiredLinksReportsPurged(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	owner := fileOwner(t, st, "purge")
+	expired := completeShare(t, st, owner) // newShare expires before t0+48h
+	n := newShare(owner)
+	n.ExpiresAt = t0.Add(30 * 24 * time.Hour)
+	live, _, err := st.CreateShare(ctx, n, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldReq := &store.Request{OwnerID: owner, ExpiresAt: t0.Add(time.Hour), MaxFiles: 1, MaxBytes: 16, CreatedAt: t0}
+	newReq := &store.Request{OwnerID: owner, ExpiresAt: t0.Add(30 * 24 * time.Hour), MaxFiles: 1, MaxBytes: 16, CreatedAt: t0}
+	for _, rq := range []*store.Request{oldReq, newReq} {
+		if err := st.CreateRequest(ctx, rq); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file, err := st.CreateRequestFile(ctx, newRequestFile(oldReq.ID), t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := st.DeleteExpiredLinks(ctx, t0.Add(48*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(p.Shares, []string{expired}) || !slices.Equal(p.Requests, []string{oldReq.ID}) || len(p.Blobs) != 2 || !slices.Contains(p.Blobs, file) {
+		t.Fatalf("purged: %+v", p)
+	}
+	var left int
+	if err := st.DB().R.QueryRowContext(ctx, `SELECT count(*) FROM shares WHERE id = ?`, live).Scan(&left); err != nil || left != 1 {
+		t.Errorf("live share deleted: %d %v", left, err)
+	}
+	if p, err := st.DeleteExpiredLinks(ctx, t0.Add(48*time.Hour)); err != nil || len(p.Shares)+len(p.Requests)+len(p.Blobs) != 0 {
+		t.Errorf("second run: %+v %v", p, err)
+	}
+	if uid, n, err := st.MarkAccessLost(ctx, "https://iss", "nobody", t0); err != nil || uid != "" || n != 0 {
+		t.Errorf("unknown identity: %q %d %v", uid, n, err)
 	}
 }

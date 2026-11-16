@@ -756,7 +756,7 @@ func TestDLFallbackAndServiceWorker(t *testing.T) {
 // runner returns a job runner with the file cleanup tasks of e on clock now.
 func (e *testEnv) runner(now func() time.Time) *jobs.Runner {
 	r := jobs.NewRunner(0, slog.New(slog.DiscardHandler))
-	for _, t := range jobs.FileTasks(e.s.store, e.s.blobs, now) {
+	for _, t := range jobs.FileTasks(e.s.store, e.s.blobs, now, e.s.LogPurged) {
 		r.Add(t)
 	}
 	return r

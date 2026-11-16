@@ -10,7 +10,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/scttpr/dropr/internal/auth/oidc/oidctest"
 	"github.com/scttpr/dropr/internal/httpx"
 )
 
@@ -222,4 +224,94 @@ func TestRequestEvents(t *testing.T) {
 	assertAbsent(t, logs, map[string]string{"request ID": reqID, "inbox file ID": first, "inbox file ID 2": inbox.Files[1].ID,
 		"upload ID 1": u1.UploadID, "upload ID 2": u2.UploadID, "upload token 1": u1.UploadToken, "upload token 2": u2.UploadToken,
 		"download token": g.Token, "client address": "127.0.0.1"})
+}
+
+// The expiry cleanup logs one link.purged per deleted link.
+func TestPurgeEvents(t *testing.T) {
+	t.Parallel()
+	clk := newClock()
+	e, logs := newLoggedEnv(t, testOpts{now: clk.Now})
+	o := e.newOwner()
+	sh := e.createShare(e.client, smallSize, map[string]any{"expires_in": "1h"})
+	e.uploadAll(sh, randBytes(int(smallSize)))
+	keep := e.createShare(e.client, smallSize, map[string]any{"expires_in": "7d"})
+	e.uploadAll(keep, randBytes(int(smallSize)))
+	reqID := o.createRequest(map[string]any{"max_files": 1, "max_bytes": smallSize, "expires_in": "1h"})
+	clk.Advance(2 * time.Hour)
+	if err := e.runJobs(clk.Now); err != nil {
+		t.Fatal(err)
+	}
+	var purged []map[string]any
+	for _, ev := range logs.events(t) {
+		if ev["event"] == "link.purged" {
+			purged = append(purged, ev)
+		}
+	}
+	got := map[string]string{}
+	for _, ev := range purged {
+		got[ev["kind"].(string)] = ev["link"].(string)
+		if ev["reason"] != "expired" {
+			t.Errorf("reason: %v", ev)
+		}
+	}
+	want := map[string]string{"share": e.s.refs.Link(sh.ShareID), "request": e.s.refs.Link(reqID)}
+	if len(purged) != 2 || got["share"] != want["share"] || got["request"] != want["request"] {
+		t.Fatalf("purged: %v, want %v", purged, want)
+	}
+	assertAbsent(t, logs, map[string]string{"share ID": sh.ShareID, "request ID": reqID})
+}
+
+// An existing account found without the role: auth.denied names it, then
+// user.access_lost records the share links expired, at login and at
+// revalidation.
+func TestAccessLostEvents(t *testing.T) {
+	t.Parallel()
+	for _, source := range []string{"login", "revalidation"} {
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+			e, logs := newLoggedEnv(t, testOpts{})
+			e.login()
+			uid := e.userID()
+			sh := e.createShare(e.client, smallSize, nil)
+			e.uploadAll(sh, randBytes(int(smallSize)))
+			noRole := map[string]any{"name": "Alice Example", "roles": []any{}}
+			if source == "login" {
+				e.op.Set(func(k *oidctest.Knobs) { k.Claims = noRole })
+				if resp, _ := e.do(http.MethodGet, "/auth/login", nil); resp.StatusCode != http.StatusForbidden {
+					t.Fatalf("login without the role: %d", resp.StatusCode)
+				}
+			} else {
+				e.op.Set(func(k *oidctest.Knobs) { k.RefreshClaims = noRole })
+				e.dueForRevalidation()
+				if resp, _ := e.api(http.MethodGet, "/api/shares", nil, nil); resp.StatusCode != http.StatusUnauthorized {
+					t.Fatalf("revalidation without the role: %d", resp.StatusCode)
+				}
+			}
+			var names []string
+			var lost map[string]any
+			for _, ev := range logs.events(t)[1:] { // after auth.login
+				switch ev["event"] {
+				case "auth.denied":
+					if ev["user"] != uid || ev["reason"] != "role_missing" {
+						t.Errorf("auth.denied: %v", ev)
+					}
+				case "user.access_lost":
+					lost = ev
+				}
+				if n := ev["event"].(string); strings.HasPrefix(n, "auth.") || strings.HasPrefix(n, "user.") || strings.HasPrefix(n, "session.") {
+					names = append(names, n)
+				}
+			}
+			want := []string{"auth.denied", "user.access_lost"}
+			if source == "revalidation" {
+				want = []string{"user.access_lost", "session.ended"}
+			}
+			if !slices.Equal(names, want) {
+				t.Fatalf("events %v, want %v", names, want)
+			}
+			if lost["user"] != uid || lost["shares_expired"] != 1.0 || lost["source"] != source {
+				t.Errorf("user.access_lost: %v", lost)
+			}
+		})
+	}
 }

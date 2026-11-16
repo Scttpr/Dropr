@@ -22,8 +22,9 @@ const (
 // FileTasks returns the cleanup tasks for links, uploads, tokens and blob
 // files (DESIGN.md §4, §6). Rows are deleted first, in one transaction each,
 // then the files; files whose removal fails are picked up by the orphan
-// sweep on a later run.
-func FileTasks(st *store.Store, blobs *blob.Store, now func() time.Time) []Task {
+// sweep on a later run. onPurged, if not nil, is called for every expired
+// link deleted, with kind "share" or "request" (audit.PurgeLogger).
+func FileTasks(st *store.Store, blobs *blob.Store, now func() time.Time, onPurged func(ctx context.Context, kind, id string)) []Task {
 	if now == nil {
 		now = time.Now
 	}
@@ -36,7 +37,19 @@ func FileTasks(st *store.Store, blobs *blob.Store, now func() time.Time) []Task 
 	}
 	return []Task{
 		{Name: "expired-links", Run: func(ctx context.Context) (int64, error) {
-			return remove(st.DeleteExpiredLinks(ctx, now()))
+			p, err := st.DeleteExpiredLinks(ctx, now())
+			if err != nil {
+				return 0, err
+			}
+			if onPurged != nil {
+				for _, id := range p.Shares {
+					onPurged(ctx, "share", id)
+				}
+				for _, id := range p.Requests {
+					onPurged(ctx, "request", id)
+				}
+			}
+			return remove(p.Blobs, nil)
 		}},
 		{Name: "stale-uploads", Run: func(ctx context.Context) (int64, error) {
 			return remove(st.DeleteStaleUploads(ctx, now().Add(-StaleUploadAge)))

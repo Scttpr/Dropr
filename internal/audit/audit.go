@@ -9,10 +9,13 @@
 package audit
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
+
+	"github.com/scttpr/dropr/internal/seal"
 )
 
 // Event names, the value of the "event" attribute. They are a stable
@@ -54,11 +57,37 @@ type Refs struct{ key []byte }
 // the refresh_key).
 func NewRefs(key []byte) *Refs { return &Refs{key: append([]byte(nil), key...)} }
 
+// RefsFor returns the reference deriver of an instance from its 32-byte
+// refresh_key. The server and `dropr log-ref` both use it, so a reference
+// computed by hand matches the logs; a new refresh_key changes every
+// reference.
+func RefsFor(refreshKey []byte) (*Refs, error) {
+	key, err := seal.Derive(refreshKey, seal.InfoLogRef)
+	if err != nil {
+		return nil, err
+	}
+	return NewRefs(key), nil
+}
+
 // Link returns the reference of a share or request ID.
 func (r *Refs) Link(id string) string { return r.ref("link", id) }
 
 // File returns the reference of an inbox file ID.
 func (r *Refs) File(id string) string { return r.ref("file", id) }
+
+// Purge kinds, the "kind" attribute of link.purged.
+const (
+	KindShare   = "share"
+	KindRequest = "request"
+)
+
+// PurgeLogger returns the callback that logs a link deleted by the expiry
+// cleanup (jobs.FileTasks).
+func PurgeLogger(log *slog.Logger, refs *Refs) func(ctx context.Context, kind, id string) {
+	return func(ctx context.Context, kind, id string) {
+		log.InfoContext(ctx, "link purged", Event(LinkPurged), "kind", kind, "link", refs.Link(id), "reason", "expired")
+	}
+}
 
 func (r *Refs) ref(domain, id string) string {
 	m := hmac.New(sha256.New, r.key)
