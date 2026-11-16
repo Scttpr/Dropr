@@ -126,6 +126,7 @@ Admin access is shell access to the host. There is no admin web UI.
 - `dropr user purge <user>`: deletes the user and all their data
 - `dropr user migrate`: relinks accounts after a provider change (§5.1)
 - `dropr gc`, `dropr backup --out FILE`, `dropr healthcheck`
+- `dropr log-ref <link ID | link URL | IP>`: the reference the logs use for a link or client address (logs never hold link IDs)
 
 ## 6. Links
 

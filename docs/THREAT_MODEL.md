@@ -143,6 +143,7 @@ D = denial of service, E = elevation of privilege.
 |---|---|---|---|
 | S | Forged or replayed ID token | Signature against discovered JWKS (asymmetric only; never `none` or HS*), `iss`, `aud`, `azp`, `exp`/`nbf`/`iat`, `nonce`, `required_claims`. Discovery, JWKS and token/userinfo response bodies capped at 1 MiB | `internal/auth/oidc` |
 | S | Authorization-code injection, login CSRF | PKCE S256, `state` and `nonce` in a sealed `__Host-` cookie, deleted at callback | `internal/auth/oidc/handlers.go`, `internal/seal` |
+| S | Open redirect or phishing through the sign-in return page (`next` on `/login` and `/auth/login`) | Closed list (`/`, `/inbox`, `/links`) compared exactly, anything else becomes `/`; checked when read and again when the sealed state cookie is opened; the landing page only ever navigates to one of those paths. `auto_login` redirects owner pages to `/auth/login` but never `/login` (the post-logout target), so logout cannot loop back into a single sign-on | `internal/auth/oidc/handlers.go`, `internal/server/pages.go` |
 | S | Tokens from another tenant or issuer | Single pinned issuer; multi-tenant and templated issuers refused; `tid` check for Entra | `internal/config/config.go` |
 | S | Client impersonation toward the IdP | `private_key_jwt`; client secret only in dev mode | `internal/auth/oidc/assertion.go`, `internal/config` |
 | S | Identity confusion via email or name | Identity is `(iss, sub)`; other claims display-only. Display names (shown on the anonymous request page) are stripped of controls, bidi, invisible and other default-ignorable characters, with runs of spaces collapsed (no NFC normalization); control characters stripped in CLI output | `internal/store/users.go`, `cmd/dropr/main.go` |
@@ -222,7 +223,9 @@ navigation.
 counts, who owns which link, which request link a file arrived through, the
 owner's display name, the number of received files, and IP addresses (only as
 keyed hashes in logs, but visible to the network and any fronting proxy in
-transit). Request link public keys travel only in the fragment. File names
+transit). The audit events (ARCHITECTURE §5) put part of this in the logs:
+per-link sizes, expiry, download counts and times, under keyed references
+rather than link IDs. Protect the logs like the database. Request link public keys travel only in the fragment. File names
 and types are encrypted and padded to 128, 256 or 512 bytes, and request labels
 to 128 or 256 bytes (FORMAT §5.1, audit 2026-11b L-8): the server learns only
 which bucket the combined name and type length falls in, and whether a label

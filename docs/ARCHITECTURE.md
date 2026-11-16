@@ -26,8 +26,8 @@ Dockerfile                release image: the release binaries on distroless (rel
 .github/workflows/        CI, security scans, nightly fuzzing, releases (CONTRIBUTING.md)
 dropr.example.toml        commented production configuration
 go.mod                    module github.com/scttpr/dropr
-cmd/dropr/                main: `dropr serve | user list|revoke|disable|enable|purge|migrate | gc | backup | healthcheck | version`
-internal/config/          TOML config (BurntSushi/toml), validation, binary sizes, secrets from files
+cmd/dropr/                main: `dropr serve | user list|revoke|disable|enable|purge|migrate | gc | backup | healthcheck | log-ref | version`
+internal/config/          TOML config (BurntSushi/toml), validation, binary sizes, secrets and brand files from files
 internal/db/              SQLite open (WAL, foreign_keys, busy_timeout), embedded migrations, online backup
 internal/store/           typed queries per table (no ORM); storetest/ fixtures
 internal/auth/oidc/       discovery, PKCE, private_key_jwt assertions, token verification, revalidation;
@@ -42,6 +42,8 @@ internal/web/             html/template pages (templates/), display settings (pr
 internal/i18n/            language negotiation, gettext-style Go catalogs (English = msgid, fr.go)
 internal/seal/            AES-GCM sealing of server secrets, HKDF subkeys of the refresh key
 internal/ids/             random IDs (128-bit) and bearer secrets (256-bit), validation
+internal/audit/           log event names and keyed link/file references (no raw IDs in logs)
+internal/textclean/       display-text cleaner (account display names, brand name)
 internal/keyed/           per-key mutex (per-blob part commit / finalize lock)
 internal/jobs/            cleanup ticker (5 min) and its tasks
 web/                      TypeScript browser modules (esbuild), zero runtime dependencies
@@ -53,7 +55,7 @@ web/                      TypeScript browser modules (esbuild), zero runtime dep
   test/                   node --test unit and property tests, vectors/ (FORMAT.md test vectors)
 e2e/                      Playwright specs (tests/), fixtures
 dev/                      compose.yaml (dev Keycloak), dropr.toml (dev config), client_secret,
-                          keycloak/ (dev realm, TEST-ONLY private_key_jwt key)
+                          keycloak/ (dev realm, TEST-ONLY private_key_jwt key), branding/ (generic test logos)
 docs/                     design, contracts, format, pages, threat model, OIDC providers, 2026-11 audit
 ```
 
@@ -537,8 +539,11 @@ visible under the umask; it refuses a symlink at `--out` (audit 2026-11b L-10).
 
 Changing a secret or the origin:
 
-- **`refresh_key`** encrypts stored refresh tokens and the login-state cookie;
-  it never protects files. Rotate by replacing the file and restarting. Stored
+- **`refresh_key`** encrypts stored refresh tokens and the login-state cookie,
+  and keys the IP hashes and link/file references in logs; it never protects
+  files. Rotate by replacing the file and restarting. Log references and IP
+  hashes change with it: logs from before the rotation no longer match
+  `dropr log-ref` output, so note the rotation date for the SIEM. Stored
   refresh tokens become undecryptable, so sessions can no longer revalidate
   and users sign in again; logins in flight fail once. After a suspected leak,
   rotate, run `dropr user disable` for anyone who must lose access now, and
