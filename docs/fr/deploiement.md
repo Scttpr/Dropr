@@ -119,6 +119,34 @@ auth_rate_per_minute = 300
 auth_burst           = 100
 ```
 
+**Nom et logo.** L'interface peut porter le nom et le logo de l'organisation à
+la place de ceux de Dropr. Le pied de page mentionne alors Dropr en une ligne.
+
+```toml
+[branding]
+name           = "Drop and Care"
+logo_file      = "/etc/dropr/branding/logo.svg"
+logo_dark_file = "/etc/dropr/branding/logo-dark.svg"   # facultatif, thème sombre
+favicon_file   = "/etc/dropr/branding/favicon.svg"     # facultatif
+```
+
+* Formats : SVG, PNG ou WebP, 256 Kio au plus chacun, avec l'extension
+  correspondante. Préférez un SVG dont les textes sont vectorisés (les polices
+  ne sont pas chargées) ; sinon un PNG ou un WebP d'environ 64 px de haut.
+  L'en-tête affiche le logo sur 32 px de haut, suivi du nom.
+* Un SVG capable d'exécuter du script (`<script>`, `<foreignObject>`,
+  attributs `on…=`, liens `javascript:`) est refusé au démarrage. Les
+  références à des images ou polices distantes ne donnent qu'un
+  avertissement, mais elles ne se chargeront pas : gardez tout dans le
+  fichier.
+* Ces fichiers ne sont pas des secrets : le mode `0644`, propriétaire `root`,
+  convient. L'unité systemd ci-dessous (`ProtectSystem=strict` laisse `/etc`
+  lisible) comme l'installation Docker du §6 (`/etc/dropr` est monté en
+  lecture seule) peuvent lire `/etc/dropr/branding`.
+* Dropr les lit au démarrage : redémarrez-le après les avoir modifiés. Leur
+  URL change avec leur contenu, donc les navigateurs prennent aussitôt le
+  nouveau logo en compte.
+
 ## 5. Unité systemd
 
 `/etc/systemd/system/dropr.service` :

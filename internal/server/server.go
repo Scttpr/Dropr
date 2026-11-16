@@ -91,7 +91,11 @@ func New(ctx context.Context, d Deps) (*Server, error) {
 		return nil, err
 	}
 	s.assets = assets
-	if s.pages, err = web.NewRenderer(assets, cfg.LoginLabel, d.Logger); err != nil {
+	brand, err := brandOf(&cfg.Branding, assets)
+	if err != nil {
+		return nil, err
+	}
+	if s.pages, err = web.NewRenderer(assets, web.Options{LoginLabel: cfg.LoginLabel, Brand: brand}, d.Logger); err != nil {
 		return nil, err
 	}
 	if s.sessions, err = session.NewManager(d.Store, cfg.RefreshKey, session.Config{Now: d.Now}, d.Logger); err != nil {
@@ -148,6 +152,34 @@ func New(ctx context.Context, d Deps) (*Server, error) {
 		httpx.CSRF(cfg.Origin, http.HandlerFunc(s.csrfRejected)),
 	)
 	return s, nil
+}
+
+// brandOf registers the configured brand files as assets and returns the
+// brand the pages show.
+func brandOf(b *config.Branding, assets *web.Assets) (web.Brand, error) {
+	brand := web.Brand{Name: b.Name, Custom: b.Custom()}
+	for _, f := range []struct {
+		name string
+		file *config.BrandFile
+		url  *string
+	}{
+		{"logo", b.Logo, &brand.LogoURL},
+		{"logo-dark", b.LogoDark, &brand.LogoDarkURL},
+		{"favicon", b.Favicon, &brand.FaviconURL},
+	} {
+		if f.file == nil {
+			continue
+		}
+		as, err := assets.AddBrand(f.name, f.file.Data, f.file.ContentType, f.file.Ext)
+		if err != nil {
+			return web.Brand{}, err
+		}
+		*f.url = "/assets/" + as.Public
+		if f.name == "favicon" {
+			brand.FaviconType = as.ContentType
+		}
+	}
+	return brand, nil
 }
 
 // Handler returns the root handler.

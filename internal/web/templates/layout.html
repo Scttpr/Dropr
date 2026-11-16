@@ -1,5 +1,5 @@
 {{define "layout"}}<!DOCTYPE html>
-<html lang="{{.Lang}}" data-theme="{{.Theme}}">
+<html lang="{{.Lang}}" data-theme="{{.Theme}}" data-brand="{{.Brand.Name}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,9 +8,13 @@
 {{- with .RefreshTo}}
 <meta http-equiv="refresh" content="0;url={{.}}">
 {{- end}}
-<title>{{block "title" .}}Dropr{{end}}</title>
+<title>{{block "title" .}}{{.Brand.Name}}{{end}}</title>
 <link rel="stylesheet" href="{{asset "app.css"}}" integrity="{{integrity "app.css"}}">
+{{- if .Brand.FaviconURL}}
+<link rel="icon" href="{{.Brand.FaviconURL}}" type="{{.Brand.FaviconType}}">
+{{- else}}
 <link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+{{- end}}
 {{- with .PrefsScript}}
 <script type="module" src="{{.Src}}" integrity="{{.Integrity}}"></script>
 {{- end}}
@@ -21,7 +25,11 @@
 <body>
 <a class="skip-link" href="#main">{{t "Skip to content"}}</a>
 <header class="site-header">
-  <a class="brand" href="/"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.5c-.4 0-.8.2-1.1.5C8.3 6 5 10.3 5 14a7 7 0 0 0 14 0c0-3.7-3.3-8-5.9-11-.3-.3-.7-.5-1.1-.5Z"/></svg><span>Dropr</span></a>
+  <a class="brand" href="/">
+    {{- if .Brand.LogoURL}}<img class="brand-logo brand-logo-light" src="{{.Brand.LogoURL}}" alt="">
+    {{- with .Brand.LogoDarkURL}}<img class="brand-logo brand-logo-dark" src="{{.}}" alt="">{{end}}
+    {{- else}}<svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.5c-.4 0-.8.2-1.1.5C8.3 6 5 10.3 5 14a7 7 0 0 0 14 0c0-3.7-3.3-8-5.9-11-.3-.3-.7-.5-1.1-.5Z"/></svg>{{end -}}
+    <span class="brand-name">{{.Brand.Name}}</span></a>
   {{- if .User}}
   <nav class="site-nav" aria-label="{{t "Main"}}">
     {{- if ne .Page "forbidden"}}
@@ -50,6 +58,9 @@
 {{end}}
 <footer class="site-footer">
   <p>{{t "End-to-end encrypted: files are encrypted in your browser and the server never sees their contents."}}</p>
+  {{- if .Brand.Custom}}
+  <p class="powered">{{t "Powered by"}} <a href="https://github.com/Scttpr/Dropr">Dropr</a></p>
+  {{- end}}
 </footer>
 </body>
 </html>

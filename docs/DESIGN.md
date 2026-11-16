@@ -176,6 +176,8 @@ blobs     (id, parts, size, complete, created_at)
 
 ## 9. UX
 
+**Name**: "Dropr" by default. An instance can show its own name, logo (with an optional dark-theme variant) and favicon instead (`[branding]`, set at deploy time); the footer then credits Dropr.
+
 **Login**: one button, "Sign in" (the label is configurable, e.g. "Sign in with Microsoft"). Signing in lands straight on the dashboard, or on the owner page the user asked for. With `auto_login = true` there is no button to press: owner pages go straight to the identity provider, and only `/login` (where logout lands) still shows the button.
 
 **Owner dashboard**

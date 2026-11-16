@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Dark-theme variant of the generic test logo. Not a real brand. -->
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="#5eead4"/>
+  <path d="M32 14v36M14 32h36" stroke="#042f2e" stroke-width="10" stroke-linecap="round"/>
+</svg>

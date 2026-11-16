@@ -18,7 +18,7 @@ Two flows, nothing else:
 
 Files go up to 100 GB (default cap 5 GB). Uploads are resumable; downloads
 stream to disk. The interface is in English and French, with light, dark and
-system themes.
+system themes, and can carry your organization's name and logo.
 
 ## Security model
 

@@ -72,6 +72,32 @@ type Script struct {
 	Integrity string
 }
 
+// Brand is how the instance names itself (config [branding]).
+type Brand struct {
+	// Name replaces "Dropr" wherever the interface names the service.
+	Name string
+	// URLs of the logos and favicon below /assets/, empty when not set:
+	// the built-in mark and favicon are used then.
+	LogoURL, LogoDarkURL, FaviconURL string
+	FaviconType                      string
+	// Custom is set when anything differs from Dropr's own name and logo;
+	// the footer then credits Dropr.
+	Custom bool
+}
+
+// DefaultBrand is Dropr's own name with the built-in logo.
+var DefaultBrand = Brand{Name: "Dropr"}
+
+// Options configure the renderer.
+type Options struct {
+	// LoginLabel is the text of the sign-in button (an msgid when it is the
+	// default "Sign in").
+	LoginLabel string
+	// Brand is the instance's name and logos; the zero value means
+	// DefaultBrand.
+	Brand Brand
+}
+
 // PageData is the view model shared by all pages.
 type PageData struct {
 	// Title and Message are English msgids, translated by the template.
@@ -102,6 +128,8 @@ type PageData struct {
 	Langs       []i18n.Lang
 	Path        string
 	PrefsScript *Script
+	// Brand is the instance's name and logos, set by Render.
+	Brand Brand
 }
 
 // Renderer renders pages.
@@ -109,6 +137,7 @@ type Renderer struct {
 	pages      map[i18n.Lang]map[string]*template.Template
 	assets     *Assets
 	loginLabel string
+	brand      Brand
 	log        *slog.Logger
 
 	missingOnce sync.Once
@@ -116,11 +145,15 @@ type Renderer struct {
 
 // NewRenderer parses every page against the layout, once per language: the
 // translation functions are bound at parse time.
-func NewRenderer(assets *Assets, loginLabel string, log *slog.Logger) (*Renderer, error) {
+func NewRenderer(assets *Assets, opts Options, log *slog.Logger) (*Renderer, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	r := &Renderer{pages: map[i18n.Lang]map[string]*template.Template{}, assets: assets, loginLabel: loginLabel, log: log}
+	if opts.Brand.Name == "" {
+		opts.Brand = DefaultBrand
+	}
+	r := &Renderer{pages: map[i18n.Lang]map[string]*template.Template{}, assets: assets,
+		loginLabel: opts.LoginLabel, brand: opts.Brand, log: log}
 	for _, lang := range i18n.Supported {
 		funcs := template.FuncMap{
 			"asset":     assets.URL,
@@ -166,6 +199,7 @@ func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, status int, 
 	data.Page = page
 	data.Lang, data.Theme, data.Langs = lang, ThemeOf(req), i18n.Supported
 	data.Path = req.URL.RequestURI()
+	data.Brand = r.brand
 	if data.LoginLabel == "" {
 		data.LoginLabel = r.loginLabel
 	}
