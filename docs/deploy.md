@@ -113,6 +113,32 @@ auth_rate_per_minute = 300
 auth_burst           = 100
 ```
 
+**Name and logo.** The interface can carry the organization's name and logo
+instead of Dropr's. The footer then credits Dropr in one line.
+
+```toml
+[branding]
+name           = "Drop and Care"
+logo_file      = "/etc/dropr/branding/logo.svg"
+logo_dark_file = "/etc/dropr/branding/logo-dark.svg"   # optional, dark theme
+favicon_file   = "/etc/dropr/branding/favicon.svg"     # optional
+```
+
+* Formats: SVG, PNG or WebP, at most 256 KiB each, with the matching
+  extension. Prefer SVG with text converted to paths (fonts are not loaded);
+  otherwise a PNG or WebP about 64 px high. The header shows the logo 32 px
+  high, followed by the name.
+* An SVG that can run script (`<script>`, `<foreignObject>`, `on…=`
+  attributes, `javascript:` links) is refused at startup. References to
+  remote images or fonts only give a warning, but they will not load: keep
+  everything inside the file.
+* The files are not secrets: mode `0644`, owner `root`, is fine. Both the
+  systemd unit below (`ProtectSystem=strict` leaves `/etc` readable) and the
+  Docker setup of §6 (`/etc/dropr` is mounted read-only) can read
+  `/etc/dropr/branding`.
+* Dropr reads them at startup: restart it after changing them. Their URLs
+  change with their content, so browsers pick up a new logo at once.
+
 ## 5. systemd unit
 
 `/etc/systemd/system/dropr.service`:

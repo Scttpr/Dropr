@@ -130,6 +130,7 @@ var contentTypes = map[string]string{
 	".webmanifest": "application/manifest+json; charset=utf-8",
 	".svg":         "image/svg+xml",
 	".png":         "image/png",
+	".webp":        "image/webp",
 	".ico":         "image/x-icon",
 	".woff2":       "font/woff2",
 	".txt":         "text/plain; charset=utf-8",
@@ -175,6 +176,46 @@ func (a *Assets) Hashes() []string {
 	return out
 }
 
+// AddBrand registers an operator-supplied brand file (logo or favicon) as
+// logical "brand/<name>", served at /assets/brand/<name>-<hash>.<ext>: the
+// content hash in the name lets a new logo replace a cached one.
+// contentType must be one of the image types config.LoadBrandFile accepts.
+func (a *Assets) AddBrand(name string, data []byte, contentType, ext string) (*Asset, error) {
+	switch contentType {
+	case "image/svg+xml", "image/png", "image/webp":
+	default:
+		return nil, fmt.Errorf("web: brand %s: unsupported type %q", name, contentType)
+	}
+	logical := "brand/" + name
+	sum := sha256.Sum256(data)
+	public := logical + "-" + hex.EncodeToString(sum[:4]) + "." + ext
+	if !validAssetPath(public) {
+		return nil, fmt.Errorf("web: brand %s: invalid name", name)
+	}
+	if _, dup := a.byLogical[logical]; dup {
+		return nil, fmt.Errorf("web: brand %s: already registered", name)
+	}
+	sri := sha512.Sum384(data)
+	as := &Asset{
+		Logical:     logical,
+		Public:      public,
+		Data:        data,
+		ETag:        `"` + hex.EncodeToString(sum[:16]) + `"`,
+		Integrity:   "sha384-" + base64.StdEncoding.EncodeToString(sri[:]),
+		ContentType: contentType,
+	}
+	a.byLogical[logical] = as
+	a.byPublic[public] = as
+	return as, nil
+}
+
+// svgCSP replaces the page CSP on SVG assets. Embedded with <img> an SVG
+// never runs script or fetches anything; opened directly (a navigation to
+// its URL) it becomes a document, which this policy keeps inert: no script,
+// no subresource but inline styles and data: images, and a sandbox with no
+// permission at all.
+const svgCSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"
+
 var assetEpoch = time.Unix(0, 0)
 
 // Handler serves GET /assets/{path...} with immutable caching. Unknown names
@@ -188,6 +229,9 @@ func (a *Assets) Handler(notFound http.Handler) http.Handler {
 		}
 		h := w.Header()
 		h.Set("Content-Type", as.ContentType)
+		if as.ContentType == "image/svg+xml" {
+			h.Set("Content-Security-Policy", svgCSP)
+		}
 		h.Set("Cache-Control", "public, max-age=31536000, immutable")
 		h.Set("ETag", as.ETag)
 		http.ServeContent(w, r, "", assetEpoch, bytes.NewReader(as.Data))

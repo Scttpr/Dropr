@@ -34,7 +34,7 @@ export const en = {
   keyStoreUnavailable:
     "This browser cannot store the keys of your request links, so it cannot create links or open the files sent through them. " +
     "Allow this site to store data (private browsing often blocks it), or use another browser.",
-  ownerUnknown: "Dropr could not tell which account is signed in, so it cannot use your request link keys. Please reload the page.",
+  ownerUnknown: "This page could not tell which account is signed in, so it cannot use your request link keys. Please reload the page.",
   keyIdTaken: "The server returned the ID of a link this browser already holds a key for. The link was not created; your existing links are unchanged.",
   /** Translations of the server's API error messages, by error code. English uses the server's own text. */
   apiCodes: {} as Readonly<Record<string, string>>,

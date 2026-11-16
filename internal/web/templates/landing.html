@@ -1,7 +1,7 @@
-{{define "title"}}{{t "Signing you in"}} · Dropr{{end}}
+{{define "title"}}{{t "Signing you in"}} · {{.Brand.Name}}{{end}}
 {{define "content"}}
 <section class="card card-narrow center">
   <h1>{{t "You're signed in"}}</h1>
-  <p class="lead"><a href="{{.RefreshTo}}">{{t "Continue to Dropr"}}</a></p>
+  <p class="lead"><a href="{{.RefreshTo}}">{{t "Continue to %s" .Brand.Name}}</a></p>
 </section>
 {{end}}

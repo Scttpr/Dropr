@@ -48,19 +48,23 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 		}
 		h := resp.Header
 		for k, v := range common {
+			if k == "Content-Security-Policy" && kind == "svg" {
+				// SVG assets replace the page CSP with their own sandbox.
+				v = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"
+			}
 			if got := h.Get(k); got != v {
 				t.Errorf("%s: %s = %q, want %q", label, k, got, v)
 			}
 		}
 		for _, k := range []string{"X-Powered-By", "Server", "Access-Control-Allow-Origin", "ETag", "Last-Modified"} {
-			allowed := kind == "asset" && (k == "ETag" || k == "Last-Modified")
+			allowed := (kind == "asset" || kind == "svg") && (k == "ETag" || k == "Last-Modified")
 			if v := h.Get(k); v != "" && !allowed {
 				t.Errorf("%s: unexpected %s: %q", label, k, v)
 			}
 		}
 		cc := h.Get("Cache-Control")
 		switch kind {
-		case "asset":
+		case "asset", "svg":
 			if !strings.Contains(cc, "immutable") || !regexp.MustCompile(`max-age=\d{7,}`).MatchString(cc) {
 				t.Errorf("%s: Cache-Control = %q", label, cc)
 			}
@@ -121,7 +125,7 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 		{"upload 401", get(anon, "/upload/AAAAAAAAAAAAAAAAAAAAAA"), 401, "api"},
 		{"download bad token", get(anon, "/dl/"+strings.Repeat("A", 43)), 404, "other"},
 		{"stylesheet", get(anon, css[1]), 200, "asset"},
-		{"icon", get(anon, icon[1]), 200, "asset"},
+		{"icon", get(anon, icon[1]), 200, "svg"},
 		{"unknown asset", get(anon, "/assets/nope-12345678.js"), 404, "page"},
 		{"healthz", get(anon, "/healthz"), 200, "other"},
 		{"auth login redirect", get(anon, "/auth/login"), 302, "other"},

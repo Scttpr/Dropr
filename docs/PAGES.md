@@ -115,6 +115,12 @@ share one browser profile without touching each other's keys
   **light by default**, with a matching `<meta name="color-scheme">`. CSS
   sets `color-scheme` from it and every color token is a `light-dark()`
   pair, so the page renders in its final colors on first paint.
+- **Brand.** `<html data-brand="…">` holds the instance name (`[branding]
+  name`, "Dropr" by default). The server puts it in titles, the header and
+  the texts that name the service; a module that sets `document.title` reads
+  it from there. The header shows `<img class="brand-logo brand-logo-light">`
+  (and `brand-logo-dark`, swapped by CSS with the theme) when a logo is
+  configured, the built-in mark otherwise, then `<span class="brand-name">`.
 - **Display settings** (every page, in the header): a button with
   `popovertarget="prefs"` opens a native popover holding a
   `<form method="post" action="/prefs" data-prefs>` with two groups of
@@ -258,6 +264,8 @@ so the tile stays right without a reload. The JS tolerates a missing
 
 > Dropr encrypts files in your browser before they are uploaded, so sharing
 > and receiving files needs JavaScript. Please enable it for this site.
+
+("Dropr" is the configured brand name.)
 
 ## 3. Received files — `/inbox`, `data-page="inbox"`, `inbox.js`
 

@@ -1,4 +1,4 @@
-{{define "title"}}{{t "Active links"}} · Dropr{{end}}
+{{define "title"}}{{t "Active links"}} · {{.Brand.Name}}{{end}}
 {{define "main"}}{{with .View}}
 <main id="main" class="site-main" data-page="links" data-owner-id="{{$.User.ID}}" data-count="{{.Count}}">
   <div class="page-head">

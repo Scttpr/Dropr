@@ -101,7 +101,12 @@ export interface DroprConfig {
   readonly userQuota?: string;
   /** oidc.revalidate_every (1m..1h). */
   readonly revalidateEvery?: string;
+  /** [branding] with the generic test logos of dev/branding. */
+  readonly branding?: boolean;
 }
+
+/** Brand name of the e2e branding config. */
+export const BRAND_NAME = "Example Care";
 
 export interface DroprX extends Dropr {
   readonly port: number;
@@ -155,7 +160,17 @@ role_claim = "realm_access.roles"
 required_role = "Dropr.User"
 display_claim = "name"
 revalidate_every = "${c.revalidateEvery ?? "15m"}"
-`,
+${
+  c.branding
+    ? `
+[branding]
+name = "${BRAND_NAME}"
+logo_file = "${join(ROOT, "dev/branding/logo.svg")}"
+logo_dark_file = "${join(ROOT, "dev/branding/logo-dark.svg")}"
+favicon_file = "${join(ROOT, "dev/branding/favicon.svg")}"
+`
+    : ""
+}`,
   );
   await setRedirectUri(origin, true);
   const logFile = join(dir, "dropr.log");

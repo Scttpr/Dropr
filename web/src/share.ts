@@ -81,7 +81,7 @@ async function init(main: HTMLElement): Promise<void> {
   panel.say("");
   nameEl.textContent = file.meta.name;
   if (sizeEl !== null) sizeEl.textContent = formatBytes(file.meta.size);
-  document.title = `${file.meta.name} – Dropr`;
+  document.title = `${file.meta.name} – ${document.documentElement.dataset["brand"] ?? "Dropr"}`;
   button.disabled = false;
 
   let ctl: AbortController | null = null;

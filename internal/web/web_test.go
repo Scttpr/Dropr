@@ -17,7 +17,7 @@ func newRenderer(t *testing.T) *Renderer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := NewRenderer(a, "Sign in with Test", nil)
+	r, err := NewRenderer(a, Options{LoginLabel: "Sign in with Test"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

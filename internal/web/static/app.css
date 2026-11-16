@@ -96,6 +96,19 @@ code, pre { font-family: var(--mono); }
 .brand { display: inline-flex; align-items: center; gap: 0.45rem; font-weight: 700; font-size: 1.125rem; color: var(--text); text-decoration: none; }
 .brand:hover { color: var(--text); }
 .brand-mark { width: 1.4rem; height: 1.4rem; fill: var(--accent); }
+.brand { min-width: 0; }
+.brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Configured logos ([branding]): the dark variant replaces the light one in
+   the dark theme, and in the system theme when the OS is dark. Without a
+   dark variant the light logo shows in every theme. */
+.brand-logo { display: block; flex: none; width: auto; height: 2rem; max-width: 10rem; object-fit: contain; }
+.brand-logo-dark { display: none; }
+:root[data-theme="dark"] .brand-logo-light:has(+ .brand-logo-dark) { display: none; }
+:root[data-theme="dark"] .brand-logo-dark { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] .brand-logo-light:has(+ .brand-logo-dark) { display: none; }
+  :root[data-theme="system"] .brand-logo-dark { display: block; }
+}
 
 .site-nav { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
 .site-tools { display: flex; align-items: center; gap: 0.5rem 0.75rem; margin-inline-start: auto; }
@@ -124,6 +137,7 @@ code, pre { font-family: var(--mono); }
 }
 
 .site-footer { padding: 1.25rem 1rem; text-align: center; color: var(--muted); font-size: 0.875rem; }
+.site-footer .powered { margin: 0; }
 
 /* ---- Building blocks -------------------------------------------------- */
 

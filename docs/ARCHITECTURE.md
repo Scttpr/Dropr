@@ -129,7 +129,7 @@ base64url (22 chars). Anything not listed returns 404.
 | GET | `/links` | session | active share + request links; without a session, 303 to `/login?next=%2Flinks` (`/auth/login?next=%2Flinks` with `auto_login`) |
 | GET | `/s/{id}` | – | share recipient page; dead links render a plain 404/410 page without the script |
 | GET | `/r/{id}` | – | request uploader page; dead, closed or full links render a plain 404/410 page |
-| GET | `/assets/{hash-name}` | – | immutable, long cache |
+| GET | `/assets/{hash-name}` | – | immutable, long cache; brand files at `/assets/brand/{logo,logo-dark,favicon}-{hash}.{svg,png,webp}`. Every SVG asset (brand or built-in favicon) replaces the page CSP with `default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox` |
 | GET | `/sw.js` | – | service worker (registered with scope `/_dl/`), `Cache-Control: no-cache` |
 | GET | `/_dl/{…}` | – | always 404 ("The download could not start"): only the service worker answers there |
 | GET | `/healthz` | – | `200 ok` when the database answers within 2 s, else 503 (load balancers, `dropr healthcheck`) |

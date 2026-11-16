@@ -1,4 +1,4 @@
-{{define "title"}}{{t "Download a file"}} · Dropr{{end}}
+{{define "title"}}{{t "Download a file"}} · {{.Brand.Name}}{{end}}
 {{define "main"}}{{with .View}}
 <main id="main" class="site-main" data-page="share" data-share-id="{{.ID}}" data-expires-at="{{.ExpiresAt}}">
   <section class="card card-narrow card-recipient center" aria-labelledby="file-name">

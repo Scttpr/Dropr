@@ -14,7 +14,7 @@ import (
 
 func render(t *testing.T, req *http.Request, page string, data PageData) *httptest.ResponseRecorder {
 	t.Helper()
-	r, err := NewRenderer(builtAssets(t), "Sign in", nil)
+	r, err := NewRenderer(builtAssets(t), Options{LoginLabel: "Sign in"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestPagesRenderInFrench(t *testing.T) {
 	w := render(t, req, PageDashboard, PageData{User: &store.User{DisplayName: "Alice"}, View: pageCases[PageDashboard].view})
 	body := w.Body.String()
 	for _, want := range []string{
-		`<html lang="fr" data-theme="light">`,
+		`<html lang="fr" data-theme="light" data-brand="Dropr">`,
 		"Partager un fichier",
 		"ou choisissez-en un (jusqu&#39;à 5,00\u00a0Go)",
 		`<option value="1d" selected>1 jour</option>`,
@@ -51,7 +51,7 @@ func TestPagesRenderInFrench(t *testing.T) {
 
 func TestErrorPagesTranslateMsgids(t *testing.T) {
 	t.Parallel()
-	r, err := NewRenderer(builtAssets(t), "Sign in", nil)
+	r, err := NewRenderer(builtAssets(t), Options{LoginLabel: "Sign in"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

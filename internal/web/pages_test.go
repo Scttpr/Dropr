@@ -84,7 +84,7 @@ var pageCases = map[string]struct {
 
 func TestPagesFollowDOMContract(t *testing.T) {
 	t.Parallel()
-	r, err := NewRenderer(builtAssets(t), "Sign in", nil)
+	r, err := NewRenderer(builtAssets(t), Options{LoginLabel: "Sign in"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestPagesWithoutWebBuildLoadNoScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := NewRenderer(a, "Sign in", nil)
+	r, err := NewRenderer(a, Options{LoginLabel: "Sign in"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestPagesWithoutWebBuildLoadNoScript(t *testing.T) {
 
 func TestErrorPagesLoadNoScript(t *testing.T) {
 	t.Parallel()
-	r, err := NewRenderer(builtAssets(t), "Sign in", nil)
+	r, err := NewRenderer(builtAssets(t), Options{LoginLabel: "Sign in"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

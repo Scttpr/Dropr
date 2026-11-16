@@ -1,8 +1,8 @@
-{{define "title"}}{{t .Title}} · Dropr{{end}}
+{{define "title"}}{{t .Title}} · {{.Brand.Name}}{{end}}
 {{define "content"}}
 <section class="card card-narrow center" role="alert">
   <h1>{{t .Title}}</h1>
   <p class="lead">{{t .Message}}</p>
-  <p><a class="button" href="/">{{if .User}}{{t "Back to Dropr"}}{{else}}{{t "Go to the start page"}}{{end}}</a></p>
+  <p><a class="button" href="/">{{if .User}}{{t "Back to %s" .Brand.Name}}{{else}}{{t "Go to the start page"}}{{end}}</a></p>
 </section>
 {{end}}

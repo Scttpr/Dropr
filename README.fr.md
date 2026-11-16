@@ -16,7 +16,8 @@ Deux usages, rien de plus :
 Les fichiers vont jusqu'à 100 Go (plafond par défaut : 5 Go). Les envois
 reprennent après une coupure ; les téléchargements sont écrits au fil de l'eau
 sur le disque. L'interface est en anglais et en français, avec des thèmes
-clair, sombre et système.
+clair, sombre et système, et peut porter le nom et le logo de votre
+organisation.
 
 ## Modèle de sécurité
 

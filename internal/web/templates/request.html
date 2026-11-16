@@ -1,4 +1,4 @@
-{{define "title"}}{{t "Send a file"}} · Dropr{{end}}
+{{define "title"}}{{t "Send a file"}} · {{.Brand.Name}}{{end}}
 {{define "main"}}{{with .View}}
 <main id="main" class="site-main" data-page="request" data-request-id="{{.ID}}" data-max-files="{{.MaxFiles}}" data-max-bytes="{{.MaxBytes}}">
   <section class="card card-narrow card-recipient" aria-labelledby="request-title">
