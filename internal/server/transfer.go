@@ -322,20 +322,20 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	}
 	// Under the blob's lock, so no part write can land between the check and
 	// the state change (audit L-3).
+	var closed bool
 	err := s.blobs.Locked(r.Context(), u.ID, func(ctx context.Context) error {
 		if err := s.blobs.Verify(u.ID, g); err != nil {
 			return err
 		}
-		return s.store.CompleteUpload(ctx, u, s.now())
+		var err error
+		closed, err = s.store.CompleteUpload(ctx, u, s.now())
+		return err
 	})
 	switch {
 	case err == nil:
 		// Only the call that completed the upload logs it: a repeated
 		// finalize (ErrComplete) is idempotent and silent.
-		if u.ShareID != "" {
-			s.log.InfoContext(r.Context(), "share completed", audit.Event(audit.ShareReady),
-				"link", s.refs.Link(u.ShareID), "size", u.Size)
-		}
+		s.logCompleted(r.Context(), u, closed)
 		httpx.WriteJSON(w, http.StatusOK, ok)
 	case errors.Is(err, store.ErrComplete):
 		httpx.WriteJSON(w, http.StatusOK, ok)
@@ -399,6 +399,24 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	sent := blob.Serve(w, r, rd, s.minRate())
 	if err := s.store.RefundDownloadToken(context.WithoutCancel(ctx), hash, t.Reserved-sent); err != nil {
 		s.log.ErrorContext(ctx, "refund download token", "err", err)
+	}
+}
+
+// logCompleted records a finalized upload: a share ready to download, or a
+// file received through a request link (and the link closing when it was
+// single use).
+func (s *Server) logCompleted(ctx context.Context, u *store.Upload, closed bool) {
+	switch {
+	case u.ShareID != "":
+		s.log.InfoContext(ctx, "share completed", audit.Event(audit.ShareReady),
+			"link", s.refs.Link(u.ShareID), "size", u.Size)
+	case u.RequestID != "":
+		link := s.refs.Link(u.RequestID)
+		s.log.InfoContext(ctx, "request file received", audit.Event(audit.RequestReceived),
+			"link", link, "file", s.refs.File(u.InboxID), "size", u.Size, "ip", s.hasher.Short(httpx.ClientIP(ctx)))
+		if closed {
+			s.log.InfoContext(ctx, "request link closed", audit.Event(audit.RequestClosed), "link", link, "reason", "single_use")
+		}
 	}
 }
 

@@ -145,3 +145,81 @@ func TestShareEvents(t *testing.T) {
 	assertAbsent(t, logs, map[string]string{"share ID": u.ShareID, "upload ID": u.UploadID, "upload token": u.UploadToken,
 		"download token 1": tok1, "download token 2": tok2, "client address": "127.0.0.1"})
 }
+
+// The request lifecycle: uploads started and files received carry the
+// link's reference and the file's; a single-use link logs its closing once.
+func TestRequestEvents(t *testing.T) {
+	t.Parallel()
+	e, logs := newLoggedEnv(t, testOpts{})
+	o := e.newOwner()
+	reqID := o.createRequest(map[string]any{"max_files": 2, "max_bytes": 2 * smallSize, "single_use": true})
+	_, u1 := e.createRequestFile(reqID, smallSize)
+	_, u2 := e.createRequestFile(reqID, smallSize)
+	if u1.UploadID == "" || u2.UploadID == "" {
+		t.Fatal("request files not created")
+	}
+	e.uploadAll(u1, randBytes(int(smallSize)))
+	e.uploadAll(u2, randBytes(int(smallSize)))
+	if resp, b := e.finalize(u1, 1); resp.StatusCode != http.StatusOK { // repeated: silent
+		t.Fatalf("finalize again: %d %s", resp.StatusCode, b)
+	}
+	resp, b := e.api(http.MethodGet, "/api/inbox", nil, nil)
+	var inbox struct {
+		Files []struct {
+			ID string `json:"id"`
+		} `json:"inbox"`
+	}
+	mustJSON(t, b, &inbox)
+	if resp.StatusCode != http.StatusOK || len(inbox.Files) != 2 {
+		t.Fatalf("inbox: %d %s", resp.StatusCode, b)
+	}
+	first := inbox.Files[0].ID
+	resp, b = e.api(http.MethodPost, "/api/inbox/"+first+"/download", map[string]any{}, nil)
+	var g downloadGrant
+	mustJSON(t, b, &g)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("inbox token: %d %s", resp.StatusCode, b)
+	}
+	if resp, _ := e.download(e.client, g.Token, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("inbox download: %d", resp.StatusCode)
+	}
+	if resp, b := e.api(http.MethodDelete, "/api/inbox/"+first, nil, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", resp.StatusCode, b)
+	}
+	if resp, b := e.api(http.MethodDelete, "/api/requests/"+reqID, nil, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke: %d %s", resp.StatusCode, b)
+	}
+
+	evs := logs.events(t)
+	want := []string{"auth.login", "request.created", "request.upload_started", "request.upload_started",
+		"request.file_received", "request.closed", "request.file_received", "inbox.download_requested",
+		"inbox.deleted", "request.revoked"}
+	if got := eventNames(evs); !slices.Equal(got, want) {
+		t.Fatalf("events:\n got %v\nwant %v", got, want)
+	}
+	link := e.s.refs.Link(reqID)
+	for _, ev := range evs[1:] {
+		if ev["event"] != "inbox.deleted" && ev["link"] != link {
+			t.Errorf("%s: link %v, want %s", ev["event"], ev["link"], link)
+		}
+	}
+	if c := evs[1]; c["max_files"] != 2.0 || c["single_use"] != true || c["max_bytes"] == nil || c["expires_at"] == nil {
+		t.Errorf("request.created: %v", c)
+	}
+	for _, i := range []int{2, 3, 4, 6} {
+		if evs[i]["size"] != float64(smallSize) || evs[i]["ip"] == nil {
+			t.Errorf("%s: %v", evs[i]["event"], evs[i])
+		}
+	}
+	if evs[5]["reason"] != "single_use" {
+		t.Errorf("request.closed: %v", evs[5])
+	}
+	files := map[any]bool{evs[4]["file"]: true, evs[6]["file"]: true}
+	ref := e.s.refs.File(first)
+	if len(files) != 2 || !files[ref] || evs[7]["file"] != ref || evs[8]["file"] != ref {
+		t.Errorf("file references: %v %v %v %v (want %s)", evs[4]["file"], evs[6]["file"], evs[7]["file"], evs[8]["file"], ref)
+	}
+	assertAbsent(t, logs, map[string]string{"request ID": reqID, "inbox file ID": first, "inbox file ID 2": inbox.Files[1].ID,
+		"upload ID 1": u1.UploadID, "upload ID 2": u2.UploadID, "upload token 1": u1.UploadToken, "upload token 2": u2.UploadToken,
+		"download token": g.Token, "client address": "127.0.0.1"})
+}

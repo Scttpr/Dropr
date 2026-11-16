@@ -93,7 +93,7 @@ func TestFinalizeDeletedUpload(t *testing.T) {
 	if resp, b := e.api(http.MethodDelete, "/api/shares/"+u.ShareID, nil, nil); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("revoke: %d %s", resp.StatusCode, b)
 	}
-	if err := e.s.store.CompleteUpload(t.Context(), up, time.Now()); !errors.Is(err, store.ErrNotFound) {
+	if _, err := e.s.store.CompleteUpload(t.Context(), up, time.Now()); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("complete a deleted upload: %v", err)
 	}
 	if resp, _ := e.finalize(u, 1); resp.StatusCode != http.StatusNotFound {
@@ -103,7 +103,7 @@ func TestFinalizeDeletedUpload(t *testing.T) {
 	v := e.createShare(e.client, smallSize, nil)
 	e.uploadAll(v, randBytes(int(smallSize)))
 	up, _ = e.s.store.UploadByID(t.Context(), v.UploadID)
-	if err := e.s.store.CompleteUpload(t.Context(), up, time.Now()); !errors.Is(err, store.ErrComplete) {
+	if _, err := e.s.store.CompleteUpload(t.Context(), up, time.Now()); !errors.Is(err, store.ErrComplete) {
 		t.Errorf("complete twice: %v", err)
 	}
 }

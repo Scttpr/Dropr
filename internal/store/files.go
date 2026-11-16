@@ -467,6 +467,7 @@ type Upload struct {
 	Blob
 	ShareID   string // set for share uploads
 	RequestID string // set for request uploads
+	InboxID   string // the inbox entry of a request upload
 	SingleUse bool
 	ExpiresAt time.Time // of the link
 	// OwnerActive is false once the owner is disabled or lost access; share
@@ -481,22 +482,24 @@ func (s *Store) UploadByID(ctx context.Context, id string) (*Upload, error) {
 		u                  Upload
 		created            int64
 		shareID, requestID sql.NullString
+		inboxID            sql.NullString
 		shareExp, reqExp   sql.NullInt64
 		singleUse          sql.NullBool
 	)
 	err := s.db.R.QueryRowContext(ctx, `SELECT b.id, b.owner_id, b.parts, b.size, b.complete, b.upload_token_hash, b.created_at,
-			s.id, s.expires_at, i.request_id, r.expires_at, r.single_use,
+			s.id, s.expires_at, i.id, i.request_id, r.expires_at, r.single_use,
 			(SELECT `+ownerActive+` FROM users u WHERE u.id = b.owner_id)
 		FROM blobs b
 		LEFT JOIN shares s ON s.blob_id = b.id
 		LEFT JOIN inbox i ON i.blob_id = b.id
 		LEFT JOIN requests r ON r.id = i.request_id
 		WHERE b.id = ?`, id).Scan(&u.ID, &u.OwnerID, &u.Parts, &u.Size, &u.Complete, &u.UploadTokenHash, &created,
-		&shareID, &shareExp, &requestID, &reqExp, &singleUse, &u.OwnerActive)
+		&shareID, &shareExp, &inboxID, &requestID, &reqExp, &singleUse, &u.OwnerActive)
 	if err != nil {
 		return nil, notFound(err)
 	}
 	u.CreatedAt = fromUnix(created)
+	u.InboxID = inboxID.String
 	switch {
 	case shareID.Valid:
 		u.ShareID = shareID.String
@@ -523,9 +526,11 @@ func (u *Upload) CheckToken(hash []byte) bool {
 // writes. A single-use request link closes on its first completed file. It
 // returns ErrComplete if the blob was already complete, ErrNotFound if its
 // row is gone, and ErrExpired for a share upload whose link expired or whose
-// owner lost access meanwhile (audit 2026-11b L-2).
-func (s *Store) CompleteUpload(ctx context.Context, u *Upload, now time.Time) error {
-	return s.db.Tx(ctx, func(tx *sql.Tx) error {
+// owner lost access meanwhile (audit 2026-11b L-2). closed reports that this
+// call closed a single-use request link.
+func (s *Store) CompleteUpload(ctx context.Context, u *Upload, now time.Time) (closed bool, err error) {
+	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+		closed = false // reset if the transaction is retried
 		if u.ShareID != "" {
 			var live bool
 			err := tx.QueryRowContext(ctx, `SELECT s.expires_at > ? AND `+ownerActive+`
@@ -559,10 +564,16 @@ func (s *Store) CompleteUpload(ctx context.Context, u *Upload, now time.Time) er
 			return err
 		}
 		if u.SingleUse {
-			_, err = tx.ExecContext(ctx, `UPDATE requests SET closed_at = ? WHERE id = ? AND closed_at IS NULL`, unix(now), u.RequestID)
+			res, err := tx.ExecContext(ctx, `UPDATE requests SET closed_at = ? WHERE id = ? AND closed_at IS NULL`, unix(now), u.RequestID)
+			if err != nil {
+				return err
+			}
+			n, _ := res.RowsAffected()
+			closed = n == 1
 		}
-		return err
+		return nil
 	})
+	return closed && err == nil, err
 }
 
 const inboxCols = `i.id, i.request_id, i.owner_id, i.blob_id, i.size, b.parts, i.meta, i.wrapped_key, i.created_at`
