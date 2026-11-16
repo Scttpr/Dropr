@@ -452,6 +452,10 @@ Additional keys (all optional; unknown keys are rejected):
 | `limits.min_transfer_rate` | `"4KB"` | per second, averaged over 60 s; slower transfers are cut; `"0"` disables |
 | `limits.auth_rate_per_minute` | `30` | sign-in requests per minute and client address (`/auth/login`, `/auth/callback`, `/auth/frontchannel-logout`), 1–10000 |
 | `limits.auth_burst` | `10` | burst of the same limit, 1–10000; raise both when many workstations share one address |
+| `branding.name` | `"Dropr"` | instance name shown in titles, the header and page texts; 1–40 visible characters after the display-name cleaner (controls, bidi and invisible characters removed) |
+| `branding.logo_file` | – | header logo, `.svg`, `.png` or `.webp`, ≤ 256 KiB, read at startup (content must match the extension; an SVG that can run script is refused) |
+| `branding.logo_dark_file` | – | logo for the dark theme (needs `logo_file`) |
+| `branding.favicon_file` | – | favicon, same formats |
 | `trust_unix_socket_proxy` | `false` | proxy mode on a `unix:` socket: trust the peer's X-Forwarded-For without `trusted_proxies` |
 
 Proxy mode (audit L-1): with a TCP listener, `trusted_proxies` must list the

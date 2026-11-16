@@ -23,6 +23,12 @@ default_expiry = "7d"              # 1h, 1d, 7d or 30d
 # auth_rate_per_minute = 30        # sign-ins per client address; raise behind a shared NAT address
 # auth_burst = 10
 
+# [branding]                       # instance name and logos, read at startup (docs/deploy.md)
+# name           = "Dropr"         # 1-40 characters
+# logo_file      = "/etc/dropr/branding/logo.svg"        # .svg, .png or .webp, at most 256 KiB
+# logo_dark_file = "/etc/dropr/branding/logo-dark.svg"   # dark theme (optional)
+# favicon_file   = "/etc/dropr/branding/favicon.svg"
+
 [oidc]
 issuer          = "https://login.microsoftonline.com/<tenant-id>/v2.0"
 client_id       = "<application-id>"
