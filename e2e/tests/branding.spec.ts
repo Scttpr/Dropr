@@ -12,7 +12,15 @@ import { BRAND_NAME, anonymousPage, expect, test } from "../m6.ts";
 
 test.use({ droprConfig: { branding: true } });
 
+/** Waits until no CSS transition or animation runs (theme switch, popover). */
+async function settled(page: Page): Promise<void> {
+  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined))));
+}
+
 async function axe(page: Page, label: string): Promise<void> {
+  // axe measures colors as rendered: a running transition gives false
+  // contrast failures.
+  await settled(page);
   const res = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"]).analyze();
   const bad = res.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
   expect(
@@ -43,6 +51,7 @@ test("anonymous pages show the configured name and logos", async ({ browser, bro
   await expect(light).toBeHidden();
   await expect(dark).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(page.locator("#prefs")).toBeHidden();
   await axe(page, `branded login, dark [${browserName}]`);
 
   // Narrow screens keep the header usable.
