@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/scttpr/dropr/internal/audit"
 	"github.com/scttpr/dropr/internal/auth/session"
 	"github.com/scttpr/dropr/internal/i18n"
 	"github.com/scttpr/dropr/internal/ids"
@@ -196,7 +197,7 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	id, err := p.verifyIDToken(ctx, tr.IDToken, st.Nonce, verifyLogin)
 	switch {
 	case errors.Is(err, ErrRoleMissing), errors.Is(err, ErrClaimMismatch):
-		p.log.InfoContext(ctx, "login refused: not authorized", "reason", err.Error())
+		p.log.InfoContext(ctx, "login refused: not authorized", audit.Event(audit.UserDenied), "reason", denialReason(err))
 		if id != nil {
 			// An existing account that lost the role: its request links stop
 			// accepting uploads (audit I-3) and its share links expire (audit
@@ -224,7 +225,7 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u.DisabledAt != nil {
-		p.log.InfoContext(ctx, "login refused: account disabled", "user", u.ID)
+		p.log.InfoContext(ctx, "login refused: account disabled", audit.Event(audit.UserDenied), "reason", "disabled", "user", u.ID)
 		p.pages.Forbidden(w, r)
 		return
 	}
@@ -249,7 +250,7 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 				"configure the provider to include sid in ID tokens")
 		})
 	}
-	p.log.InfoContext(ctx, "login", "user", u.ID, "new_account", created)
+	p.log.InfoContext(ctx, "login", audit.Event(audit.UserLogin), "user", u.ID, "new_account", created)
 	p.pages.CallbackLanding(w, r, st.Next)
 }
 
@@ -273,7 +274,7 @@ func (p *Provider) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		p.log.ErrorContext(ctx, "logout: destroy session", "err", err)
 	}
 	if s != nil {
-		p.log.InfoContext(ctx, "logout", "user", s.UserID())
+		p.log.InfoContext(ctx, "logout", audit.Event(audit.UserLogout), "user", s.UserID())
 	}
 	target := "/login"
 	if p.meta.EndSessionEndpoint != "" {
@@ -315,6 +316,14 @@ func (p *Provider) HandleFrontchannelLogout(w http.ResponseWriter, r *http.Reque
 	p.log.InfoContext(ctx, "front-channel logout", "sessions", n)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
+}
+
+// denialReason is the reason attribute of an auth.denied line.
+func denialReason(err error) string {
+	if errors.Is(err, ErrClaimMismatch) {
+		return "claim_mismatch"
+	}
+	return "role_missing"
 }
 
 func (p *Provider) fail(w http.ResponseWriter, r *http.Request, status int, msg string, err error) {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/scttpr/dropr/internal/audit"
 	"github.com/scttpr/dropr/internal/auth/session"
 )
 
@@ -116,7 +117,8 @@ func (p *Provider) RevalidateMiddleware(next http.Handler) http.Handler {
 		ns, err := p.Revalidate(r.Context(), s)
 		if err != nil || ns == nil {
 			if err != nil && !errors.Is(err, session.ErrNoSession) {
-				p.log.InfoContext(r.Context(), "revalidation failed; session ended", "user", s.UserID(), "reason", err.Error())
+				p.log.InfoContext(r.Context(), "revalidation failed; session ended", audit.Event(audit.SessionEnded),
+					"user", s.UserID(), "reason", err.Error())
 			}
 			session.ClearCookie(w)
 			r = r.WithContext(session.NewContext(r.Context(), nil))
