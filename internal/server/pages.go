@@ -24,14 +24,24 @@ var (
 )
 
 // ownerPage loads the session of an owner-only page. Without a session it
-// redirects to /login, which returns to this page after sign-in, and then
-// returns nil.
-func ownerPage(w http.ResponseWriter, r *http.Request) *session.Session {
+// sends the browser to sign in (signIn) and returns nil.
+func (s *Server) ownerPage(w http.ResponseWriter, r *http.Request) *session.Session {
 	sess := session.FromContext(r.Context())
 	if sess == nil {
-		redirect(w, r, loginURL("/login", r.URL.Path))
+		s.signIn(w, r)
 	}
 	return sess
+}
+
+// signIn redirects a visitor without a session to the sign-in page, or with
+// auto_login straight to the identity provider; either way the sign-in
+// returns to the page requested.
+func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
+	base := "/login"
+	if s.cfg.AutoLogin {
+		base = "/auth/login"
+	}
+	redirect(w, r, loginURL(base, r.URL.Path))
 }
 
 // loginURL is base (/login or /auth/login) with the next parameter that
@@ -56,11 +66,16 @@ func (s *Server) serverError(w http.ResponseWriter, r *http.Request, what string
 		i18n.N("The server had a problem. Please try again in a moment."), nil)
 }
 
-// handleHome serves the login page to visitors and the dashboard to users.
+// handleHome serves the dashboard to users, and to visitors the login page
+// (or, with auto_login, a redirect to the identity provider).
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sess := session.FromContext(ctx)
 	if sess == nil {
+		if s.cfg.AutoLogin {
+			s.signIn(w, r)
+			return
+		}
 		s.pages.Render(w, r, http.StatusOK, web.PageLogin, web.PageData{})
 		return
 	}
@@ -84,7 +99,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
-	sess := ownerPage(w, r)
+	sess := s.ownerPage(w, r)
 	if sess == nil {
 		return
 	}
@@ -98,7 +113,7 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
-	sess := ownerPage(w, r)
+	sess := s.ownerPage(w, r)
 	if sess == nil {
 		return
 	}

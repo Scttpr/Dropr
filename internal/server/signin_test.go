@@ -54,3 +54,42 @@ func TestOwnerPageReturnsAfterSignIn(t *testing.T) {
 	resp, _ = e.do(http.MethodGet, "/login?next=%2F%2Fevil.example", nil)
 	wantRedirect(t, "signed-in /login, foreign next", resp, "/")
 }
+
+// With auto_login, owner pages go straight to the identity provider, but
+// /login (where logout lands) and the link pages never do.
+func TestAutoLogin(t *testing.T) {
+	t.Parallel()
+	e := newTestEnvWith(t, testOpts{extraConfig: "auto_login = true"})
+	e.noRedirects()
+	for p, loc := range map[string]string{
+		"/":      "/auth/login",
+		"/inbox": "/auth/login?next=%2Finbox",
+		"/links": "/auth/login?next=%2Flinks",
+	} {
+		resp, _ := e.do(http.MethodGet, p, nil)
+		wantRedirect(t, p, resp, loc)
+	}
+	resp, body := e.do(http.MethodGet, "/login", nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `href="/auth/login"`) {
+		t.Fatalf("/login: %d %s", resp.StatusCode, body)
+	}
+	for _, p := range []string{"/s/AAAAAAAAAAAAAAAAAAAAAA", "/r/AAAAAAAAAAAAAAAAAAAAAA"} {
+		if resp, _ := e.do(http.MethodGet, p, nil); resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s: %d", p, resp.StatusCode)
+		}
+	}
+	if resp, _ := e.do(http.MethodGet, "/healthz", nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("/healthz: %d", resp.StatusCode)
+	}
+
+	// Following the redirects from an owner page ends on that page.
+	e.client.CheckRedirect = nil
+	resp, body = e.do(http.MethodGet, "/inbox", nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `http-equiv="refresh" content="0;url=/inbox"`) {
+		t.Fatalf("auto sign-in: %d %s", resp.StatusCode, body)
+	}
+	resp, body = e.do(http.MethodGet, "/inbox", nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `data-page="inbox"`) {
+		t.Fatalf("inbox after sign-in: %d %s", resp.StatusCode, body)
+	}
+}

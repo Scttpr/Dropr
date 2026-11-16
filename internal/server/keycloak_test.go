@@ -38,7 +38,9 @@ const (
 	dropOrig = "http://localhost:8080"
 )
 
-func keycloakConfig(t *testing.T, pkjwt bool) *config.Config {
+// keycloakConfig builds the dev configuration; extra lines go at the top
+// level (e.g. "auto_login = true").
+func keycloakConfig(t *testing.T, pkjwt bool, extra ...string) *config.Config {
 	t.Helper()
 	dir := t.TempDir()
 	key := make([]byte, 32)
@@ -62,6 +64,7 @@ tls = "proxy"
 public_url = "` + dropOrig + `"
 data_dir = "` + dir + `"
 refresh_key_file = "` + refresh + `"
+` + strings.Join(extra, "\n") + `
 [oidc]
 issuer = "` + kcIssuer + `"
 ` + clientAuth + `
@@ -81,12 +84,12 @@ type kcEnv struct {
 	client *http.Client
 }
 
-func startDropr(t *testing.T, pkjwt bool) *kcEnv {
+func startDropr(t *testing.T, pkjwt bool, extra ...string) *kcEnv {
 	t.Helper()
 	if _, err := http.Get(kcIssuer + "/.well-known/openid-configuration"); err != nil { //nolint:noctx // test probe
 		t.Skipf("Keycloak not reachable at %s (run `make keycloak-up`): %v", kcBase, err)
 	}
-	cfg := keycloakConfig(t, pkjwt)
+	cfg := keycloakConfig(t, pkjwt, extra...)
 	st := storetest.New(t)
 	s, err := New(t.Context(), Deps{Config: cfg, Store: st, Logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))})
 	if err != nil {
@@ -108,7 +111,13 @@ var formAction = regexp.MustCompile(`<form[^>]+id="kc-form-login"[^>]*action="([
 // login drives the browser flow through Keycloak's login form.
 func (e *kcEnv) login(user, password string) (int, string) {
 	e.t.Helper()
-	resp, err := e.client.Get(dropOrig + "/auth/login") //nolint:noctx // test
+	return e.loginFrom("/auth/login", user, password)
+}
+
+// loginFrom is login starting from any Dropr path that leads to Keycloak.
+func (e *kcEnv) loginFrom(path, user, password string) (int, string) {
+	e.t.Helper()
+	resp, err := e.client.Get(dropOrig + path) //nolint:noctx // test
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -236,6 +245,44 @@ func TestKeycloakLoginRevalidateLogout(t *testing.T) {
 			}
 		})
 	}
+}
+
+// With auto_login, opening an owner page leads through Keycloak's form and
+// back to that page; /login still shows its button.
+func TestKeycloakAutoLogin(t *testing.T) {
+	e := startDropr(t, false, "auto_login = true")
+	code, body := e.loginFrom("/inbox", "alice", "alice-dev-password")
+	if code != http.StatusOK || !strings.Contains(body, `content="0;url=/inbox"`) {
+		t.Fatalf("auto sign-in: %d %s", code, body)
+	}
+	resp, err := e.client.Get(dropOrig + "/inbox") //nolint:noctx // test
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(b), `data-page="inbox"`) {
+		t.Fatalf("inbox: %d %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(e.home(), `data-page="dashboard"`) {
+		t.Fatal("no dashboard after auto sign-in")
+	}
+
+	anon := anonClient()
+	resp, err = anon.Get(dropOrig + "/login") //nolint:noctx // test
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.Request.URL.Path != "/login" || !strings.Contains(string(b), `href="/auth/login"`) {
+		t.Fatalf("/login redirected with auto_login: %s", resp.Request.URL)
+	}
+}
+
+func anonClient() *http.Client {
+	jar, _ := cookiejar.New(nil)
+	return &http.Client{Jar: jar, Timeout: 20 * time.Second}
 }
 
 func TestKeycloakRoleMissingAndBadPassword(t *testing.T) {

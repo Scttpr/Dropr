@@ -93,6 +93,24 @@ cat key.pem cert.pem > oidc_key.pem    # oidc.client_key_file
 
 Upload `cert.pem` to the provider. Keep `oidc_key.pem` on the Dropr host only.
 
+## Automatic sign-in
+
+`auto_login = true` (top level, default `false`) skips the sign-in page: a
+visitor without a session who opens `/`, `/inbox` or `/links` is sent
+straight to the provider, and lands back on the page they asked for. With
+Entra ID and single sign-on on managed workstations, opening Dropr then signs
+the user in without a click.
+
+* `/login` keeps its button and never redirects by itself. It is the
+  post-logout redirect URI: without this exception, signing out would sign the
+  user straight back in through single sign-on.
+* Link pages (`/s/…`, `/r/…`) never ask for an account, with or without
+  `auto_login`. Sign-in errors and the "no access" page still show a page.
+* Every page load without a session now goes through `/auth/login`, which is
+  rate-limited per client address (30 per minute, burst 10). When many
+  workstations reach Dropr through one shared address (NAT, outbound proxy),
+  the morning rush can hit that limit and get a 429.
+
 ## Microsoft Entra ID
 
 1. **App registration**: single tenant ("Accounts in this organizational
