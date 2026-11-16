@@ -117,3 +117,33 @@ func TestAuthRateLimitConfigurable(t *testing.T) {
 		t.Errorf("burst 30: limited after %d requests", n)
 	}
 }
+
+// session_cookie = "browser" issues the session cookie without a lifetime.
+func TestBrowserSessionCookieConfig(t *testing.T) {
+	t.Parallel()
+	for mode, wantLifetime := range map[string]bool{"": true, `session_cookie = "persistent"`: true, `session_cookie = "browser"`: false} {
+		e := newTestEnvWith(t, testOpts{extraConfig: mode})
+		e.noRedirects()
+		resp, _ := e.do(http.MethodGet, "/auth/login", nil)
+		authz := resp.Header.Get("Location")
+		resp, err := e.client.Get(authz) //nolint:noctx // test
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		cb := resp.Header.Get("Location")
+		resp, _ = e.do(http.MethodGet, strings.TrimPrefix(cb, e.origin), nil)
+		var cookie string
+		for _, raw := range resp.Header.Values("Set-Cookie") {
+			if strings.HasPrefix(raw, "__Host-dropr_session=") {
+				cookie = raw
+			}
+		}
+		if cookie == "" {
+			t.Fatalf("%q: no session cookie (%d)", mode, resp.StatusCode)
+		}
+		if has := strings.Contains(cookie, "Max-Age="); has != wantLifetime {
+			t.Errorf("%q: %s", mode, cookie)
+		}
+	}
+}

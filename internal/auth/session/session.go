@@ -42,6 +42,10 @@ type Config struct {
 	AbsoluteTimeout time.Duration
 	// TouchEvery throttles last_seen_at writes.
 	TouchEvery time.Duration
+	// BrowserCookie issues the cookie without Max-Age, so the browser drops
+	// it when it closes (session_cookie = "browser"). The server-side
+	// timeouts apply either way.
+	BrowserCookie bool
 	// Now overrides the clock in tests.
 	Now func() time.Time
 }
@@ -266,12 +270,16 @@ func (m *Manager) Cleanup(ctx context.Context) (int64, error) {
 }
 
 func (m *Manager) setCookie(w http.ResponseWriter, id string, rec *store.Session) {
-	maxAge := int(rec.CreatedAt.Add(m.cfg.AbsoluteTimeout).Sub(m.now()).Seconds())
+	// MaxAge 0 omits the attribute: a browser-session cookie.
+	maxAge := 0
+	if !m.cfg.BrowserCookie {
+		maxAge = max(int(rec.CreatedAt.Add(m.cfg.AbsoluteTimeout).Sub(m.now()).Seconds()), 1)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    id,
 		Path:     "/",
-		MaxAge:   max(maxAge, 1),
+		MaxAge:   maxAge,
 		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,

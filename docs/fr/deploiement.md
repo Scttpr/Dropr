@@ -119,6 +119,15 @@ auth_rate_per_minute = 300
 auth_burst           = 100
 ```
 
+**Déconnexion à la fermeture du navigateur.** Par défaut, le cookie de session
+dure jusqu'à la limite de 8 heures, même après un redémarrage du navigateur.
+Sur des postes partagés, mettez `session_cookie = "browser"` : fermer toutes
+les fenêtres du navigateur met alors fin à la session (les limites de
+30 minutes d'inactivité et de 8 heures s'appliquent toujours). Chrome et Edge
+conservent les cookies de session quand ils restaurent la session précédente
+(« Continuer là où vous en étiez ») ; désactivez-la par stratégie de groupe
+(`RestoreOnStartup` à une valeur autre que 1) pour que cela fonctionne.
+
 **Nom et logo.** L'interface peut porter le nom et le logo de l'organisation à
 la place de ceux de Dropr. Le pied de page mentionne alors Dropr en une ligne.
 

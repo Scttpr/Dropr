@@ -36,6 +36,12 @@ const (
 	TLSProxy = "proxy"
 )
 
+// Session cookie lifetimes (session_cookie).
+const (
+	SessionCookiePersistent = "persistent"
+	SessionCookieBrowser    = "browser"
+)
+
 // Client authentication methods at the token endpoint.
 const (
 	ClientAuthPrivateKeyJWT = "private_key_jwt"
@@ -70,8 +76,11 @@ type Config struct {
 	LoginLabel           string `toml:"login_label"`
 	// AutoLogin sends visitors of owner pages straight to the identity
 	// provider instead of showing the sign-in page (/login still shows it).
-	AutoLogin bool   `toml:"auto_login"`
-	LogLevel  string `toml:"log_level"`
+	AutoLogin bool `toml:"auto_login"`
+	// SessionCookie is "persistent" (the cookie lasts until the session's
+	// absolute timeout) or "browser" (dropped when the browser closes).
+	SessionCookie string `toml:"session_cookie"`
+	LogLevel      string `toml:"log_level"`
 
 	Limits   Limits   `toml:"limits"`
 	OIDC     OIDC     `toml:"oidc"`
@@ -209,6 +218,7 @@ func (c *Config) applyDefaults() {
 	def(&c.RedirectListen, ":8080")
 	def(&c.LoginLabel, "Sign in")
 	def(&c.Branding.Name, DefaultBrandName)
+	def(&c.SessionCookie, SessionCookiePersistent)
 	def(&c.LogLevel, "info")
 	def(&c.Limits.MaxFileSize, "5GB")
 	def(&c.Limits.UserQuota, "50GB")
@@ -325,6 +335,11 @@ func (c *Config) validate() error {
 	}
 	if strings.TrimSpace(c.LoginLabel) == "" || len(c.LoginLabel) > 64 {
 		fail("login_label must be 1-64 characters")
+	}
+	switch c.SessionCookie {
+	case SessionCookiePersistent, SessionCookieBrowser:
+	default:
+		fail("session_cookie must be %q or %q", SessionCookiePersistent, SessionCookieBrowser)
 	}
 
 	c.validateLimits(fail)
