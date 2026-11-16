@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/scttpr/dropr/internal/audit"
 	"github.com/scttpr/dropr/internal/auth/session"
 	"github.com/scttpr/dropr/internal/blob"
 	"github.com/scttpr/dropr/internal/httpx"
@@ -328,7 +329,15 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		return s.store.CompleteUpload(ctx, u, s.now())
 	})
 	switch {
-	case err == nil, errors.Is(err, store.ErrComplete):
+	case err == nil:
+		// Only the call that completed the upload logs it: a repeated
+		// finalize (ErrComplete) is idempotent and silent.
+		if u.ShareID != "" {
+			s.log.InfoContext(r.Context(), "share completed", audit.Event(audit.ShareReady),
+				"link", s.refs.Link(u.ShareID), "size", u.Size)
+		}
+		httpx.WriteJSON(w, http.StatusOK, ok)
+	case errors.Is(err, store.ErrComplete):
 		httpx.WriteJSON(w, http.StatusOK, ok)
 	case errors.Is(err, blob.ErrIncomplete):
 		httpx.WriteError(w, errIncomplete)
@@ -378,6 +387,9 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "download token", err)
 		return
 	}
+	if t.Counted {
+		s.logCountedDownload(ctx, t)
+	}
 	rd, err := s.blobs.Open(t.BlobID, blob.Geometry{Size: t.Size, Parts: t.Parts})
 	if err != nil {
 		s.apiError(w, r, "open blob", err)
@@ -387,6 +399,22 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	sent := blob.Serve(w, r, rd, s.minRate())
 	if err := s.store.RefundDownloadToken(context.WithoutCancel(ctx), hash, t.Reserved-sent); err != nil {
 		s.log.ErrorContext(ctx, "refund download token", "err", err)
+	}
+}
+
+// logCountedDownload records the start of a counted share download (the
+// first byte-serving GET of a token; resumes, HEAD and 416 answers count
+// nothing), and the link reaching its cap.
+func (s *Server) logCountedDownload(ctx context.Context, t *store.DownloadTarget) {
+	link := s.refs.Link(t.ShareID)
+	attrs := []any{audit.Event(audit.ShareDownloaded), "link", link, "count", t.Count,
+		"ip", s.hasher.Short(httpx.ClientIP(ctx))}
+	if t.MaxDownloads != nil {
+		attrs = append(attrs, "max_downloads", *t.MaxDownloads)
+	}
+	s.log.InfoContext(ctx, "share download counted", attrs...)
+	if t.MaxDownloads != nil && t.Count >= *t.MaxDownloads {
+		s.log.InfoContext(ctx, "share download limit reached", audit.Event(audit.ShareExhausted), "link", link)
 	}
 }
 

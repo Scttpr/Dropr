@@ -45,6 +45,7 @@ type testOpts struct {
 	extraConfig string // TOML appended before [oidc], e.g. a [limits] table
 	diskUsage   blob.DiskUsage
 	now         func() time.Time
+	logger      *slog.Logger // default: discard
 }
 
 func newTestEnvWith(t *testing.T, o testOpts) *testEnv {
@@ -88,7 +89,10 @@ scopes = ["openid", "profile"]
 		t.Fatal(err)
 	}
 	op.AllowRedirect(cfg.OIDC.RedirectURL)
-	s, err := New(t.Context(), Deps{Config: cfg, Store: storetest.New(t), Logger: slog.New(slog.DiscardHandler),
+	if o.logger == nil {
+		o.logger = slog.New(slog.DiscardHandler)
+	}
+	s, err := New(t.Context(), Deps{Config: cfg, Store: storetest.New(t), Logger: o.logger,
 		DiskUsage: o.diskUsage, Now: o.now})
 	if err != nil {
 		t.Fatal(err)

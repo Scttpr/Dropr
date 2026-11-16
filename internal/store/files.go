@@ -706,6 +706,11 @@ type DownloadTarget struct {
 	ShareID string // empty for inbox downloads
 	// Reserved is the byte count this use reserved against the token's budget.
 	Reserved int64
+	// Counted reports that this use counted a share download; Count is the
+	// share's download count after it, MaxDownloads its cap (nil: none).
+	Counted      bool
+	Count        int64
+	MaxDownloads *int64
 }
 
 // TokenByteBudget is how many ciphertext bytes one download token may serve
@@ -773,13 +778,18 @@ func (s *Store) UseDownloadToken(ctx context.Context, tokenHash []byte, viewer s
 			}
 			limit = min(limit, shareExp.Int64)
 			if count && !counted && (plan == nil || t.Reserved > 0) {
-				res, err := tx.ExecContext(ctx, `UPDATE shares SET download_count = download_count + 1
-					WHERE id = ? AND (max_downloads IS NULL OR download_count < max_downloads)`, t.ShareID)
-				if err != nil {
+				var capDL sql.NullInt64
+				err := tx.QueryRowContext(ctx, `UPDATE shares SET download_count = download_count + 1
+					WHERE id = ? AND (max_downloads IS NULL OR download_count < max_downloads)
+					RETURNING download_count, max_downloads`, t.ShareID).Scan(&t.Count, &capDL)
+				if errors.Is(err, sql.ErrNoRows) {
+					return ErrExhausted
+				} else if err != nil {
 					return err
 				}
-				if k, _ := res.RowsAffected(); k == 0 {
-					return ErrExhausted
+				t.Counted = true
+				if capDL.Valid {
+					t.MaxDownloads = &capDL.Int64
 				}
 				if _, err := tx.ExecContext(ctx, `UPDATE dl_tokens SET counted = 1 WHERE token_hash = ?`, tokenHash); err != nil {
 					return err

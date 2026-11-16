@@ -191,18 +191,39 @@ func TestUseDownloadTokenChecksFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	nothing := func(int64) int64 { return 0 }
-	if _, err := st.UseDownloadToken(ctx, tok, "", true, nothing, t0); err != nil {
-		t.Fatal(err)
+	if tg, err := st.UseDownloadToken(ctx, tok, "", true, nothing, t0); err != nil || tg.Counted {
+		t.Fatalf("serving nothing: %+v %v", tg, err)
 	}
 	sh, err := st.ShareByID(ctx, shareID)
 	if err != nil || sh.DownloadCount != 0 {
 		t.Fatalf("a use serving nothing counted: %d (%v)", sh.DownloadCount, err)
 	}
-	if _, err := st.UseDownloadToken(ctx, tok, "", true, full, t0); err != nil {
-		t.Fatal(err)
+	tg, err := st.UseDownloadToken(ctx, tok, "", true, full, t0)
+	if err != nil || !tg.Counted || tg.Count != 1 || tg.MaxDownloads == nil || *tg.MaxDownloads != 1 {
+		t.Fatalf("counted use: %+v %v", tg, err)
 	}
 	if sh, _ := st.ShareByID(ctx, shareID); sh.DownloadCount != 1 {
 		t.Fatalf("a full download did not count: %d", sh.DownloadCount)
+	}
+	// A resume with the same token serves bytes but counts nothing.
+	if tg, err := st.UseDownloadToken(ctx, tok, "", true, full, t0); err != nil || tg.Counted {
+		t.Fatalf("resume: %+v %v", tg, err)
+	}
+	// A new token on an exhausted share is refused.
+	tok2 := ids.Hash(ids.NewSecret())
+	if _, err := st.CreateShareToken(ctx, shareID, tok2, t0); !errors.Is(err, store.ErrExhausted) {
+		if _, err := st.UseDownloadToken(ctx, tok2, "", true, full, t0); !errors.Is(err, store.ErrExhausted) {
+			t.Fatalf("exhausted share: %v", err)
+		}
+	}
+	// Without a cap, MaxDownloads stays nil.
+	unl := completeShare(t, st, owner)
+	tok3 := ids.Hash(ids.NewSecret())
+	if _, err := st.CreateShareToken(ctx, unl, tok3, t0); err != nil {
+		t.Fatal(err)
+	}
+	if tg, err := st.UseDownloadToken(ctx, tok3, "", true, full, t0); err != nil || !tg.Counted || tg.Count != 1 || tg.MaxDownloads != nil {
+		t.Fatalf("uncapped: %+v %v", tg, err)
 	}
 }
 
