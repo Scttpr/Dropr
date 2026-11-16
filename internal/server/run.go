@@ -67,7 +67,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 	runner := jobs.NewRunner(jobs.DefaultInterval, log)
 	runner.Add(jobs.Task{Name: "expired-sessions", Run: srv.Sessions().Cleanup})
-	for _, t := range jobs.FileTasks(st, srv.Blobs(), nil) {
+	for _, t := range jobs.FileTasks(st, srv.Blobs(), nil, srv.LogPurged) {
 		runner.Add(t)
 	}
 	jobsCtx, stopJobs := context.WithCancel(ctx)

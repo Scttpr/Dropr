@@ -55,8 +55,11 @@ func (p *Provider) Revalidate(ctx context.Context, s *session.Session) (*session
 			// answer counts: a provider that is down, a rejected refresh token
 			// (invalid_grant also means an ended SSO session), a bad token or
 			// another subject end the session and nothing else.
-			if lerr := p.st.MarkAccessLost(context.WithoutCancel(ctx), cur.User.Issuer, cur.User.Subject, p.now()); lerr != nil {
+			uid, expired, lerr := p.st.MarkAccessLost(context.WithoutCancel(ctx), cur.User.Issuer, cur.User.Subject, p.now())
+			if lerr != nil {
 				err = errors.Join(err, lerr)
+			} else if uid != "" {
+				p.logAccessLost(ctx, uid, expired, "revalidation")
 			}
 		}
 		if kerr := p.sessions.Kill(context.WithoutCancel(ctx), cur); kerr != nil {

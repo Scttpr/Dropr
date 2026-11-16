@@ -264,9 +264,11 @@ func requireOne(res sql.Result) error {
 // the identity provider (role or required claim withdrawn). Its request links
 // refuse uploads until the next successful login clears the mark
 // (ProvisionUser); its share links expire for good (loseAccess). Unknown
-// identities are ignored.
-func (s *Store) MarkAccessLost(ctx context.Context, issuer, subject string, now time.Time) error {
-	return s.db.Tx(ctx, func(tx *sql.Tx) error {
+// identities are ignored: userID is then empty. sharesExpired is the number
+// of live share links this call expired.
+func (s *Store) MarkAccessLost(ctx context.Context, issuer, subject string, now time.Time) (userID string, sharesExpired int64, err error) {
+	err = s.db.Tx(ctx, func(tx *sql.Tx) error {
+		userID, sharesExpired = "", 0
 		var uid string
 		err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE issuer = ? AND subject = ?`, issuer, subject).Scan(&uid)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -274,8 +276,17 @@ func (s *Store) MarkAccessLost(ctx context.Context, issuer, subject string, now 
 		} else if err != nil {
 			return err
 		}
-		return loseAccess(ctx, tx, uid, now)
+		n, err := loseAccess(ctx, tx, uid, now)
+		if err != nil {
+			return err
+		}
+		userID, sharesExpired = uid, n
+		return nil
 	})
+	if err != nil {
+		return "", 0, err
+	}
+	return userID, sharesExpired, nil
 }
 
 // RevokeUser is `dropr user revoke`: it ends every session of the user and
@@ -286,7 +297,8 @@ func (s *Store) RevokeUser(ctx context.Context, userID string, now time.Time) (s
 		if sessions, err = deleteUserSessions(ctx, tx, userID); err != nil {
 			return err
 		}
-		return loseAccess(ctx, tx, userID, now)
+		_, err := loseAccess(ctx, tx, userID, now)
+		return err
 	})
 	return sessions, err
 }
@@ -311,7 +323,8 @@ func (s *Store) DisableUser(ctx context.Context, userID string, now time.Time) (
 		if sessions, err = deleteUserSessions(ctx, tx, userID); err != nil {
 			return err
 		}
-		return expireOwnerShares(ctx, tx, userID, now)
+		_, err := expireOwnerShares(ctx, tx, userID, now)
+		return err
 	})
 	return sessions, wasDisabled, err
 }
@@ -338,14 +351,14 @@ func (s *Store) EnableUser(ctx context.Context, userID string) (wasDisabled bool
 // loseAccess sets access_lost_at (kept if already set) and expires the
 // owner's share links. It is the one place every "access lost" path goes
 // through: role or claim withdrawn at login or revalidation, and `dropr user
-// revoke`.
-func loseAccess(ctx context.Context, tx *sql.Tx, userID string, now time.Time) error {
+// revoke`. It returns the number of share links it expired.
+func loseAccess(ctx context.Context, tx *sql.Tx, userID string, now time.Time) (int64, error) {
 	res, err := tx.ExecContext(ctx, `UPDATE users SET access_lost_at = COALESCE(access_lost_at, ?) WHERE id = ?`, unix(now), userID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := requireOne(res); err != nil {
-		return err
+		return 0, err
 	}
 	return expireOwnerShares(ctx, tx, userID, now)
 }
@@ -356,14 +369,20 @@ func loseAccess(ctx context.Context, tx *sql.Tx, userID string, now time.Time) e
 // deletes their files. The download tokens of those links are deleted, and
 // share uploads still in progress die with their link (part writes and
 // finalize check its expiry). Request links are left alone: they pause on
-// the owner's state and resume at the next login.
-func expireOwnerShares(ctx context.Context, tx *sql.Tx, userID string, now time.Time) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE shares SET expires_at = ? WHERE owner_id = ? AND expires_at > ?`,
-		unix(now), userID, unix(now)); err != nil {
-		return err
+// the owner's state and resume at the next login. It returns the number of
+// share links it expired.
+func expireOwnerShares(ctx context.Context, tx *sql.Tx, userID string, now time.Time) (int64, error) {
+	res, err := tx.ExecContext(ctx, `UPDATE shares SET expires_at = ? WHERE owner_id = ? AND expires_at > ?`,
+		unix(now), userID, unix(now))
+	if err != nil {
+		return 0, err
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM dl_tokens WHERE share_id IN (SELECT id FROM shares WHERE owner_id = ?)`, userID)
-	return err
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM dl_tokens WHERE share_id IN (SELECT id FROM shares WHERE owner_id = ?)`, userID)
+	return n, err
 }
 
 // ownerActive is the SQL predicate, on a users row u, of an account that may

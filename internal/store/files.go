@@ -840,22 +840,53 @@ func (s *Store) DeleteExpiredDownloadTokens(ctx context.Context, now time.Time) 
 	return res.RowsAffected()
 }
 
+// Purged lists what DeleteExpiredLinks deleted.
+type Purged struct {
+	Shares, Requests []string // link IDs
+	Blobs            []string // blob IDs to remove from disk
+}
+
 // DeleteExpiredLinks deletes expired share links and expired request links
-// with every file they received (DESIGN.md §6: expiring deletes the blobs). It
-// returns the blob IDs to remove from disk.
-func (s *Store) DeleteExpiredLinks(ctx context.Context, now time.Time) ([]string, error) {
-	var blobs []string
+// with every file they received (DESIGN.md §6: expiring deletes the blobs).
+func (s *Store) DeleteExpiredLinks(ctx context.Context, now time.Time) (*Purged, error) {
+	var p Purged
 	err := s.db.Tx(ctx, func(tx *sql.Tx) error {
+		p = Purged{}
+		// Shares go with their blob (ON DELETE CASCADE): name them first.
 		var err error
-		blobs, err = deleteBlobsWhere(ctx, tx, `id IN (SELECT blob_id FROM shares WHERE expires_at <= ?1)
+		if p.Shares, err = queryIDs(ctx, tx, `SELECT id FROM shares WHERE expires_at <= ?`, unix(now)); err != nil {
+			return err
+		}
+		p.Blobs, err = deleteBlobsWhere(ctx, tx, `id IN (SELECT blob_id FROM shares WHERE expires_at <= ?1)
 			OR id IN (SELECT i.blob_id FROM inbox i JOIN requests r ON r.id = i.request_id WHERE r.expires_at <= ?1)`, unix(now))
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM requests WHERE expires_at <= ?`, unix(now))
+		p.Requests, err = queryIDs(ctx, tx, `DELETE FROM requests WHERE expires_at <= ? RETURNING id`, unix(now))
 		return err
 	})
-	return blobs, err
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// queryIDs returns the single text column of a query's rows.
+func queryIDs(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // DeleteStaleUploads deletes uploads still incomplete since before, gives

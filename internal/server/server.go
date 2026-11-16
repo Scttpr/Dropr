@@ -108,11 +108,9 @@ func New(ctx context.Context, d Deps) (*Server, error) {
 		return nil, err
 	}
 	s.hasher = httpx.NewIPHasher(ipKey)
-	logKey, err := seal.Derive(cfg.RefreshKey, seal.InfoLogRef)
-	if err != nil {
+	if s.refs, err = audit.RefsFor(cfg.RefreshKey); err != nil {
 		return nil, err
 	}
-	s.refs = audit.NewRefs(logKey)
 	s.resolver = httpx.IPResolver{
 		Trusted:       cfg.TrustedProxyNs,
 		TrustUnixPeer: cfg.TLS == config.TLSProxy && (cfg.TrustUnixSocketProxy || len(cfg.TrustedProxyNs) > 0),
@@ -194,6 +192,11 @@ func (s *Server) Handler() http.Handler { return s.handler }
 
 // Sessions exposes the session manager (jobs, CLI).
 func (s *Server) Sessions() *session.Manager { return s.sessions }
+
+// LogPurged logs a link deleted by the expiry cleanup (jobs.FileTasks).
+func (s *Server) LogPurged(ctx context.Context, kind, id string) {
+	audit.PurgeLogger(s.log, s.refs)(ctx, kind, id)
+}
 
 // Blobs exposes the blob store (jobs).
 func (s *Server) Blobs() *blob.Store { return s.blobs }
