@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/scttpr/dropr/internal/audit"
 	"github.com/scttpr/dropr/internal/blob"
 	"github.com/scttpr/dropr/internal/httpx"
 	"github.com/scttpr/dropr/internal/ids"
@@ -90,7 +91,12 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "create share", err)
 		return
 	}
-	s.log.InfoContext(r.Context(), "share created", "user", sess.UserID())
+	attrs := []any{audit.Event(audit.ShareCreated), "user", sess.UserID(), "link", s.refs.Link(shareID),
+		"size", v.geo.Size, "parts", v.geo.Parts, "expires_at", now.Add(v.ttl).Unix()}
+	if v.maxDownloads != nil {
+		attrs = append(attrs, "max_downloads", *v.maxDownloads)
+	}
+	s.log.InfoContext(r.Context(), "share created", attrs...)
 	httpx.WriteJSON(w, http.StatusCreated, createdUpload{ShareID: shareID, UploadID: blobID, UploadToken: token})
 }
 
@@ -142,7 +148,7 @@ func (s *Server) handleDeleteShare(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "delete share", err)
 		return
 	}
-	s.log.InfoContext(r.Context(), "share deleted", "user", sess.UserID())
+	s.log.InfoContext(r.Context(), "share deleted", audit.Event(audit.ShareRevoked), "user", sess.UserID(), "link", s.refs.Link(id))
 	s.removeBlobs(r, blobID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -174,7 +180,7 @@ func (s *Server) handleShareDownload(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "share token", err)
 		return
 	}
-	s.log.InfoContext(r.Context(), "download token issued", "link", "share")
+	s.log.InfoContext(r.Context(), "download token issued", audit.Event(audit.ShareOpened), "kind", "share", "link", s.refs.Link(id))
 	httpx.WriteJSON(w, http.StatusOK, downloadGrant{Token: token, Size: sh.Size, Parts: sh.Parts, Meta: b64.EncodeToString(sh.Meta)})
 }
 
@@ -213,7 +219,9 @@ func (s *Server) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "create request", err)
 		return
 	}
-	s.log.InfoContext(r.Context(), "request link created", "user", sess.UserID())
+	s.log.InfoContext(r.Context(), "request link created", audit.Event(audit.RequestCreated), "user", sess.UserID(),
+		"link", s.refs.Link(rq.ID), "expires_at", rq.ExpiresAt.Unix(), "max_files", rq.MaxFiles, "max_bytes", rq.MaxBytes,
+		"single_use", rq.SingleUse)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]string{"request_id": rq.ID})
 }
 
@@ -274,7 +282,8 @@ func (s *Server) handleDeleteRequest(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "delete request", err)
 		return
 	}
-	s.log.InfoContext(r.Context(), "request link deleted", "user", sess.UserID(), "files", len(blobs))
+	s.log.InfoContext(r.Context(), "request link deleted", audit.Event(audit.RequestRevoked), "user", sess.UserID(),
+		"link", s.refs.Link(id), "files", len(blobs))
 	s.removeBlobs(r, blobs...)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -424,7 +433,8 @@ func (s *Server) handleInboxDownload(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "inbox token", err)
 		return
 	}
-	s.log.InfoContext(ctx, "download token issued", "link", "inbox", "user", sess.UserID())
+	s.log.InfoContext(ctx, "download token issued", audit.Event(audit.InboxDownload), "kind", "inbox", "user", sess.UserID(),
+		"link", s.refs.Link(f.RequestID), "file", s.refs.File(id))
 	httpx.WriteJSON(w, http.StatusOK, downloadGrant{Token: token, Size: f.Size, Parts: f.Parts})
 }
 
@@ -446,7 +456,7 @@ func (s *Server) handleDeleteInbox(w http.ResponseWriter, r *http.Request) {
 		s.apiError(w, r, "delete inbox file", err)
 		return
 	}
-	s.log.InfoContext(r.Context(), "inbox file deleted", "user", sess.UserID())
+	s.log.InfoContext(r.Context(), "inbox file deleted", audit.Event(audit.InboxDeleted), "user", sess.UserID(), "file", s.refs.File(id))
 	s.removeBlobs(r, blobID)
 	w.WriteHeader(http.StatusNoContent)
 }

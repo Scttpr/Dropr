@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/scttpr/dropr/internal/audit"
 	"github.com/scttpr/dropr/internal/auth/oidc"
 	"github.com/scttpr/dropr/internal/auth/session"
 	"github.com/scttpr/dropr/internal/blob"
@@ -53,6 +54,7 @@ type Server struct {
 	pages    *web.Renderer
 	assets   *web.Assets
 	hasher   *httpx.IPHasher
+	refs     *audit.Refs // log references of link and file IDs
 	resolver httpx.IPResolver
 	authRL   *httpx.RateLimiter
 	blobs    *blob.Store
@@ -106,6 +108,11 @@ func New(ctx context.Context, d Deps) (*Server, error) {
 		return nil, err
 	}
 	s.hasher = httpx.NewIPHasher(ipKey)
+	logKey, err := seal.Derive(cfg.RefreshKey, seal.InfoLogRef)
+	if err != nil {
+		return nil, err
+	}
+	s.refs = audit.NewRefs(logKey)
 	s.resolver = httpx.IPResolver{
 		Trusted:       cfg.TrustedProxyNs,
 		TrustUnixPeer: cfg.TLS == config.TLSProxy && (cfg.TrustUnixSocketProxy || len(cfg.TrustedProxyNs) > 0),

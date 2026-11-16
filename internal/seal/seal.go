@@ -21,6 +21,7 @@ const (
 	InfoRefreshToken = "dropr/v1 refresh-token"
 	InfoOIDCCookie   = "dropr/v1 oidc-state-cookie"
 	InfoIPHash       = "dropr/v1 ip-hash"
+	InfoLogRef       = "dropr/v1 log-ref"
 )
 
 // KeySize is the size of the master key and of every derived key.
