@@ -485,12 +485,48 @@ an explicit `limits.disk_headroom` above 0 but below 256 MiB; a client key
 equal to the committed TEST-ONLY key; a refresh key file of exactly 32
 printable ASCII bytes (taken as a raw key, so probably a passphrase).
 
-Logging (`log/slog`, JSON): every line written while serving a request
-carries its request ID (`rid`); the request line also carries the client's
-keyed IP hash and, when a session exists, the user ID (`user`).
-Owner actions also get their own INFO lines: share created/deleted, request
-link created/deleted, inbox file deleted, download token issued, and part
-upload superseded (a newer PUT of the same part stopped an older one).
+Logging (`log/slog`, JSON on standard output): every line written while
+serving a request carries its request ID (`rid`); the request line also
+carries the client's keyed IP hash (`ip`) and, when a session exists, the
+user ID (`user`). Part uploads superseded by a newer PUT of the same part get
+an INFO line.
+
+**Events.** The lines an operator or a SIEM relies on carry a stable `event`
+attribute next to the readable `msg` (`internal/audit`). All are INFO.
+
+| `event` | Emitted when | Fields |
+|---|---|---|
+| `share.created` | an owner creates a share (upload starts) | `user`, `link`, `size`, `parts`, `expires_at`, `max_downloads` (absent: no limit) |
+| `share.ready` | the share's upload is finalized (once; a repeated finalize logs nothing) | `link`, `size` |
+| `share.opened` | a recipient gets a download token (not counted) | `kind=share`, `link` |
+| `share.downloaded` | the first GET of a token that serves bytes: one counted download **starts** (Range resumes, HEAD and 416 log nothing) | `link`, `count`, `max_downloads`, `ip` |
+| `share.exhausted` | that download reached `max_downloads` | `link` |
+| `share.revoked` | the owner deletes the share | `user`, `link` |
+| `request.created` | an owner creates a request link | `user`, `link`, `expires_at`, `max_files`, `max_bytes`, `single_use` |
+| `request.upload_started` | an uploader reserves a file on a request link | `link`, `size`, `ip` |
+| `request.file_received` | that file's upload is finalized | `link`, `file`, `size`, `ip` |
+| `request.closed` | a single-use link closes on its first finalized file | `link`, `reason=single_use` |
+| `request.revoked` | the owner deletes the request link (and its files) | `user`, `link`, `files` |
+| `inbox.download_requested` | the owner gets a download token for a received file | `kind=inbox`, `user`, `link`, `file` |
+| `inbox.deleted` | the owner deletes a received file | `user`, `file` |
+| `link.purged` | the expiry cleanup (`serve` jobs or `dropr gc`) deletes an expired link | `kind` (`share`, `request`), `link`, `reason=expired` |
+| `auth.login` | a sign-in succeeds | `user`, `new_account` |
+| `auth.denied` | a sign-in is refused | `reason` (`role_missing`, `claim_mismatch`, `disabled`), `user` when the account exists |
+| `auth.logout` | a user signs out | `user` |
+| `user.access_lost` | an existing account is found without the role or a required claim | `user`, `shares_expired`, `source` (`login`, `revalidation`) |
+| `session.ended` | a revalidation fails and ends the session | `user`, `reason` |
+
+Sizes are ciphertext bytes; `expires_at` is Unix seconds.
+
+**No raw identifiers.** Link, file, upload and token IDs are capabilities
+(anyone holding a share ID can exhaust its downloads, a request ID fills the
+link), so logs never carry them. `link` and `file` are keyed references:
+the first 12 hex characters of HMAC-SHA256(K, `"link\0"` + ID) or
+(`"file\0"` + ID), with K = HKDF(refresh_key, `"dropr/v1 log-ref"`). The
+same ID always gives the same reference on an instance, so a SIEM can follow
+a link from creation to purge; a new `refresh_key` changes every reference.
+`dropr log-ref <ID | link URL | IP>` computes them (and the `ip` hash) from
+the configuration; the fragment of a link URL is ignored and never printed.
 `dropr user revoke|disable|enable|purge|migrate` write a WARN `admin action` line to stderr
 with the action, the Unix UID that ran it and the user ID (`migrate`: also the
 old and new issuer and subject) (audit 2026-11b L-9).

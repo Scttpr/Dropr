@@ -308,6 +308,27 @@ Les commandes d'administration tournent sous le compte de service :
 * **Ne restaurez qu'une base plus récente que les liens de demande ouverts.**
   Une base plus ancienne, qui ignore un lien vivant, fait supprimer sa clé par
   le navigateur du propriétaire, et les fichiers de ce lien sont perdus.
+* **Logs et traçabilité.** Dropr écrit des lignes JSON sur la sortie standard
+  (journald, ou `docker compose logs`). Les lignes qui portent un attribut
+  `event` tracent chaque partage, téléchargement, fichier reçu et connexion
+  (liste dans [ARCHITECTURE.md](../ARCHITECTURE.md) §5). Elles ne contiennent
+  jamais d'identifiant de lien, seulement des références à clé ;
+  `dropr log-ref` donne la référence d'un identifiant ou d'une adresse
+  client. Passez l'identifiant seul (après `/s/` ou `/r/`), pas le lien de
+  partage complet : sa clé, après `#`, resterait dans l'historique du shell.
+
+  ```sh
+  # Tout ce qui concerne un lien, de sa création à sa purge :
+  sudo -u dropr dropr log-ref <id-du-lien>       # affiche : link 1a2b3c4d5e6f
+  journalctl -u dropr -o cat | jq -c 'select(.link == "1a2b3c4d5e6f")'
+  # Fichiers reçus par jour :
+  journalctl -u dropr -o cat | jq -r 'select(.event == "request.file_received") | .time[:10]' | sort | uniq -c
+  ```
+
+  La conservation des logs, sa durée et leur protection contre la
+  falsification relèvent de votre collecteur de logs ou de votre SIEM :
+  envoyez-y la sortie standard et fixez la durée de conservation qu'exigent
+  vos règles de traçabilité (souvent plusieurs mois).
 * **Départ d'un utilisateur.** Retirez le rôle chez le fournisseur, puis
   `sudo -u dropr dropr user disable <user>`.
 * **Mises à jour.** Vérifiez le nouveau binaire (§2), sauvegardez, remplacez-le,
