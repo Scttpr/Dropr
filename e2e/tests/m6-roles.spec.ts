@@ -81,7 +81,8 @@ test.describe("role removed mid-session", () => {
 
       sqlRun(dropr, "UPDATE sessions SET revalidated_at = unixepoch() - 120 WHERE user_id = ?", user.id);
       const r = await bob.page.goto(dropr.origin + "/links");
-      expect(bob.page.url()).toBe(dropr.origin + "/login");
+      // Signed out, sent to the login page, which returns to /links after sign-in.
+      expect(bob.page.url()).toBe(dropr.origin + "/login?next=%2Flinks");
       expect(r?.status()).toBe(200);
       await expect(bob.page.locator(".who")).toHaveCount(0);
       expect(sqlGet<{ n: number }>(dropr, "SELECT count(*) AS n FROM sessions WHERE user_id = ?", user.id)?.n).toBe(0);
