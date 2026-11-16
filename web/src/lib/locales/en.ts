@@ -80,7 +80,7 @@ export const en = {
 
   // ---- Dashboard -------------------------------------------------------
   fileTooLarge: (have: string, limit: string): string => `This file is too large (${have}). The limit is ${limit}.`,
-  downloadLimitInvalid: "The download limit must be a whole number of at least 1, or empty for no limit.",
+  downloadLimitInvalid: "The maximum number of downloads must be a whole number of at least 1, or empty for no limit.",
   maxFilesInvalid: "The number of files must be a whole number of at least 1.",
   uploadReady: "Upload complete. Your link is ready.",
   creatingRequest: "Creating the request link…",

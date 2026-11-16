@@ -17,8 +17,9 @@
           <select id="expires-in" name="expires_in">{{template "expiry-options" .DefaultExpiry}}</select>
         </div>
         <div class="field">
-          <label for="max-downloads">{{t "Download limit"}} <span class="optional">{{t "(optional)"}}</span></label>
-          <input type="number" id="max-downloads" name="max_downloads" min="1" max="999999" inputmode="numeric" placeholder="{{t "No limit"}}">
+          <label for="max-downloads">{{t "Maximum number of downloads"}} <span class="optional">{{t "(optional)"}}</span></label>
+          <input type="number" id="max-downloads" name="max_downloads" min="1" max="999999" inputmode="numeric" placeholder="{{t "No limit"}}" aria-describedby="max-downloads-hint">
+          <p id="max-downloads-hint" class="hint">{{t "The link stops working after this many downloads. Leave empty for no limit."}}</p>
         </div>
       </div>
     </form>
