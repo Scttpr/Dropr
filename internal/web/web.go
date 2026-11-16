@@ -82,8 +82,13 @@ type PageData struct {
 	// Scripts are the module scripts of the page, filled in by Render from
 	// pageScripts. Assets missing from the build (no web build in dev or
 	// tests) are left out with a warning.
-	Scripts       []Script
-	RefreshToRoot bool
+	Scripts []Script
+	// RefreshTo makes the page navigate there at once (sign-in landing).
+	// It only ever holds a path that oidc.ReturnPath accepted.
+	RefreshTo string
+	// Next is the owner page the login button returns to after sign-in,
+	// empty for "/". It only ever holds a path that oidc.ReturnPath accepted.
+	Next string
 	// Page is the page name, set by Render (navigation state).
 	Page string
 	// View is the page-specific view model (*DashboardView, *InboxView, …).
@@ -217,8 +222,8 @@ func (r *Renderer) Forbidden(w http.ResponseWriter, req *http.Request) {
 }
 
 // CallbackLanding implements oidc.Pages: a same-origin page that navigates
-// to "/" so the browser sends the SameSite=Strict session cookie (it is not
+// to next so the browser sends the SameSite=Strict session cookie (it is not
 // sent within a redirect chain that started cross-site).
-func (r *Renderer) CallbackLanding(w http.ResponseWriter, req *http.Request) {
-	r.Render(w, req, http.StatusOK, PageLanding, PageData{RefreshToRoot: true})
+func (r *Renderer) CallbackLanding(w http.ResponseWriter, req *http.Request, next string) {
+	r.Render(w, req, http.StatusOK, PageLanding, PageData{RefreshTo: next})
 }

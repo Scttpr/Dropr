@@ -67,8 +67,9 @@ type Pages interface {
 	SignInError(w http.ResponseWriter, r *http.Request, status int, message string)
 	// Forbidden renders the "no access" page (role missing or account disabled).
 	Forbidden(w http.ResponseWriter, r *http.Request)
-	// CallbackLanding renders the same-origin page that navigates to "/".
-	CallbackLanding(w http.ResponseWriter, r *http.Request)
+	// CallbackLanding renders the same-origin page that navigates to next,
+	// a path that ReturnPath accepted.
+	CallbackLanding(w http.ResponseWriter, r *http.Request, next string)
 }
 
 // Options configures the relying party.

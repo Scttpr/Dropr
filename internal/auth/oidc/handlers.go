@@ -34,6 +34,25 @@ type statePayload struct {
 	// PrevSession is the ID hash of the session the browser presented at
 	// /auth/login, ended once the callback succeeds (audit 2026-11 A07-3).
 	PrevSession []byte `json:"p,omitempty"`
+	// Next is the owner page to land on after sign-in (ReturnPath).
+	Next string `json:"r,omitempty"`
+}
+
+// returnPaths are the pages a sign-in may return to. The list is closed, so
+// the next parameter can never become an open redirect.
+var returnPaths = [...]string{"/", "/inbox", "/links"}
+
+// ReturnPath returns s when it is one of the owner pages a sign-in may return
+// to (exact match: no query, fragment or trailing slash), and "/" otherwise.
+// It is the single check of the next parameter of /login and /auth/login.
+// The result is always one of the constants, never the input itself.
+func ReturnPath(s string) string {
+	for _, p := range returnPaths {
+		if s == p {
+			return p
+		}
+	}
+	return "/"
 }
 
 // HandleLogin starts the Authorization Code + PKCE flow.
@@ -43,6 +62,7 @@ func (p *Provider) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Nonce:    ids.NewSecret(),
 		Verifier: oauth2.GenerateVerifier(),
 		IssuedAt: p.now().Unix(),
+		Next:     ReturnPath(r.URL.Query().Get("next")),
 	}
 	// The SameSite=Strict session cookie reaches this same-site navigation
 	// but not the callback, which ends a redirect chain through the
@@ -117,6 +137,8 @@ func (p *Provider) readState(r *http.Request) (*statePayload, error) {
 	if len(st.PrevSession) != 0 && len(st.PrevSession) != sha256.Size {
 		return nil, errors.New("malformed state payload")
 	}
+	// Sealed, but checked again rather than trusted.
+	st.Next = ReturnPath(st.Next)
 	return &st, nil
 }
 
@@ -228,7 +250,7 @@ func (p *Provider) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	p.log.InfoContext(ctx, "login", "user", u.ID, "new_account", created)
-	p.pages.CallbackLanding(w, r)
+	p.pages.CallbackLanding(w, r, st.Next)
 }
 
 // HandleLogout ends the local session, then sends the browser to the
