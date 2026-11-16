@@ -353,6 +353,8 @@ func (s *Server) handleCreateRequestFile(w http.ResponseWriter, r *http.Request)
 		s.apiError(w, r, "create request file", err)
 		return
 	}
+	s.log.InfoContext(r.Context(), "request upload started", audit.Event(audit.RequestUpload),
+		"link", s.refs.Link(id), "size", v.geo.Size, "ip", s.hasher.Short(httpx.ClientIP(r.Context())))
 	httpx.WriteJSON(w, http.StatusCreated, createdUpload{UploadID: blobID, UploadToken: token})
 }
 

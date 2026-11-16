@@ -58,7 +58,7 @@ func TestOpenUploadCaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CompleteUpload(ctx, u, t0); err != nil {
+	if _, err := st.CompleteUpload(ctx, u, t0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.CreateRequestFile(ctx, newRequestFile(rq.ID), t0); err != nil {
@@ -148,7 +148,7 @@ func TestUseDownloadTokenChecksFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	u, _ := st.UploadByID(ctx, blobID)
-	if err := st.CompleteUpload(ctx, u, t0); err != nil {
+	if _, err := st.CompleteUpload(ctx, u, t0); err != nil {
 		t.Fatal(err)
 	}
 	files, err := st.InboxByOwner(ctx, owner, t0)
@@ -183,7 +183,7 @@ func TestUseDownloadTokenChecksFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	u, _ = st.UploadByID(ctx, shareBlob)
-	if err := st.CompleteUpload(ctx, u, t0); err != nil {
+	if _, err := st.CompleteUpload(ctx, u, t0); err != nil {
 		t.Fatal(err)
 	}
 	tok := ids.Hash(ids.NewSecret())
@@ -238,7 +238,7 @@ func completeShare(t *testing.T, st *store.Store, owner string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CompleteUpload(t.Context(), u, t0); err != nil {
+	if _, err := st.CompleteUpload(t.Context(), u, t0); err != nil {
 		t.Fatal(err)
 	}
 	return shareID
@@ -305,7 +305,7 @@ func TestLosingAccessExpiresShares(t *testing.T) {
 			if err != nil || up.OwnerActive || up.ExpiresAt.After(t0) {
 				t.Fatalf("share upload after losing access: %+v %v", up, err)
 			}
-			if err := st.CompleteUpload(ctx, up, now); !errors.Is(err, store.ErrExpired) {
+			if _, err := st.CompleteUpload(ctx, up, now); !errors.Is(err, store.ErrExpired) {
 				t.Errorf("finalize of a share upload after losing access: %v", err)
 			}
 			if _, err := st.CreateRequestFile(ctx, newRequestFile(rq.ID), now); !errors.Is(err, store.ErrClosed) {
@@ -374,7 +374,7 @@ func TestInactiveOwnerShareRefused(t *testing.T) {
 			if err != nil || up.OwnerActive {
 				t.Fatalf("upload: %+v %v", up, err)
 			}
-			if err := st.CompleteUpload(ctx, up, t0); !errors.Is(err, store.ErrExpired) {
+			if _, err := st.CompleteUpload(ctx, up, t0); !errors.Is(err, store.ErrExpired) {
 				t.Errorf("finalize: %v", err)
 			}
 			if _, _, err := st.CreateShare(ctx, newShare(owner), t0); !errors.Is(err, store.ErrNotFound) {
@@ -427,5 +427,45 @@ func TestDisableEnableUser(t *testing.T) {
 	}
 	if _, err := st.RevokeUser(ctx, ids.New(), t0); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("revoke unknown: %v", err)
+	}
+}
+
+// CompleteUpload reports the single-use request link it closed, once; the
+// upload carries its inbox entry's ID.
+func TestCompleteUploadReportsClosing(t *testing.T) {
+	t.Parallel()
+	st := storetest.New(t)
+	ctx := t.Context()
+	owner := fileOwner(t, st, "closing")
+	for _, single := range []bool{true, false} {
+		rq := &store.Request{OwnerID: owner, ExpiresAt: t0.Add(time.Hour), MaxFiles: 2, MaxBytes: 32, SingleUse: single, CreatedAt: t0}
+		if err := st.CreateRequest(ctx, rq); err != nil {
+			t.Fatal(err)
+		}
+		var ups []*store.Upload
+		for range 2 {
+			blobID, err := st.CreateRequestFile(ctx, newRequestFile(rq.ID), t0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			u, err := st.UploadByID(ctx, blobID)
+			if err != nil || !ids.Valid(u.InboxID) || u.RequestID != rq.ID {
+				t.Fatalf("upload: %+v %v", u, err)
+			}
+			ups = append(ups, u)
+		}
+		for i, u := range ups {
+			closed, err := st.CompleteUpload(ctx, u, t0)
+			if err != nil || closed != (single && i == 0) {
+				t.Errorf("single_use %v, file %d: closed %v, %v", single, i, closed, err)
+			}
+		}
+		if closed, err := st.CompleteUpload(ctx, ups[0], t0); !errors.Is(err, store.ErrComplete) || closed {
+			t.Errorf("repeated: %v %v", closed, err)
+		}
+	}
+	files, err := st.InboxByOwner(ctx, owner, t0)
+	if err != nil || len(files) != 4 {
+		t.Fatalf("inbox: %d %v", len(files), err)
 	}
 }
