@@ -185,14 +185,14 @@ blobs     (id, parts, size, complete, created_at)
 **Owner dashboard**
 ```
 ┌──────────────────────────────────────────┐
-│   [  Drop a file here to share  ]        │
+│   [  Drop files or folders here  ]       │
 │                                          │
 │   [ Ask someone to send me a file ]      │
 │                                          │
 │   Received files (3)    Active links (2) │
 └──────────────────────────────────────────┘
 ```
-- After an upload: a progress bar (resumable), then the link with **Copy** and the expiry (7 days preselected).
+- Chosen files are listed first (name, size, **Remove**), then **Share** uploads them: one file as is, several as one ZIP archive built in the browser. A progress bar (resumable), then the link with **Copy** and the expiry (7 days preselected).
 - After creating a request link: the link with **Copy**, and a note that files sent through it open only in this browser.
 - Received: name, size, date, **Download** and **Delete**. Files received through a link created in another browser show size, date and **Delete** only.
 

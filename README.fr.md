@@ -7,9 +7,11 @@ votre domaine, et votre fournisseur d'identité OIDC existant pour les comptes.
 
 Deux usages, rien de plus :
 
-* **Partage** : un propriétaire envoie un fichier et obtient un lien. Toute
-  personne qui a le lien peut télécharger le fichier jusqu'à son expiration ou
-  sa révocation.
+* **Partage** : un propriétaire envoie un ou plusieurs fichiers et obtient un
+  lien. Toute personne qui a le lien peut les télécharger jusqu'à son
+  expiration ou sa révocation. Plusieurs fichiers (ou un dossier déposé)
+  partent dans une seule archive ZIP construite dans le navigateur : le
+  serveur voit un seul fichier chiffré, sans savoir combien il en contient.
 * **Demande** : un propriétaire crée un lien de demande. Toute personne qui a
   ce lien peut envoyer des fichiers que seul ce propriétaire pourra lire.
 
