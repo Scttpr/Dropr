@@ -31,6 +31,9 @@ test("the dashboard refuses a file over the instance limit before uploading", as
   await expect(p.locator("main")).toHaveAttribute("data-max-file-size", String(MiB));
   const seen = watchUploads(p);
   await p.locator("#file-input").setInputFiles(big.path);
+  // The list says so at once; Share then refuses with a focused error.
+  await expect(p.locator("#share-summary")).toHaveText(/^This file is too large/);
+  await p.locator("#share-submit").click();
   await expect(p.locator("#share-error")).toBeVisible();
   await expect(p.locator("#share-error")).toHaveText(/^This file is too large \(.+\)\. The limit is 1(\.0+)? MB\.$/);
   await expect(p.locator("#share-error")).toBeFocused();
@@ -40,7 +43,11 @@ test("the dashboard refuses a file over the instance limit before uploading", as
 
   // Exactly at the limit is accepted.
   const exact = await makeFile(filesDir, "exact.bin", MiB);
+  await p.getByRole("button", { name: "Remove too-big.bin" }).click();
+  await expect(p.locator("#share-selection")).toBeHidden();
+  await expect(p.locator("#file-input")).toBeFocused();
   await p.locator("#file-input").setInputFiles(exact.path);
+  await p.locator("#share-submit").click();
   await expect(p.locator("#share-result")).toBeVisible({ timeout: 60_000 });
 });
 

@@ -78,7 +78,7 @@ test("the French dashboard and the open settings popover pass axe", async ({ ali
   try {
     await p.getByRole("button", { name: "Display settings" }).click();
     await p.getByRole("button", { name: "Français" }).click();
-    await expect(p.locator("#share-heading")).toHaveText("Partager un fichier");
+    await expect(p.locator("#share-heading")).toHaveText("Partager des fichiers");
     await p.getByRole("button", { name: "Affichage" }).click();
     await expect(p.locator("#prefs")).toBeVisible();
     const res = await new AxeBuilder({ page: p }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
