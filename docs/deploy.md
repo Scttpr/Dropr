@@ -121,6 +121,40 @@ keep session cookies when they restore the previous session ("Continue where
 you left off"); disable it by policy (`RestoreOnStartup` set to a value other
 than 1) for this to work.
 
+**Session length.** A session ends after 30 minutes without activity and
+8 hours after sign-in. Align both with your organization's policy:
+
+```toml
+session_idle_timeout = "1h"    # 5m to 24h
+session_max_age      = "10h"   # 15m to 30d, at least the idle timeout
+```
+
+**Link options.** The expiry menus offer 1 hour, 1 day, 7 days and 30 days.
+Offer your own durations, in hours or days (1h to 365d, up to 8), and cap
+what users may choose:
+
+```toml
+[limits]
+expiry_choices        = ["1d", "3d", "14d"]
+default_expiry        = "3d"     # one of expiry_choices
+max_downloads         = 50       # every share then has a download limit
+default_max_downloads = 10       # prefilled; also used when left empty
+max_request_files     = 100      # per request link, at most 1000
+```
+
+Without `max_downloads`, the download limit stays optional. Changing these
+settings only affects links created afterwards.
+
+**Display defaults.** Visitors who have not picked a language or theme get
+English and the light theme. An instance mostly used in French, or that
+prefers to follow the device's theme, can change both:
+
+```toml
+[ui]
+default_language = "fr"       # used when the browser asks for no supported language
+default_theme    = "system"   # "light", "dark" or "system"
+```
+
 **Name and logo.** The interface can carry the organization's name and logo
 instead of Dropr's. The footer then credits Dropr in one line.
 
