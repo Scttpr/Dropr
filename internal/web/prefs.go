@@ -18,7 +18,8 @@ const (
 	ThemeSystem Theme = "system"
 )
 
-// DefaultTheme applies until the visitor picks another one.
+// DefaultTheme applies until the visitor picks another one, unless the
+// instance names another default (ui.default_theme).
 const DefaultTheme = ThemeLight
 
 // ThemeCookie holds an explicit theme choice. Not HttpOnly: prefs.js sets it
@@ -49,14 +50,14 @@ func (t Theme) ColorScheme() string {
 	}
 }
 
-// ThemeOf returns the theme chosen by the visitor of r, or DefaultTheme.
-func ThemeOf(r *http.Request) Theme {
+// ThemeOf returns the theme chosen by the visitor of r, or def.
+func ThemeOf(r *http.Request, def Theme) Theme {
 	if c, err := r.Cookie(ThemeCookie); err == nil {
 		if t, ok := ParseTheme(c.Value); ok {
 			return t
 		}
 	}
-	return DefaultTheme
+	return def
 }
 
 func prefCookie(name, value string) *http.Cookie {

@@ -51,6 +51,10 @@ describe("format", () => {
     ];
     for (const [d, want] of table) assert.equal(formatExpiry(t + d, now), want, `+${d}s`);
     assert.equal(expiryChoiceText("7d"), "Expires in 7 days");
+    assert.equal(expiryChoiceText("1h"), "Expires in 1 hour");
+    assert.equal(expiryChoiceText("12h"), "Expires in 12 hours");
+    assert.equal(expiryChoiceText("1d"), "Expires in 1 day");
+    for (const bad of ["", "7", "0d", "07d", "1w", "30m"]) assert.equal(expiryChoiceText(bad), "", bad);
     assert.equal(percent(5, 10), 50);
     assert.equal(percent(0, 0), 100);
   });

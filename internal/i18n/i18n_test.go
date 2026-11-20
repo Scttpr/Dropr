@@ -28,8 +28,14 @@ func TestFromAcceptLanguage(t *testing.T) {
 		"fr;q=abc, en":                     EN,
 		"*":                                EN,
 	} {
-		if got := FromAcceptLanguage(header); got != want {
+		if got := FromAcceptLanguage(header, EN); got != want {
 			t.Errorf("FromAcceptLanguage(%q) = %q, want %q", header, got, want)
+		}
+	}
+	// An instance defaulting to French keeps French when nothing matches.
+	for header, want := range map[string]Lang{"": FR, "de, it": FR, "*": FR, "en": EN} {
+		if got := FromAcceptLanguage(header, FR); got != want {
+			t.Errorf("FromAcceptLanguage(%q, FR) = %q, want %q", header, got, want)
 		}
 	}
 }
@@ -38,15 +44,15 @@ func TestNegotiateCookieWins(t *testing.T) {
 	t.Parallel()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Header.Set("Accept-Language", "fr")
-	if got := Negotiate(r); got != FR {
+	if got := Negotiate(r, EN); got != FR {
 		t.Fatalf("header only: got %q", got)
 	}
 	r.Header.Set("Cookie", CookieName+"=en")
-	if got := Negotiate(r); got != EN {
+	if got := Negotiate(r, EN); got != EN {
 		t.Fatalf("cookie: got %q", got)
 	}
 	r.Header.Set("Cookie", CookieName+"=xx")
-	if got := Negotiate(r); got != FR {
+	if got := Negotiate(r, EN); got != FR {
 		t.Fatalf("invalid cookie must be ignored: got %q", got)
 	}
 }

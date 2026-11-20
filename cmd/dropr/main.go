@@ -558,7 +558,7 @@ func cmdGC(args []string, stdout, stderr io.Writer) error {
 	}
 	defer func() { _ = d.Close() }()
 	log := newLogger(cfg, stderr)
-	sessions, err := session.NewManager(st, cfg.RefreshKey, session.Config{}, log)
+	sessions, err := session.NewManager(st, cfg.RefreshKey, session.Config{IdleTimeout: cfg.SessionIdle, AbsoluteTimeout: cfg.SessionLife}, log)
 	if err != nil {
 		return err
 	}

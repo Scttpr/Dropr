@@ -29,9 +29,6 @@ const (
 	maxLabelPad   = 256
 	minLabel      = labelOverhead + padMin
 	maxLabel      = labelOverhead + maxLabelPad
-	// Request link caps.
-	maxRequestFiles  = 1000
-	maxShareDownload = 999_999
 )
 
 // API errors, in plain language (ARCHITECTURE.md §3 "Error codes").
@@ -112,22 +109,57 @@ func decodeEmpty(w http.ResponseWriter, r *http.Request) bool {
 // limits are the instance limits request validation depends on.
 type limits struct {
 	maxFileSize   int64 // plaintext bytes
+	expiries      map[string]time.Duration
 	defaultExpiry string
+	// maxDownloads caps a share's max_downloads (0: no cap, up to
+	// config.MaxDownloadsCap); defaultMaxDownloads (0: none) applies when
+	// the request names none.
+	maxDownloads        int64
+	defaultMaxDownloads int64
+	maxRequestFiles     int64
 }
 
 func (s *Server) limits() limits {
-	return limits{maxFileSize: s.cfg.Limits.MaxFileSizeBytes, defaultExpiry: s.cfg.Limits.DefaultExpiry}
+	l := &s.cfg.Limits
+	return limits{
+		maxFileSize:         l.MaxFileSizeBytes,
+		expiries:            l.Expiries,
+		defaultExpiry:       l.DefaultExpiry,
+		maxDownloads:        l.MaxDownloads,
+		defaultMaxDownloads: l.DefaultMaxDownloads,
+		maxRequestFiles:     int64(l.MaxRequestFiles),
+	}
 }
 
-func expiry(in, def string) (time.Duration, *httpx.APIError) {
+func (l limits) expiry(in string) (time.Duration, *httpx.APIError) {
 	if in == "" {
-		in = def
+		in = l.defaultExpiry
 	}
-	d, ok := config.ExpiryDuration(in)
+	d, ok := l.expiries[in]
 	if !ok {
 		return 0, errBadRequest
 	}
 	return d, nil
+}
+
+// downloads resolves a share's max_downloads: the instance default when the
+// request names none, the cap when there is no default, nil for no limit.
+func (l limits) downloads(in *int64) (*int64, *httpx.APIError) {
+	limit := l.maxDownloads
+	if limit == 0 {
+		limit = config.MaxDownloadsCap
+	}
+	switch {
+	case in != nil && (*in < 1 || *in > limit):
+		return nil, errBadRequest
+	case in != nil:
+		return in, nil
+	case l.defaultMaxDownloads > 0:
+		return new(l.defaultMaxDownloads), nil
+	case l.maxDownloads > 0:
+		return new(l.maxDownloads), nil
+	}
+	return nil, nil
 }
 
 // fileGeometry validates a declared ciphertext size and part count against
@@ -196,14 +228,15 @@ func (b *shareRequest) validate(l limits) (*validShare, *httpx.APIError) {
 	if !ok {
 		return nil, errBadRequest
 	}
-	ttl, e := expiry(b.ExpiresIn, l.defaultExpiry)
+	ttl, e := l.expiry(b.ExpiresIn)
 	if e != nil {
 		return nil, e
 	}
-	if b.MaxDownloads != nil && (*b.MaxDownloads < 1 || *b.MaxDownloads > maxShareDownload) {
-		return nil, errBadRequest
+	maxDownloads, e := l.downloads(b.MaxDownloads)
+	if e != nil {
+		return nil, e
 	}
-	return &validShare{geo: g, meta: meta, ttl: ttl, maxDownloads: b.MaxDownloads}, nil
+	return &validShare{geo: g, meta: meta, ttl: ttl, maxDownloads: maxDownloads}, nil
 }
 
 // requestRequest is the body of POST /api/requests. max_bytes is the total
@@ -222,14 +255,14 @@ type validRequest struct {
 	singleUse bool
 }
 
-// validate: 1 ≤ max_files ≤ 1000; 16 ≤ max_bytes ≤ max_files × (ciphertext
-// of one maximal file).
+// validate: 1 ≤ max_files ≤ limits.max_request_files; 16 ≤ max_bytes ≤
+// max_files × (ciphertext of one maximal file).
 func (b *requestRequest) validate(l limits) (*validRequest, *httpx.APIError) {
-	ttl, e := expiry(b.ExpiresIn, l.defaultExpiry)
+	ttl, e := l.expiry(b.ExpiresIn)
 	if e != nil {
 		return nil, e
 	}
-	if b.MaxFiles < 1 || b.MaxFiles > maxRequestFiles {
+	if b.MaxFiles < 1 || b.MaxFiles > l.maxRequestFiles {
 		return nil, errBadRequest
 	}
 	if b.MaxBytes < blob.TagSize || b.MaxBytes > b.MaxFiles*blob.CipherSize(l.maxFileSize) {

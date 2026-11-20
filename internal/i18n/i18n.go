@@ -29,7 +29,8 @@ const (
 	FR Lang = "fr"
 )
 
-// Default is used when nothing in the request matches a supported language.
+// Default is the fallback language when the instance names none
+// (ui.default_language).
 const Default = EN
 
 // Supported lists the languages in the order the language picker shows them.
@@ -57,20 +58,21 @@ func (l Lang) Name() string {
 }
 
 // Negotiate picks the language of r: an explicit choice (cookie) first, then
-// the best Accept-Language match, then Default.
-func Negotiate(r *http.Request) Lang {
+// the best Accept-Language match, then def.
+func Negotiate(r *http.Request, def Lang) Lang {
 	if c, err := r.Cookie(CookieName); err == nil {
 		if l, ok := Parse(c.Value); ok {
 			return l
 		}
 	}
-	return FromAcceptLanguage(r.Header.Get("Accept-Language"))
+	return FromAcceptLanguage(r.Header.Get("Accept-Language"), def)
 }
 
 // FromAcceptLanguage returns the supported language with the highest q-value
-// in an Accept-Language header (RFC 9110 §12.5.4). Ties keep header order.
-func FromAcceptLanguage(header string) Lang {
-	best, bestQ := Default, 0.0
+// in an Accept-Language header (RFC 9110 §12.5.4), def when none matches.
+// Ties keep header order.
+func FromAcceptLanguage(header string, def Lang) Lang {
+	best, bestQ := def, 0.0
 	for part := range strings.SplitSeq(header, ",") {
 		tag, params, _ := strings.Cut(part, ";")
 		q := 1.0

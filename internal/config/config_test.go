@@ -176,6 +176,27 @@ func TestRefusals(t *testing.T) {
 		"http issuer prod":     {strings.Replace(base, "https://login.microsoftonline.com", "http://localhost", 1), "oidc.issuer must be https"},
 		"too large":            {f.prod("[limits]\nmax_file_size = \"101GB\""), "max_file_size"},
 		"bad expiry":           {f.prod("[limits]\ndefault_expiry = \"2d\""), "default_expiry"},
+		// Instance knobs.
+		"no expiry choices":    {f.prod("[limits]\nexpiry_choices = []"), "expiry_choices must list"},
+		"too many choices":     {f.prod("[limits]\nexpiry_choices = [\"1h\",\"2h\",\"3h\",\"4h\",\"5h\",\"6h\",\"7h\",\"8h\",\"9h\"]\ndefault_expiry = \"1h\""), "expiry_choices must list"},
+		"minute choice":        {f.prod("[limits]\nexpiry_choices = [\"30m\", \"7d\"]"), "number of hours or days"},
+		"week choice":          {f.prod("[limits]\nexpiry_choices = [\"1w\", \"7d\"]"), "number of hours or days"},
+		"zero-padded choice":   {f.prod("[limits]\nexpiry_choices = [\"07d\"]\ndefault_expiry = \"07d\""), "number of hours or days"},
+		"choice too long":      {f.prod("[limits]\nexpiry_choices = [\"7d\", \"366d\"]"), "between 1h and 365d"},
+		"same duration":        {f.prod("[limits]\nexpiry_choices = [\"24h\", \"1d\", \"7d\"]"), "same duration"},
+		"default not a choice": {f.prod("[limits]\nexpiry_choices = [\"1d\", \"14d\"]"), "default_expiry must be one of"},
+		"negative downloads":   {f.prod("[limits]\nmax_downloads = -1"), "limits.max_downloads"},
+		"huge downloads":       {f.prod("[limits]\nmax_downloads = 1000000"), "limits.max_downloads"},
+		"default above cap":    {f.prod("[limits]\nmax_downloads = 5\ndefault_max_downloads = 6"), "at most limits.max_downloads"},
+		"zero request files":   {f.prod("[limits]\nmax_request_files = -1"), "max_request_files"},
+		"huge request files":   {f.prod("[limits]\nmax_request_files = 1001"), "max_request_files"},
+		"idle too short":       {f.prod(`session_idle_timeout = "1m"`), "session_idle_timeout must be"},
+		"idle above max age":   {f.prod(`session_idle_timeout = "2h"` + "\n" + `session_max_age = "1h"`), "at most session_max_age"},
+		"max age too long":     {f.prod(`session_max_age = "31d"`), "session_max_age must be"},
+		"bad max age":          {f.prod(`session_max_age = "soon"`), "session_max_age"},
+		"bad theme":            {f.prod("[ui]\ndefault_theme = \"blue\""), "ui.default_theme"},
+		"bad language":         {f.prod("[ui]\ndefault_language = \"de\""), "ui.default_language"},
+		"regional language":    {f.prod("[ui]\ndefault_language = \"fr-FR\""), "ui.default_language"},
 		"no openid":            {strings.Replace(base, "[oidc]", "[oidc]\nscopes = [\"profile\"]", 1), `include "openid"`},
 		"override iss":         {strings.Replace(base, "tid = ", "iss = \"x\", tid = ", 1), "registered claim"},
 		"revalidate too slow":  {strings.Replace(base, "[oidc]", "[oidc]\nrevalidate_every = \"2h\"", 1), "revalidate_every"},
@@ -442,6 +463,62 @@ func TestTransferLimits(t *testing.T) {
 	c, err = Parse([]byte(f.prod("[limits]\ndisk_headroom = \"2GB\"")))
 	if err != nil || len(c.Warnings) != 0 {
 		t.Errorf("2GB headroom: %v %v", err, c)
+	}
+}
+
+func TestInstanceKnobs(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	c, err := Parse([]byte(f.prod("")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := c.Limits
+	if strings.Join(l.ExpiryChoices, ",") != "1h,1d,7d,30d" || l.Expiries["30d"] != 30*24*time.Hour {
+		t.Errorf("expiry defaults: %v %v", l.ExpiryChoices, l.Expiries)
+	}
+	if l.MaxDownloads != 0 || l.DefaultMaxDownloads != 0 || l.MaxRequestFiles != MaxRequestFilesCap {
+		t.Errorf("link defaults: %+v", l)
+	}
+	if c.SessionIdle != 30*time.Minute || c.SessionLife != 8*time.Hour {
+		t.Errorf("session defaults: %v %v", c.SessionIdle, c.SessionLife)
+	}
+	if c.UI.DefaultTheme != ThemeLight || c.UI.DefaultLanguage != "en" {
+		t.Errorf("ui defaults: %+v", c.UI)
+	}
+
+	c, err = Parse([]byte(f.prod(`session_idle_timeout = "2h"
+session_max_age = "7d"
+[limits]
+expiry_choices = ["14d", "12h", "3d"]
+default_expiry = "3d"
+max_downloads = 20
+default_max_downloads = 5
+max_request_files = 50
+[ui]
+default_theme = "system"
+default_language = "fr"`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l = c.Limits
+	if strings.Join(l.ExpiryChoices, ",") != "12h,3d,14d" {
+		t.Errorf("choices not sorted shortest first: %v", l.ExpiryChoices)
+	}
+	if d, ok := l.Expiry("12h"); !ok || d != 12*time.Hour {
+		t.Errorf("Expiry(12h) = %v %v", d, ok)
+	}
+	if _, ok := l.Expiry("7d"); ok {
+		t.Error("7d accepted though not a choice")
+	}
+	if l.DefaultExpiryDur != 3*24*time.Hour || l.MaxDownloads != 20 || l.DefaultMaxDownloads != 5 || l.MaxRequestFiles != 50 {
+		t.Errorf("limits: %+v", l)
+	}
+	if c.SessionIdle != 2*time.Hour || c.SessionLife != 7*24*time.Hour {
+		t.Errorf("session: %v %v", c.SessionIdle, c.SessionLife)
+	}
+	if c.UI.DefaultTheme != ThemeSystem || c.UI.DefaultLanguage != "fr" {
+		t.Errorf("ui: %+v", c.UI)
 	}
 }
 

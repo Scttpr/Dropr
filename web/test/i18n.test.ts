@@ -55,6 +55,7 @@ describe("i18n", () => {
       assert.equal(formatExpiry(t + d, now, FR), want, `+${d}s`);
     }
     assert.equal(expiryChoiceText("30d", FR), "Expire dans 30 jours");
+    assert.equal(expiryChoiceText("12h", FR), "Expire dans 12 heures");
   });
 
   it("keeps French wording identical to the server catalog", () => {

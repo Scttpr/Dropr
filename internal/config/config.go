@@ -7,6 +7,7 @@
 package config
 
 import (
+	"cmp"
 	"crypto"
 	"crypto/x509"
 	"errors"
@@ -17,11 +18,15 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/scttpr/dropr/internal/i18n"
 )
 
 // Mode values.
@@ -48,13 +53,43 @@ const (
 	ClientAuthSecret        = "client_secret"
 )
 
-// Allowed link expiries (DESIGN.md §6).
-var allowedExpiries = map[string]time.Duration{
-	"1h":  time.Hour,
-	"1d":  24 * time.Hour,
-	"7d":  7 * 24 * time.Hour,
-	"30d": 30 * 24 * time.Hour,
-}
+// Themes of ui.default_theme.
+const (
+	ThemeLight  = "light"
+	ThemeDark   = "dark"
+	ThemeSystem = "system"
+)
+
+// Link expiry choices (limits.expiry_choices, DESIGN.md §6).
+var (
+	defaultExpiryChoices = []string{"1h", "1d", "7d", "30d"}
+	expiryChoiceRE       = regexp.MustCompile(`^[1-9][0-9]{0,3}[hd]$`)
+)
+
+// Expiry choice bounds and count.
+const (
+	minExpiry        = time.Hour
+	maxExpiry        = 365 * 24 * time.Hour
+	maxExpiryChoices = 8
+)
+
+// Session lifetime bounds (session_idle_timeout, session_max_age).
+const (
+	defaultSessionIdle   = 30 * time.Minute
+	defaultSessionMaxAge = 8 * time.Hour
+	minSessionIdle       = 5 * time.Minute
+	maxSessionIdle       = 24 * time.Hour
+	minSessionMaxAge     = 15 * time.Minute
+	maxSessionMaxAge     = 30 * 24 * time.Hour
+)
+
+// Download and request link caps.
+const (
+	// MaxDownloadsCap is the largest max_downloads a share accepts.
+	MaxDownloadsCap = 999_999
+	// MaxRequestFilesCap is the largest max_files a request link accepts.
+	MaxRequestFilesCap = 1000
+)
 
 // Config is the validated instance configuration. Fields tagged `toml:"-"`
 // are derived during Load and are what the rest of the program should use.
@@ -80,11 +115,16 @@ type Config struct {
 	// SessionCookie is "persistent" (the cookie lasts until the session's
 	// absolute timeout) or "browser" (dropped when the browser closes).
 	SessionCookie string `toml:"session_cookie"`
-	LogLevel      string `toml:"log_level"`
+	// SessionIdleTimeout ends a session after this long without a request;
+	// SessionMaxAge ends it this long after sign-in, whatever its activity.
+	SessionIdleTimeout string `toml:"session_idle_timeout"`
+	SessionMaxAge      string `toml:"session_max_age"`
+	LogLevel           string `toml:"log_level"`
 
 	Limits   Limits   `toml:"limits"`
 	OIDC     OIDC     `toml:"oidc"`
 	Branding Branding `toml:"branding"`
+	UI       UI       `toml:"ui"`
 
 	// Derived.
 	Public         *url.URL       `toml:"-"` // parsed public_url, no trailing slash
@@ -92,15 +132,34 @@ type Config struct {
 	TrustedProxyNs []netip.Prefix `toml:"-"`
 	RefreshKey     []byte         `toml:"-"` // 32-byte master key
 	Level          slog.Level     `toml:"-"`
+	SessionIdle    time.Duration  `toml:"-"`
+	SessionLife    time.Duration  `toml:"-"`
 	Warnings       []string       `toml:"-"` // non-fatal findings for the operator
+}
+
+// UI holds the display defaults a visitor sees until they pick their own.
+type UI struct {
+	// DefaultTheme is "light", "dark" or "system" (follow the device).
+	DefaultTheme string `toml:"default_theme"`
+	// DefaultLanguage applies when the browser asks for no supported
+	// language ("en" or "fr").
+	DefaultLanguage string `toml:"default_language"`
 }
 
 // Limits holds size and expiry limits.
 type Limits struct {
-	MaxFileSize   string `toml:"max_file_size"`
-	UserQuota     string `toml:"user_quota"`
-	DefaultExpiry string `toml:"default_expiry"`
-	DiskHeadroom  string `toml:"disk_headroom"`
+	MaxFileSize   string   `toml:"max_file_size"`
+	UserQuota     string   `toml:"user_quota"`
+	ExpiryChoices []string `toml:"expiry_choices"`
+	DefaultExpiry string   `toml:"default_expiry"`
+	DiskHeadroom  string   `toml:"disk_headroom"`
+	// MaxDownloads caps max_downloads of a share (0: no cap). With a cap,
+	// every share has a download limit: DefaultMaxDownloads when set,
+	// else the cap. DefaultMaxDownloads (0: none) prefills the form.
+	MaxDownloads        int64 `toml:"max_downloads"`
+	DefaultMaxDownloads int64 `toml:"default_max_downloads"`
+	// MaxRequestFiles caps max_files of a request link (1 to 1000).
+	MaxRequestFiles int `toml:"max_request_files"`
 	// Transfer limits (audit L-4): concurrent part uploads and downloads in
 	// total and per client address, and the minimum rate (bytes per second,
 	// averaged over 60 s) below which a transfer is cut ("0" disables).
@@ -117,6 +176,15 @@ type Limits struct {
 	UserQuotaBytes       int64         `toml:"-"`
 	DefaultExpiryDur     time.Duration `toml:"-"`
 	DiskHeadroomBytes    int64         `toml:"-"` // 0 = automatic: max(1 GiB, 5% of the file system)
+	// Expiries maps each choice of ExpiryChoices (sorted shortest first)
+	// to its duration.
+	Expiries map[string]time.Duration `toml:"-"`
+}
+
+// Expiry returns the duration of a link expiry choice of this instance.
+func (l *Limits) Expiry(choice string) (time.Duration, bool) {
+	d, ok := l.Expiries[choice]
+	return d, ok
 }
 
 // OIDC holds the relying-party configuration (DESIGN.md §5.1).
@@ -147,13 +215,6 @@ type OIDC struct {
 	IssuerURL     *url.URL            `toml:"-"`
 	RedirectURL   string              `toml:"-"`
 	PostLogoutURL string              `toml:"-"`
-}
-
-// ExpiryDuration maps a link expiry choice ("1h", "1d", "7d", "30d") to its
-// duration.
-func ExpiryDuration(s string) (time.Duration, bool) {
-	d, ok := allowedExpiries[s]
-	return d, ok
 }
 
 // Production reports whether the instance runs in production mode.
@@ -219,11 +280,21 @@ func (c *Config) applyDefaults() {
 	def(&c.LoginLabel, "Sign in")
 	def(&c.Branding.Name, DefaultBrandName)
 	def(&c.SessionCookie, SessionCookiePersistent)
+	def(&c.SessionIdleTimeout, "30m")
+	def(&c.SessionMaxAge, "8h")
+	def(&c.UI.DefaultTheme, ThemeLight)
+	def(&c.UI.DefaultLanguage, "en")
 	def(&c.LogLevel, "info")
 	def(&c.Limits.MaxFileSize, "5GB")
 	def(&c.Limits.UserQuota, "50GB")
 	def(&c.Limits.DefaultExpiry, "7d")
 	def(&c.Limits.MinTransferRate, "4KB")
+	if c.Limits.ExpiryChoices == nil {
+		c.Limits.ExpiryChoices = slices.Clone(defaultExpiryChoices)
+	}
+	if c.Limits.MaxRequestFiles == 0 {
+		c.Limits.MaxRequestFiles = MaxRequestFilesCap
+	}
 	if c.Limits.MaxTransfers == 0 {
 		c.Limits.MaxTransfers = 512
 	}
@@ -341,6 +412,8 @@ func (c *Config) validate() error {
 	default:
 		fail("session_cookie must be %q or %q", SessionCookiePersistent, SessionCookieBrowser)
 	}
+	c.validateSession(fail)
+	c.validateUI(fail)
 
 	c.validateLimits(fail)
 	c.validateOIDC(fail)
@@ -365,11 +438,18 @@ func (c *Config) validateLimits(fail func(string, ...any)) {
 	} else if l.UserQuotaBytes <= 0 {
 		fail("limits.user_quota must be positive")
 	}
-	d, ok := allowedExpiries[l.DefaultExpiry]
-	if !ok {
-		fail("limits.default_expiry must be one of 1h, 1d, 7d, 30d")
+	c.validateExpiries(fail)
+	switch {
+	case l.MaxDownloads < 0 || l.MaxDownloads > MaxDownloadsCap:
+		fail("limits.max_downloads must be between 0 (no cap) and %d", MaxDownloadsCap)
+	case l.DefaultMaxDownloads < 0 || l.DefaultMaxDownloads > MaxDownloadsCap:
+		fail("limits.default_max_downloads must be between 0 (no limit) and %d", MaxDownloadsCap)
+	case l.MaxDownloads > 0 && l.DefaultMaxDownloads > l.MaxDownloads:
+		fail("limits.default_max_downloads must be at most limits.max_downloads")
 	}
-	l.DefaultExpiryDur = d
+	if l.MaxRequestFiles < 1 || l.MaxRequestFiles > MaxRequestFilesCap {
+		fail("limits.max_request_files must be between 1 and %d", MaxRequestFilesCap)
+	}
 	if l.DiskHeadroom != "" {
 		if l.DiskHeadroomBytes, err = ParseSize(l.DiskHeadroom); err != nil {
 			fail("limits.disk_headroom: %v", err)
@@ -397,6 +477,80 @@ func (c *Config) validateLimits(fail func(string, ...any)) {
 
 // maxAuthRate bounds limits.auth_rate_per_minute and limits.auth_burst.
 const maxAuthRate = 10000
+
+// validateExpiries checks limits.expiry_choices ("12h", "3d": hours or days,
+// 1h to 365d, at most 8, no two of the same length), sorts them shortest
+// first and checks that limits.default_expiry is one of them.
+func (c *Config) validateExpiries(fail func(string, ...any)) {
+	l := &c.Limits
+	if len(l.ExpiryChoices) == 0 || len(l.ExpiryChoices) > maxExpiryChoices {
+		fail("limits.expiry_choices must list 1 to %d choices", maxExpiryChoices)
+		return
+	}
+	l.Expiries = make(map[string]time.Duration, len(l.ExpiryChoices))
+	seen := map[time.Duration]string{}
+	ok := true
+	for _, ch := range l.ExpiryChoices {
+		var d time.Duration
+		var err error
+		if expiryChoiceRE.MatchString(ch) {
+			d, err = ParseDuration(ch)
+		}
+		switch {
+		case !expiryChoiceRE.MatchString(ch) || err != nil:
+			fail(`limits.expiry_choices: %q must be a number of hours or days ("12h", "3d")`, ch)
+		case d < minExpiry || d > maxExpiry:
+			fail("limits.expiry_choices: %q must be between 1h and 365d", ch)
+		case seen[d] != "":
+			fail("limits.expiry_choices: %q and %q are the same duration", seen[d], ch)
+		default:
+			seen[d] = ch
+			l.Expiries[ch] = d
+			continue
+		}
+		ok = false
+	}
+	if !ok {
+		return
+	}
+	slices.SortFunc(l.ExpiryChoices, func(a, b string) int { return cmp.Compare(l.Expiries[a], l.Expiries[b]) })
+	d, found := l.Expiries[l.DefaultExpiry]
+	if !found {
+		fail("limits.default_expiry must be one of limits.expiry_choices (%s)", strings.Join(l.ExpiryChoices, ", "))
+	}
+	l.DefaultExpiryDur = d
+}
+
+func (c *Config) validateSession(fail func(string, ...any)) {
+	var err error
+	if c.SessionIdle, err = ParseDuration(c.SessionIdleTimeout); err != nil {
+		fail("session_idle_timeout: %v", err)
+	} else if c.SessionIdle < minSessionIdle || c.SessionIdle > maxSessionIdle {
+		fail("session_idle_timeout must be between 5m and 24h")
+	}
+	if c.SessionLife, err = ParseDuration(c.SessionMaxAge); err != nil {
+		fail("session_max_age: %v", err)
+	} else if c.SessionLife < minSessionMaxAge || c.SessionLife > maxSessionMaxAge {
+		fail("session_max_age must be between 15m and 30d")
+	} else if c.SessionIdle > c.SessionLife {
+		fail("session_idle_timeout must be at most session_max_age")
+	}
+}
+
+func (c *Config) validateUI(fail func(string, ...any)) {
+	switch c.UI.DefaultTheme {
+	case ThemeLight, ThemeDark, ThemeSystem:
+	default:
+		fail("ui.default_theme must be %q, %q or %q", ThemeLight, ThemeDark, ThemeSystem)
+	}
+	if l, ok := i18n.Parse(c.UI.DefaultLanguage); !ok || string(l) != c.UI.DefaultLanguage {
+		names := make([]string, len(i18n.Supported))
+		for i, l := range i18n.Supported {
+			names[i] = strconv.Quote(string(l))
+		}
+		fail("ui.default_language must be one of %s", strings.Join(names, ", "))
+	}
+}
 
 func (c *Config) validateOIDC(fail func(string, ...any)) {
 	o := &c.OIDC

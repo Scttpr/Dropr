@@ -89,12 +89,17 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, "count links", err)
 		return
 	}
+	l := &s.cfg.Limits
 	s.pages.Render(w, r, http.StatusOK, web.PageDashboard, web.PageData{User: sess.User, View: &web.DashboardView{
-		MaxFileSize:     s.cfg.Limits.MaxFileSizeBytes,
-		DefaultExpiry:   s.cfg.Limits.DefaultExpiry,
-		MaxRequestBytes: blob.CipherSize(s.cfg.Limits.MaxFileSizeBytes),
-		InboxCount:      inbox,
-		LinkCount:       links,
+		MaxFileSize:         l.MaxFileSizeBytes,
+		ExpiryChoices:       l.ExpiryChoices,
+		DefaultExpiry:       l.DefaultExpiry,
+		MaxDownloads:        l.MaxDownloads,
+		DefaultMaxDownloads: l.DefaultMaxDownloads,
+		MaxRequestFiles:     l.MaxRequestFiles,
+		MaxRequestBytes:     blob.CipherSize(l.MaxFileSizeBytes),
+		InboxCount:          inbox,
+		LinkCount:           links,
 	}})
 }
 

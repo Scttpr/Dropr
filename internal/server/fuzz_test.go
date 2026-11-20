@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/scttpr/dropr/internal/blob"
 	"github.com/scttpr/dropr/internal/httpx"
 )
 
-var fuzzLimits = limits{maxFileSize: 5 << 30, defaultExpiry: "7d"}
+var fuzzLimits = limits{maxFileSize: 5 << 30, defaultExpiry: "7d", maxRequestFiles: 100,
+	expiries: map[string]time.Duration{"1h": time.Hour, "7d": 7 * 24 * time.Hour}, maxDownloads: 50}
 
 // FuzzJSONRequests feeds arbitrary bodies to every JSON request decoder and
 // validator and checks the invariants of what they accept.
@@ -33,14 +35,14 @@ func FuzzJSONRequests(f *testing.F) {
 				if !onBucket(len(v.meta)-blob.TagSize, maxMetaPadded) || v.ttl <= 0 {
 					t.Fatalf("accepted share %+v", v)
 				}
-				if v.maxDownloads != nil && *v.maxDownloads < 1 {
-					t.Fatal("accepted max_downloads < 1")
+				if v.maxDownloads == nil || *v.maxDownloads < 1 || *v.maxDownloads > fuzzLimits.maxDownloads {
+					t.Fatalf("accepted max_downloads outside 1..%d under a cap", fuzzLimits.maxDownloads)
 				}
 			}
 		}
 		var rq requestRequest
 		if httpx.DecodeJSONBytesFrom(bytes.NewReader(body), &rq) == nil {
-			if v, e := rq.validate(fuzzLimits); e == nil && (v.maxFiles < 1 || v.maxFiles > maxRequestFiles || v.maxBytes < blob.TagSize) {
+			if v, e := rq.validate(fuzzLimits); e == nil && (v.maxFiles < 1 || v.maxFiles > fuzzLimits.maxRequestFiles || v.maxBytes < blob.TagSize) {
 				t.Fatalf("accepted request %+v", v)
 			}
 		}

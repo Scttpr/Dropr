@@ -11,6 +11,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/scttpr/dropr/internal/i18n"
 	"github.com/scttpr/dropr/internal/store"
 )
 
@@ -48,13 +49,16 @@ var pageCases = map[string]struct {
 	text  []string
 }{
 	PageDashboard: {
-		view:  &DashboardView{MaxFileSize: 5 << 30, DefaultExpiry: "1d", MaxRequestBytes: 5<<30 + 1234, InboxCount: 3, LinkCount: 2},
+		view: &DashboardView{MaxFileSize: 5 << 30, ExpiryChoices: []string{"1h", "1d", "7d", "30d"}, DefaultExpiry: "1d",
+			MaxRequestFiles: 1000, MaxRequestBytes: 5<<30 + 1234, InboxCount: 3, LinkCount: 2},
 		attrs: []string{`data-owner-id="UUUUUUUUUUUUUUUUUUUUUU"`, `data-max-file-size="5368709120"`, `data-default-expiry="1d"`, `data-max-request-bytes="5368710354"`},
 		ids: []string{"share-form", "drop-zone", "file-input", "upload-panel", "upload-progress", "upload-status",
 			"share-result", "share-link", "share-copy", "share-error", "request-form", "request-error",
 			"request-result", "request-link", "request-copy", "request-hint", "expires-in", "max-downloads"},
 		text: []string{"Drop a file here to share", "Ask someone to send me a file", `Received files (<span id="inbox-count">3</span>)`, `Active links (<span id="link-count">2</span>)`,
-			`<option value="1d" selected>`, `action="/auth/logout"`},
+			`<option value="1h">1 hour</option>`, `<option value="1d" selected>1 day</option>`, `<option value="30d">30 days</option>`,
+			`name="max_downloads" min="1" max="999999" inputmode`, `placeholder="No limit"`,
+			`name="max_files" min="1" max="1000" value="10"`, `action="/auth/logout"`},
 	},
 	PageInbox: {
 		view:  &InboxView{Count: 2},
@@ -80,6 +84,50 @@ var pageCases = map[string]struct {
 		ids:   []string{"drop-zone", "file-input", "upload-panel", "upload-progress", "upload-status", "upload-done", "upload-error"},
 		text:  []string{"Send a file to Alice", "✓ Sent. You can close this page.", " multiple>"},
 	},
+}
+
+// The dashboard follows the instance's link settings and the renderer its
+// display defaults.
+func TestDashboardInstanceSettings(t *testing.T) {
+	t.Parallel()
+	r, err := NewRenderer(builtAssets(t), Options{LoginLabel: "Sign in", Theme: ThemeDark, Lang: i18n.FR}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := &store.User{ID: "UUUUUUUUUUUUUUUUUUUUUU", DisplayName: "Alice"}
+	view := &DashboardView{MaxFileSize: 5 << 30, ExpiryChoices: []string{"12h", "1d", "14d"}, DefaultExpiry: "14d",
+		MaxDownloads: 20, DefaultMaxDownloads: 5, MaxRequestFiles: 4, MaxRequestBytes: 5 << 30}
+	render := func(header, cookie string) string {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		if header != "" {
+			req.Header.Set("Accept-Language", header)
+		}
+		if cookie != "" {
+			req.Header.Set("Cookie", cookie)
+		}
+		w := httptest.NewRecorder()
+		r.Render(w, req, http.StatusOK, PageDashboard, PageData{User: user, View: view})
+		return w.Body.String()
+	}
+	body := render("de", "")
+	for _, s := range []string{
+		`<html lang="fr" data-theme="dark"`,
+		`<option value="12h">12 heures</option>`, `<option value="1d">1 jour</option>`, `<option value="14d" selected>14 jours</option>`,
+		`name="max_downloads" min="1" max="20" value="5" inputmode`, `placeholder="20 au maximum"`,
+		"20 au maximum. Laissez vide pour 5.",
+		`name="max_files" min="1" max="4" value="4"`,
+	} {
+		if !strings.Contains(body, s) {
+			t.Errorf("missing %q", s)
+		}
+	}
+	if strings.Contains(body, `value="7d"`) {
+		t.Error("an expiry the instance does not offer is listed")
+	}
+	// The visitor's own choices win over the instance defaults.
+	if body := render("en", ThemeCookie+"=light"); !strings.Contains(body, `<html lang="en" data-theme="light"`) {
+		t.Error("visitor language or theme ignored")
+	}
 }
 
 func TestPagesFollowDOMContract(t *testing.T) {

@@ -59,20 +59,12 @@ export function formatExpiry(expiresAt: number, nowMs: number = Date.now(), { t 
   return t.expiresInDays(Math.ceil(s / 86_400));
 }
 
-/** "Expires in 7 days" for an `expires_in` choice ("1h" | "1d" | "7d" | "30d"). */
+/** "Expires in 7 days" for an `expires_in` choice ("12h", "7d"); "" otherwise. */
 export function expiryChoiceText(choice: string, { t }: Locale = locale): string {
-  switch (choice) {
-    case "1h":
-      return t.expiresInHours(1);
-    case "1d":
-      return t.expiresInDays(1);
-    case "7d":
-      return t.expiresInDays(7);
-    case "30d":
-      return t.expiresInDays(30);
-    default:
-      return "";
-  }
+  const m = /^([1-9]\d{0,3})([hd])$/.exec(choice);
+  if (m === null) return "";
+  const n = Number(m[1]);
+  return m[2] === "h" ? t.expiresInHours(n) : t.expiresInDays(n);
 }
 
 /** Locale date+time for a Unix-seconds timestamp. */
