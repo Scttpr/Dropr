@@ -142,16 +142,22 @@ share one browser profile without touching each other's keys
 | `data-owner-id` | yes | the signed-in account's ID (§1.4) |
 | `data-max-request-bytes` | no | `max_bytes` sent when creating a request link: a **ciphertext** budget (the API counts ciphertext, §1.5). The server renders the ciphertext size of one maximal file, `CipherSize(max_file_size)`. If absent the JS falls back to `data-max-file-size`, which is slightly too small for a maximal file. |
 
-### Share a file (flow A)
+### Share files (flow A)
 
 ```html
 <section aria-labelledby="share-heading">
-  <h2 id="share-heading">Share a file</h2>
+  <h2 id="share-heading">Share files</h2>
   <form id="share-form" data-js-only hidden>
     <div id="drop-zone" class="drop-zone">
-      <label for="file-input">Drop a file here to share, or choose one</label>
-      <input type="file" id="file-input" name="file">
+      <label for="file-input">Drop files or folders here, or choose files</label>
+      <input type="file" id="file-input" name="files" multiple>
     </div>
+    <div id="share-selection" hidden>
+      <h3 id="share-files-heading">Files to share</h3>
+      <ul id="share-files" aria-labelledby="share-files-heading"></ul>  <!-- filled by the JS -->
+      <p id="share-summary"></p>
+    </div>
+    <p id="share-selection-status" class="visually-hidden" role="status" aria-live="polite"></p>
     <label for="expires-in">Link expires after</label>
     <select id="expires-in" name="expires_in">   <!-- one option per limits.expiry_choices -->
       <option value="1h">1 hour</option>
@@ -164,6 +170,8 @@ share one browser profile without touching each other's keys
            aria-describedby="max-downloads-hint">   <!-- max = limits.max_downloads, value = limits.default_max_downloads when set -->
     <p id="max-downloads-hint">The link stops working after this many downloads. Leave empty for no limit.</p>
     <!-- under a cap: "…, at most N. Leave empty for D." (D: the default, else the cap) -->
+    <button type="submit" id="share-submit">Share</button>
+    <button type="button" id="share-clear" hidden>Clear the list</button>
   </form>
 
   <div id="upload-panel" hidden>
@@ -179,7 +187,7 @@ share one browser profile without touching each other's keys
     <input type="text" id="share-link" readonly>
     <button type="button" id="share-copy">Copy</button>
     <p id="share-expiry"></p>
-    <button type="button" id="share-another">Share another file</button>
+    <button type="button" id="share-another">Share more files</button>
   </div>
 
   <div id="share-error" role="alert" tabindex="-1" hidden></div>
@@ -187,13 +195,30 @@ share one browser profile without touching each other's keys
 ```
 
 Required ids: `share-form` (a `<form>`), `drop-zone`, `file-input`
-(`<input type=file>`, **not** `multiple`), `upload-panel`, `upload-progress`
+(`<input type=file>`), `upload-panel`, `upload-progress`
 (`<progress>`), `upload-status`, `share-result`, `share-link` (`<input>`),
 `share-copy` (`<button>`), `share-error`. Optional: `expires-in` (`<select>`;
 default used if absent), `max-downloads`, `upload-file-name`, `upload-cancel`,
-`upload-retry`, `share-expiry`, `share-another`.
+`upload-retry`, `share-expiry`, `share-another`, and the selection:
+`share-submit` (`<button type=submit>`), `share-selection`, `share-files`
+(`<ul>`), `share-summary`, `share-selection-status`, `share-clear`.
 
-Behaviour: one file per share. While uploading, `share-form` is hidden and
+Behaviour: without `share-submit`, a chosen file is shared at once, one file
+per share. With it, chosen and dropped files are added to the `share-files`
+list (dropped folders are walked, up to 10 000 files, skipping `.DS_Store`,
+`Thumbs.db` and `desktop.ini`; the same file picked twice is listed once).
+Each row shows the name the file will have in the archive (made safe and
+unique: "notes.txt", "notes (2).txt"), its size and a **Remove** button;
+removing moves focus to the next row, else the previous one, else
+`file-input`. `share-summary` gives the count, the total against
+`data-max-file-size` (in the error colour, class `over`, when above it) and
+the archive name; additions and removals are announced in
+`share-selection-status`. Share with one file uploads it as is. With several,
+the page first reads each file once for its CRC-32 ("Preparing …" in
+`upload-panel`, cancellable), then uploads one stored ZIP archive
+(`lib/zip.ts`) named after the dropped folder, or `files-YYYY-MM-DD.zip`.
+Nothing is sent to the server before that read completes. Cancelling or
+failing keeps the selection. While uploading, `share-form` is hidden and
 `upload-panel` shown; Retry appears after a connection loss (the upload also
 resumes by itself when the browser goes back online). On success
 `share-result` is shown with the link `https://<host>/s/<id>#<key>`, the Copy

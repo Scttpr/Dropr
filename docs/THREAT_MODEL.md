@@ -230,7 +230,10 @@ and types are encrypted and padded to 128, 256 or 512 bytes, and request labels
 to 128 or 256 bytes (FORMAT §5.1, audit 2026-11b L-8): the server learns only
 which bucket the combined name and type length falls in, and whether a label
 is longer than 128 bytes (FORMAT §8.7). Sizes and timing can
-fingerprint well-known files.
+fingerprint well-known files. Several files shared through one link are one
+ZIP archive built in the browser, encrypted as a single file: the server sees
+its total size, not the number of files or their sizes. The member names and
+modification times inside it are encrypted with the content.
 
 **R3. AES-GCM is not key-committing.** A sender can craft a ciphertext that
 decrypts under two keys. Dropr never tries several keys on one blob and no

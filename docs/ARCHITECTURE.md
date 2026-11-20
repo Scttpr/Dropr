@@ -49,7 +49,7 @@ internal/jobs/            cleanup ticker (5 min) and its tasks
 web/                      TypeScript browser modules (esbuild), zero runtime dependencies
   src/crypto/             stream, hpke, kdf, meta, pad, filekey, requestkey, b64 (pure, WebCrypto only)
   src/lib/                api, uploader, downloader, swproto, request-keys (IndexedDB), i18n + locales/,
-                          dropzone, progress, format, …
+                          dropzone (files and dropped folders), zip (stored ZIP of several shared files), progress, format, …
   src/*.ts                page entry points: dashboard, links, inbox, share, request, prefs; sw (service worker)
   scripts/                build.ts (hashed bundles + manifest.json), bench.ts
   test/                   node --test unit and property tests, vectors/ (FORMAT.md test vectors)

@@ -355,7 +355,10 @@ the plaintext↔ciphertext size map a bijection.
 ### 8.7 What the server learns
 
 Ciphertext size (hence plaintext size exactly, by §4.3), timing, part count,
-and which request link an upload belongs to. It never sees request link
+and which request link an upload belongs to. Several files shared at once are
+one stored ZIP archive built in the browser before encryption (`lib/zip.ts`;
+nothing in this format changes): the server learns the archive's size, not
+how many files it holds nor their individual sizes. It never sees request link
 public keys (they travel only in the fragment) nor private keys. Names and
 types are encrypted. File content is not padded: sizes are considered
 metadata the server legitimately needs for quotas and Range requests.

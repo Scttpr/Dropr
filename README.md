@@ -11,8 +11,10 @@ your existing OIDC identity provider for accounts.
 
 Two flows, nothing else:
 
-* **Share**: an owner uploads a file and gets a link. Anyone with the link can
-  download it until it expires or is revoked.
+* **Share**: an owner uploads one or more files and gets a link. Anyone with
+  the link can download them until it expires or is revoked. Several files
+  (or a dropped folder) travel as one ZIP archive built in the browser, so the
+  server sees one encrypted file and not how many it holds.
 * **Request**: an owner creates a request link. Anyone with it can send files
   that only that owner can read.
 
