@@ -261,6 +261,36 @@ select, input[type="number"], input[type="text"] {
   cursor: pointer;
 }
 
+/* ---- Share selection --------------------------------------------------- */
+
+.selection { display: flex; flex-direction: column; gap: 0.5rem; }
+.selection[hidden] { display: none; }
+.selection-title { margin: 0; font-size: 1rem; }
+/* Long selections (a dropped folder) scroll inside the card. */
+.file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 18rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.file-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.35rem 0.5rem 0.35rem 0.85rem; border-bottom: 1px solid var(--border); }
+.file-row:last-child { border-bottom: 0; }
+.file-row-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.file-row-size { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.file-row-remove:hover { border-color: var(--danger); color: var(--danger); }
+.selection-summary { margin: 0; color: var(--muted); }
+.selection-summary.over { color: var(--danger); font-weight: 600; }
+@media (max-width: 30rem) {
+  .file-row { flex-wrap: wrap; row-gap: 0.15rem; }
+  .file-row-name { flex-basis: 100%; }
+  .file-row-size { margin-right: auto; }
+}
+
 /* ---- Transfers -------------------------------------------------------- */
 
 .transfer { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem; text-align: left; }

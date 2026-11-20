@@ -31,8 +31,8 @@ func TestPagesRenderInFrench(t *testing.T) {
 	body := w.Body.String()
 	for _, want := range []string{
 		`<html lang="fr" data-theme="light" data-brand="Dropr">`,
-		"Partager un fichier",
-		"ou choisissez-en un (jusqu&#39;à 5,00\u00a0Go)",
+		"Partager des fichiers",
+		"ou choisissez des fichiers (jusqu&#39;à 5,00\u00a0Go au total)",
 		`<option value="1d" selected>1 jour</option>`,
 		"Se déconnecter",
 		`aria-pressed="true">Français</button>`,
@@ -41,7 +41,7 @@ func TestPagesRenderInFrench(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	if strings.Contains(body, "Share a file") {
+	if strings.Contains(body, "Share files") {
 		t.Error("English left on a French page")
 	}
 	if got := w.Header().Get("Content-Language"); got != "fr" {

@@ -84,6 +84,28 @@ export const en = {
     `The maximum number of downloads must be a whole number from 1 to ${max}, or left empty.`,
   maxFilesInvalid: (max: string): string => `The number of files must be a whole number from 1 to ${max}.`,
   uploadReady: "Upload complete. Your link is ready.",
+  preparing: "Preparing",
+  archiveName: (date: string): string => `files-${date}.zip`,
+  shareSubmit: (n: number): string => (n > 1 ? `Share ${n} files` : "Share"),
+  selectionSummary: (n: number, size: string, limit: string): string => `${s(n, "file")}, ${size} of ${limit}.`,
+  selectionArchive: (name: string): string => `They will be sent as one ZIP archive, ${name}.`,
+  selectionTooLarge: (have: string, limit: string): string =>
+    `Together these files take ${have}, more than the ${limit} limit. Remove some to continue.`,
+  filesAdded: (added: number, total: number, skipped: number): string =>
+    `${s(added, "file")} added` +
+    (skipped > 0 ? `, ${skipped} already in the list` : "") +
+    `. ${s(total, "file")} to share.`,
+  fileRemoved: (name: string, total: number): string => `${name} removed. ${s(total, "file")} to share.`,
+  listCleared: "The list is empty.",
+  remove: "Remove",
+  removeNamed: (name: string): string => `Remove ${name}`,
+  noFileChosen: "Choose at least one file to share.",
+  readingFolder: "Reading the folder…",
+  tooManyFiles: (limit: string): string => `You can share up to ${limit} files at once.`,
+  fileUnreadable: (name: string): string =>
+    `${name} could not be read. It may have been moved, renamed or changed: remove it from the list, or choose it again.`,
+  dropUnreadable: (name: string): string =>
+    `${name} could not be read. Try choosing the files with the button instead.`,
   creatingRequest: "Creating the request link…",
   requestReady: "Your request link is ready.",
 

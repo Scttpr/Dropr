@@ -59,7 +59,7 @@ func TestNegotiateCookieWins(t *testing.T) {
 
 func TestT(t *testing.T) {
 	t.Parallel()
-	if got := FR.T("Share a file"); got != "Partager un fichier" {
+	if got := FR.T("Share files"); got != "Partager des fichiers" {
 		t.Errorf("FR.T = %q", got)
 	}
 	if got := EN.T("%d active links.", 3); got != "3 active links." {

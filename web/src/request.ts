@@ -23,7 +23,7 @@ import {
 } from "./crypto/index.ts";
 import { api } from "./lib/api.ts";
 import { Notice, byId, dataInt, el, focusTo, maybeId, pageRoot, revealJsOnly, warnBeforeUnload } from "./lib/dom.ts";
-import { attachDropZone } from "./lib/dropzone.ts";
+import { DropReadError, TooManyFilesError, attachDropZone } from "./lib/dropzone.ts";
 import { formatBytes } from "./lib/format.ts";
 import { t } from "./lib/i18n.ts";
 import { errorMessage } from "./lib/messages.ts";
@@ -69,7 +69,14 @@ function init(main: HTMLElement): void {
 
   let busy = false;
   warnBeforeUnload(() => busy);
-  const zone = attachDropZone(zoneEl, input, (files) => void sendAll(files), { multiple: true });
+  const zone = attachDropZone(zoneEl, input, (files) => void sendAll(files), {
+    multiple: true,
+    onError: (e) => {
+      if (e instanceof DropReadError) notice.error(t.dropUnreadable(e.path));
+      else if (e instanceof TooManyFilesError) notice.error(t.acceptsMore(Math.min(filesLeft, e.limit)));
+      else notice.error(e);
+    },
+  });
 
   async function sendAll(files: File[]): Promise<void> {
     if (busy) return;

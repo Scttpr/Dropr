@@ -4,13 +4,19 @@
   <h1 class="visually-hidden">{{$.Brand.Name}}</h1>
 
   <section class="card card-share" aria-labelledby="share-heading">
-    <h2 id="share-heading">{{t "Share a file"}}</h2>
+    <h2 id="share-heading">{{t "Share files"}}</h2>
     <form id="share-form" class="stack" data-js-only hidden>
       <div id="drop-zone" class="drop-zone">
         <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
-        <label for="file-input" class="drop-label"><span class="drop-title">{{t "Drop a file here to share"}}</span> <span class="drop-sub">{{t "or choose one (up to %s)" (bytes .MaxFileSize)}}</span></label>
-        <input type="file" id="file-input" name="file" class="file-input">
+        <label for="file-input" class="drop-label"><span class="drop-title">{{t "Drop files or folders here"}}</span> <span class="drop-sub">{{t "or choose files (up to %s in total)" (bytes .MaxFileSize)}}</span></label>
+        <input type="file" id="file-input" name="files" class="file-input" multiple>
       </div>
+      <div id="share-selection" class="selection" hidden>
+        <h3 id="share-files-heading" class="selection-title">{{t "Files to share"}}</h3>
+        <ul id="share-files" class="file-list" aria-labelledby="share-files-heading"></ul>
+        <p id="share-summary" class="selection-summary"></p>
+      </div>
+      <p id="share-selection-status" class="visually-hidden" role="status" aria-live="polite"></p>
       <div class="field-row">
         <div class="field">
           <label for="expires-in">{{t "Link expires after"}}</label>
@@ -21,6 +27,10 @@
           <input type="number" id="max-downloads" name="max_downloads" min="1" max="{{.DownloadCap}}"{{if .DefaultMaxDownloads}} value="{{.DefaultMaxDownloads}}"{{end}} inputmode="numeric" placeholder="{{if .MaxDownloads}}{{t "At most %d" .MaxDownloads}}{{else}}{{t "No limit"}}{{end}}" aria-describedby="max-downloads-hint">
           <p id="max-downloads-hint" class="hint">{{if .MaxDownloads}}{{t "The link stops working after this many downloads, at most %d. Leave empty for %d." .MaxDownloads .EmptyDownloads}}{{else}}{{t "The link stops working after this many downloads. Leave empty for no limit."}}{{end}}</p>
         </div>
+      </div>
+      <div class="button-row">
+        <button type="submit" id="share-submit" class="button button-primary button-large">{{t "Share"}}</button>
+        <button type="button" id="share-clear" class="button" hidden>{{t "Clear the list"}}</button>
       </div>
     </form>
 
@@ -43,7 +53,7 @@
         </div>
         <p id="share-expiry" class="muted"></p>
         <p class="hint">{{t "Anyone with this link can download the file. The key is in the part after “#” and never reaches the server."}}</p>
-        <button type="button" id="share-another" class="button">{{t "Share another file"}}</button>
+        <button type="button" id="share-another" class="button">{{t "Share more files"}}</button>
       </div>
     </div>
 
