@@ -115,6 +115,27 @@ export const fr: Messages = {
     `Le nombre maximal de téléchargements doit être un nombre entier de 1 à ${max}, ou rester vide.`,
   maxFilesInvalid: (max) => `Le nombre de fichiers doit être un nombre entier de 1 à ${max}.`,
   uploadReady: "Envoi terminé. Votre lien est prêt.",
+  preparing: "Préparation",
+  archiveName: (date) => `fichiers-${date}.zip`,
+  shareSubmit: (n) => (n > 1 ? `Partager les ${n}${nb}fichiers` : "Partager"),
+  selectionSummary: (n, size, limit) => `${n}${nb}${p(n, "fichier", "fichiers")}, ${size} sur ${limit}.`,
+  selectionArchive: (name) => `Ils seront envoyés dans une seule archive ZIP, ${q(name)}.`,
+  selectionTooLarge: (have, limit) =>
+    `Ensemble, ces fichiers occupent ${have}, au-delà de la limite de ${limit}. Retirez-en pour continuer.`,
+  filesAdded: (added, total, skipped) =>
+    `${added}${nb}${p(added, "fichier ajouté", "fichiers ajoutés")}` +
+    (skipped > 0 ? `, ${skipped} déjà dans la liste` : "") +
+    `. ${total}${nb}${p(total, "fichier", "fichiers")} à partager.`,
+  fileRemoved: (name, total) => `${q(name)} retiré. ${total}${nb}${p(total, "fichier", "fichiers")} à partager.`,
+  listCleared: "La liste est vide.",
+  remove: "Retirer",
+  removeNamed: (name) => `Retirer ${name}`,
+  noFileChosen: "Choisissez au moins un fichier à partager.",
+  readingFolder: "Lecture du dossier…",
+  tooManyFiles: (limit) => `Vous pouvez partager jusqu'à ${limit}${nb}fichiers à la fois.`,
+  fileUnreadable: (name) =>
+    `${q(name)} n'a pas pu être lu. Il a peut-être été déplacé, renommé ou modifié${nb}: retirez-le de la liste ou choisissez-le à nouveau.`,
+  dropUnreadable: (name) => `${q(name)} n'a pas pu être lu. Essayez plutôt de choisir les fichiers avec le bouton.`,
   creatingRequest: "Création du lien de dépôt…",
   requestReady: "Votre lien de dépôt est prêt.",
 
