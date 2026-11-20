@@ -18,7 +18,8 @@ Two flows, nothing else:
 * **Request**: an owner creates a request link. Anyone with it can send files
   that only that owner can read.
 
-Files go up to 100 GB (default cap 5 GB). Uploads are resumable; downloads
+Files go up to 100 GB (default cap 5 GB; for several files shared at once,
+the cap applies to their total). Uploads are resumable; downloads
 stream to disk. The interface is in English and French, with light, dark and
 system themes, and can carry your organization's name and logo.
 

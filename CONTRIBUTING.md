@@ -1,6 +1,6 @@
 # Contributing
 
-Dropr does two things: share a file through a link, and receive files through a
+Dropr does two things: share files through a link, and receive files through a
 request link. Changes that keep it small and correct are welcome. New features
 outside those two flows are not (see [docs/DESIGN.md](docs/DESIGN.md) §1).
 

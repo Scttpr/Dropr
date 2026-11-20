@@ -16,7 +16,7 @@ login_label  = "Sign in with Microsoft"
 # session_max_age = "8h"           # 15m to 30d after sign-in
 
 [limits]
-max_file_size  = "5GB"             # at most 100GB (binary units)
+max_file_size  = "5GB"             # per file, or per share of several files (their ZIP); at most 100GB (binary units)
 user_quota     = "50GB"
 # expiry_choices = ["1h", "1d", "7d", "30d"]   # hours or days, 1h to 365d, up to 8
 default_expiry = "7d"              # one of expiry_choices

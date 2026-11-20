@@ -137,7 +137,7 @@ share one browser profile without touching each other's keys
 
 | Attribute | Required | Value |
 |---|---|---|
-| `data-max-file-size` | yes | instance `limits.max_file_size`, plaintext bytes (e.g. `5368709120`) |
+| `data-max-file-size` | yes | instance `limits.max_file_size`, plaintext bytes (e.g. `5368709120`); for several shared files, the cap on their ZIP archive |
 | `data-default-expiry` | yes | `limits.default_expiry` (`7d` by default), one of the expiry menu's options |
 | `data-owner-id` | yes | the signed-in account's ID (§1.4) |
 | `data-max-request-bytes` | no | `max_bytes` sent when creating a request link: a **ciphertext** budget (the API counts ciphertext, §1.5). The server renders the ciphertext size of one maximal file, `CipherSize(max_file_size)`. If absent the JS falls back to `data-max-file-size`, which is slightly too small for a maximal file. |

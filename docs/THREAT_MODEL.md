@@ -11,8 +11,9 @@ checklist to re-verify against the code before each release.
 
 ## 1. What Dropr is protecting, and from whom
 
-Dropr lets an authenticated **owner** (a) share a file through a link that
-carries the decryption key in the URL fragment, and (b) publish a request link
+Dropr lets an authenticated **owner** (a) share files through a link that
+carries the decryption key in the URL fragment (several files as one
+browser-built ZIP archive), and (b) publish a request link
 through which anyone can send files that only that owner can read. The server
 stores ciphertext and never sees file content, file names or file keys.
 
