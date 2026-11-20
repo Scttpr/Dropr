@@ -62,7 +62,11 @@ test("owner pages: login, dashboard (idle, result, error), inbox, links", async 
 
   await p.goto(dropr.origin + "/");
   await p.locator("#max-downloads").fill("0");
-  await p.locator("#file-input").setInputFiles(f.path);
+  const g = await makeFile(filesDir, "a11y second.txt", 3000);
+  await p.locator("#file-input").setInputFiles([f.path, g.path]);
+  await expect(p.locator("#share-files li")).toHaveCount(2);
+  await axe(p, "dashboard with a selection");
+  await p.locator("#share-submit").click();
   await expect(p.locator("#share-error")).toBeVisible();
   await axe(p, "dashboard error state");
 

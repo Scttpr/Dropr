@@ -275,6 +275,7 @@ export async function shareFile(owner: Owner, file: TestFile, o: ShareOptions = 
   if (o.expiresIn !== undefined) await p.locator("#expires-in").selectOption(o.expiresIn);
   if (o.maxDownloads !== undefined) await p.locator("#max-downloads").fill(String(o.maxDownloads));
   await p.locator("#file-input").setInputFiles(file.path);
+  await p.locator("#share-submit").click();
   await expect(p.locator("#share-result")).toBeVisible({ timeout: 120_000 });
   return p.locator("#share-link").inputValue();
 }

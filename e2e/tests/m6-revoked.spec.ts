@@ -133,6 +133,7 @@ test("revoking a share while it is still uploading cancels the upload and remove
   });
   const created = p.waitForResponse((r) => r.url().endsWith("/api/shares") && r.request().method() === "POST");
   await p.locator("#file-input").setInputFiles(big.path);
+  await p.locator("#share-submit").click();
   const { share_id, upload_id } = (await (await created).json()) as { share_id: string; upload_id: string };
   await p.waitForResponse((r) => /\/upload\/[^/]+\/part\/0$/.test(r.url()) && r.status() === 204, { timeout: 60_000 });
   expect(blobExists(dropr, upload_id)).toBe(true);

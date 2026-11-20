@@ -26,7 +26,7 @@ test("owner signs in and lands on the dashboard", async ({ owner, filesDir }) =>
 
   const p = owner.page;
   await owner.login(USERS.alice); // no setup step: straight to the dashboard
-  await expect(p.getByText("Drop a file here to share")).toBeVisible();
+  await expect(p.getByText("Drop files or folders here")).toBeVisible();
   await expect(p.getByRole("button", { name: "Ask someone to send me a file" })).toBeVisible();
 });
 
@@ -37,6 +37,9 @@ for (const which of ["small", "large"] as const) {
     await p.goto(owner.dropr.origin + "/");
     await expect(p.locator("#share-form")).toBeVisible();
     await p.locator("#file-input").setInputFiles(file.path);
+    await expect(p.locator("#share-files li")).toHaveCount(1);
+    await expect(p.locator("#share-submit")).toHaveText("Share");
+    await p.locator("#share-submit").click();
     await expect(p.locator("#upload-panel")).toBeVisible();
     const link = p.locator("#share-link");
     await expect(p.locator("#share-result")).toBeVisible({ timeout: 120_000 });
