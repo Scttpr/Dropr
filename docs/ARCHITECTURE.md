@@ -153,11 +153,12 @@ cookie. The redirects that carry it are `Cache-Control: no-store`.
 
 Session cookie: `__Host-dropr_session`, `Secure; HttpOnly; SameSite=Strict; Path=/`.
 With `session_cookie = "persistent"` (default) it carries `Max-Age` up to the
-8 h absolute timeout and survives a browser restart; with `"browser"` it has
-no `Max-Age` and the browser drops it when it closes. The server-side
-timeouts (30 min idle, 8 h absolute) apply in both modes.
+absolute timeout (`session_max_age`, 8 h by default) and survives a browser
+restart; with `"browser"` it has no `Max-Age` and the browser drops it when it
+closes. The server-side timeouts (`session_idle_timeout`, 30 min, and
+`session_max_age`, 8 h, by default) apply in both modes.
 
-Display settings: `__Host-dropr_lang` (`en`, `fr`) and `__Host-dropr_theme` (`light`, `dark`, `system`; default `light`), `Secure; SameSite=Lax; Path=/; Max-Age=1 year`. Not HttpOnly: `prefs.js` sets them so a change keeps the URL fragment. They carry no secret.
+Display settings: `__Host-dropr_lang` (`en`, `fr`) and `__Host-dropr_theme` (`light`, `dark`, `system`; default `ui.default_theme`, `light` unless set), `Secure; SameSite=Lax; Path=/; Max-Age=1 year`. Not HttpOnly: `prefs.js` sets them so a change keeps the URL fragment. They carry no secret.
 
 ### Request link keys (browser only, no endpoint)
 
@@ -200,7 +201,7 @@ dashboard.
 ### Shares (flow A)
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | `/api/shares` | session | `{size, parts, meta (144, 272 or 528 bytes), expires_in?: "1h"|"1d"|"7d"|"30d", max_downloads?: 1..999999}` → 201 `{share_id, upload_id, upload_token}`. `expires_in` defaults to `limits.default_expiry`; 429 `rate_limited` at 5000 live shares per owner |
+| POST | `/api/shares` | session | `{size, parts, meta (144, 272 or 528 bytes), expires_in?: one of limits.expiry_choices, max_downloads?: 1..limits.max_downloads (999999 without a cap)}` → 201 `{share_id, upload_id, upload_token}`. `expires_in` defaults to `limits.default_expiry`; a missing `max_downloads` takes `limits.default_max_downloads`, else the cap, else no limit; 429 `rate_limited` at 5000 live shares per owner |
 | DELETE | `/api/shares/{id}` | session (owner) | revoke, complete or still uploading (upload cancelled): delete row + blob → 204 |
 | GET | `/api/shares` | session | → `{"shares": [{id, size, parts, expires_at, max_downloads|null, download_count, created_at}]}` (complete, unexpired) |
 | POST | `/api/s/{id}/download` | – (rate-limited) | body empty or `{}` → `{token, size, parts, meta}`; 410 `expired` / `exhausted` (count ≥ `max_downloads`); issuing does not count |
@@ -209,7 +210,7 @@ dashboard.
 ### Requests (flow B)
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | `/api/requests` | session | `{expires_in?, max_files: 1..1000, max_bytes, single_use}` → 201 `{request_id}`; client builds link `/r/<id>#<b64url(pubkey)>` from the link's own key pair (§2). `16 ≤ max_bytes ≤ max_files × C(limits.max_file_size)`; 429 `rate_limited` at 5000 live request links per owner; 507 `disk_full` below the disk headroom |
+| POST | `/api/requests` | session | `{expires_in?, max_files: 1..limits.max_request_files (1000 by default), max_bytes, single_use}` → 201 `{request_id}`; client builds link `/r/<id>#<b64url(pubkey)>` from the link's own key pair (§2). `16 ≤ max_bytes ≤ max_files × C(limits.max_file_size)`; 429 `rate_limited` at 5000 live request links per owner; 507 `disk_full` below the disk headroom |
 | PUT | `/api/requests/{id}/label` | session (owner) | `{label_meta}` (b64url, 176 or 304 bytes, HPKE-sealed to the link's public key with `info = "dropr/v1 label " ‖ requestId`, so set after creation) → 204 |
 | DELETE | `/api/requests/{id}` | session (owner) | revoke: row + every inbox file and blob it received → 204 |
 | GET | `/api/requests` | session | → `{"requests": [{id, expires_at, max_files, max_bytes, single_use, files_received, bytes_received, closed, label_meta|null, created_at}]}` (unexpired) |
@@ -446,6 +447,8 @@ Additional keys (all optional; unknown keys are rejected):
 |---|---|---|
 | `redirect_listen` | `":8080"` | address of the `redirect_http` server (ACME mode only) |
 | `log_level` | `"info"` | `debug`, `info`, `warn`, `error` |
+| `session_idle_timeout` | `"30m"` | a session ends after this long without a request, 5m–24h, ≤ `session_max_age` |
+| `session_max_age` | `"8h"` | a session ends this long after sign-in whatever its activity (absolute timeout), 15m–30d |
 | `session_cookie` | `"persistent"` | `"browser"`: the session cookie has no `Max-Age`, so closing the browser ends the session (browsers that restore the previous session keep it); server-side timeouts unchanged |
 | `auto_login` | `false` | owner pages (`/`, `/inbox`, `/links`) without a session go straight to `/auth/login` instead of the login page; `/login` and link pages never redirect (docs/oidc.md) |
 | `oidc.client_key_id` | – | `kid` header of client assertions (Keycloak matches keys by kid; Entra uses `x5t#S256`) |
@@ -453,6 +456,12 @@ Additional keys (all optional; unknown keys are rejected):
 | `oidc.client_assertion_x5t_sha1` | `false` | also send the legacy SHA-1 `x5t` header |
 | `oidc.client_secret_file` | – | dev mode only, with `client_auth = "client_secret"` |
 | `oidc.allow_unadvertised_pkce` | `false` | accept a provider that supports PKCE S256 without advertising it (Entra ID) |
+| `limits.expiry_choices` | `["1h", "1d", "7d", "30d"]` | link expiries offered (shares and request links): hours or days (`"12h"`, `"14d"`), 1h–365d, 1–8 choices, no two of the same length; menus list them shortest first. `default_expiry` must be one of them |
+| `limits.max_downloads` | `0` | cap on a share's `max_downloads`, ≤ 999999; `0` = no cap. With a cap every share has a download limit: a share created without one gets `default_max_downloads`, else the cap |
+| `limits.default_max_downloads` | `0` | download limit prefilled in the share form and applied when the request names none; `0` = none; ≤ `max_downloads` when capped |
+| `limits.max_request_files` | `1000` | cap on a request link's `max_files`, 1–1000 (the form starts at min(10, cap)) |
+| `ui.default_theme` | `"light"` | theme of visitors who picked none: `light`, `dark` or `system` (follow the device) |
+| `ui.default_language` | `"en"` | language of visitors whose browser asks for no supported one: `en` or `fr` |
 | `limits.disk_headroom` | auto | free space that must remain after accepting an upload (and the remaining bytes of uploads in progress); auto = max(1 GiB, 5 % of the file system) |
 | `limits.max_transfers` | `512` | concurrent part uploads + downloads, instance-wide |
 | `limits.max_transfers_per_ip` | `32` | the same per client address (IPv6 per /56); ≤ `max_transfers` |

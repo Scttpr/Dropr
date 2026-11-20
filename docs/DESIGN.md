@@ -112,7 +112,7 @@ revalidate_every = "15m"
 ### 5.3 Sessions
 
 - Server-side sessions with a `__Host-` cookie, `Secure; HttpOnly; SameSite=Strict`. The cookie holds a random 256-bit ID; the database stores only its SHA-256 hash.
-- 30 min idle timeout, 8 h absolute timeout, plus OIDC revalidation every 15 min.
+- 30 min idle timeout, 8 h absolute timeout by default (`session_idle_timeout`, `session_max_age`), plus OIDC revalidation every 15 min.
 - By default the cookie lasts until the absolute timeout, across browser restarts. `session_cookie = "browser"` makes it a browser-session cookie (no `Max-Age`): closing the browser signs the user out, unless the browser restores the previous session ("Continue where you left off" keeps session cookies).
 - The session ID rotates at login. Signing in again ends the browser's previous session: its hash travels in the sealed OIDC state cookie and that session is deleted at a successful callback (a cancelled or refused sign-in keeps it).
 
@@ -131,8 +131,8 @@ Admin access is shell access to the host. There is no admin web UI.
 ## 6. Links
 
 - IDs: 128-bit random, base64url.
-- Expiry is mandatory: 1 h / 1 day / 7 days (default) / 30 days.
-- Share link: optional `max_downloads`. Request link: `max_files`, `max_bytes` (≤ instance cap), optional single-use.
+- Expiry is mandatory, picked from the instance's choices (`limits.expiry_choices`, 1 h to 365 days): 1 h / 1 day / 7 days (default) / 30 days unless set.
+- Share link: optional `max_downloads` (the instance may cap it and set a default, which makes it mandatory). Request link: `max_files` (≤ instance cap), `max_bytes` (≤ instance cap), optional single-use.
 - The owner can revoke any link at any time. Revoking or expiring deletes the blobs, not just the rows.
 - A cleanup job runs every 5 minutes.
 
@@ -203,8 +203,9 @@ blobs     (id, parts, size, complete, created_at)
 Errors are written in plain language: "This link has expired."
 
 **Language and theme**: English and French, picked from the browser's
-language and switchable on every page; light theme by default, plus dark and
-"follow the system". Both work without JavaScript (a small form in the page
+language (the instance names the fallback, English unless set) and
+switchable on every page; light theme by default (the instance may pick
+another), plus dark and "follow the system". Both work without JavaScript (a small form in the page
 header) and are remembered in cookies.
 
 ## 10. Self-hosting

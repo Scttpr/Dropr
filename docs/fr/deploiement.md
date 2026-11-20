@@ -128,6 +128,41 @@ conservent les cookies de session quand ils restaurent la session précédente
 (« Continuer là où vous en étiez ») ; désactivez-la par stratégie de groupe
 (`RestoreOnStartup` à une valeur autre que 1) pour que cela fonctionne.
 
+**Durée des sessions.** Une session prend fin après 30 minutes d'inactivité
+et 8 heures après la connexion. Alignez les deux sur la politique de votre
+organisation :
+
+```toml
+session_idle_timeout = "1h"    # de 5m à 24h
+session_max_age      = "10h"   # de 15m à 30d, au moins l'inactivité
+```
+
+**Options des liens.** Les menus d'expiration proposent 1 heure, 1 jour,
+7 jours et 30 jours. Proposez vos propres durées, en heures ou en jours (de 1h
+à 365d, 8 au plus), et plafonnez ce que les utilisateurs peuvent choisir :
+
+```toml
+[limits]
+expiry_choices        = ["1d", "3d", "14d"]
+default_expiry        = "3d"     # l'un des expiry_choices
+max_downloads         = 50       # chaque partage a alors une limite de téléchargements
+default_max_downloads = 10       # prérempli ; utilisé aussi si le champ reste vide
+max_request_files     = 100      # par lien de dépôt, 1000 au plus
+```
+
+Sans `max_downloads`, la limite de téléchargements reste facultative. Ces
+réglages ne s'appliquent qu'aux liens créés ensuite.
+
+**Affichage par défaut.** Les visiteurs qui n'ont choisi ni langue ni thème
+ont l'anglais et le thème clair. Une instance surtout utilisée en français, ou
+qui préfère suivre le thème de l'appareil, peut changer les deux :
+
+```toml
+[ui]
+default_language = "fr"       # si le navigateur ne demande aucune langue prise en charge
+default_theme    = "system"   # "light", "dark" ou "system"
+```
+
 **Nom et logo.** L'interface peut porter le nom et le logo de l'organisation à
 la place de ceux de Dropr. Le pied de page mentionne alors Dropr en une ligne.
 

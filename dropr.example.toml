@@ -12,11 +12,17 @@ refresh_key_file = "/etc/dropr/refresh_key"   # openssl rand -base64 32
 login_label  = "Sign in with Microsoft"
 # session_cookie = "persistent"    # "browser": closing the browser signs out (server timeouts still apply)
 # auto_login = false               # true: owner pages go straight to the provider (SSO), /login keeps its button
+# session_idle_timeout = "30m"     # 5m to 24h without activity
+# session_max_age = "8h"           # 15m to 30d after sign-in
 
 [limits]
 max_file_size  = "5GB"             # at most 100GB (binary units)
 user_quota     = "50GB"
-default_expiry = "7d"              # 1h, 1d, 7d or 30d
+# expiry_choices = ["1h", "1d", "7d", "30d"]   # hours or days, 1h to 365d, up to 8
+default_expiry = "7d"              # one of expiry_choices
+# max_downloads = 0                # cap per share (0: none); with a cap every share has a limit
+# default_max_downloads = 0        # prefilled download limit (0: none)
+# max_request_files = 1000         # cap per request link, 1 to 1000
 # disk_headroom = "10GB"          # free space kept after accepting an upload; default max(1GB, 5% of the disk)
 # max_transfers = 512              # concurrent part uploads + downloads
 # max_transfers_per_ip = 32
@@ -29,6 +35,10 @@ default_expiry = "7d"              # 1h, 1d, 7d or 30d
 # logo_file      = "/etc/dropr/branding/logo.svg"        # .svg, .png or .webp, at most 256 KiB
 # logo_dark_file = "/etc/dropr/branding/logo-dark.svg"   # dark theme (optional)
 # favicon_file   = "/etc/dropr/branding/favicon.svg"
+
+# [ui]                             # defaults for visitors who picked none
+# default_theme    = "light"       # "light", "dark" or "system"
+# default_language = "en"          # "en" or "fr"
 
 [oidc]
 issuer          = "https://login.microsoftonline.com/<tenant-id>/v2.0"

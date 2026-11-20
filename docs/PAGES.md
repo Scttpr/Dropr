@@ -100,7 +100,8 @@ share one browser profile without touching each other's keys
 
 - **Language.** The server picks it per request: the `__Host-dropr_lang`
   cookie (an explicit choice), else the best `Accept-Language` match, else
-  English. It renders `<html lang="en|fr">` and `Content-Language`, and
+  `ui.default_language` (English unless set). The theme is the
+  `__Host-dropr_theme` cookie, else `ui.default_theme` (light unless set). It renders `<html lang="en|fr">` and `Content-Language`, and
   translates every server-rendered string (`internal/i18n`, msgid = the
   English text). The modules read `<html lang>` and take their text from the
   typed catalogs in `web/src/lib/locales/` (`en.ts` defines the shape; `tsc`
@@ -137,7 +138,7 @@ share one browser profile without touching each other's keys
 | Attribute | Required | Value |
 |---|---|---|
 | `data-max-file-size` | yes | instance `limits.max_file_size`, plaintext bytes (e.g. `5368709120`) |
-| `data-default-expiry` | yes | `limits.default_expiry` (`7d` by default) |
+| `data-default-expiry` | yes | `limits.default_expiry` (`7d` by default), one of the expiry menu's options |
 | `data-owner-id` | yes | the signed-in account's ID (§1.4) |
 | `data-max-request-bytes` | no | `max_bytes` sent when creating a request link: a **ciphertext** budget (the API counts ciphertext, §1.5). The server renders the ciphertext size of one maximal file, `CipherSize(max_file_size)`. If absent the JS falls back to `data-max-file-size`, which is slightly too small for a maximal file. |
 
@@ -152,7 +153,7 @@ share one browser profile without touching each other's keys
       <input type="file" id="file-input" name="file">
     </div>
     <label for="expires-in">Link expires after</label>
-    <select id="expires-in" name="expires_in">
+    <select id="expires-in" name="expires_in">   <!-- one option per limits.expiry_choices -->
       <option value="1h">1 hour</option>
       <option value="1d">1 day</option>
       <option value="7d" selected>7 days</option>   <!-- selected = data-default-expiry -->
@@ -160,8 +161,9 @@ share one browser profile without touching each other's keys
     </select>
     <label for="max-downloads">Maximum number of downloads (optional)</label>
     <input type="number" id="max-downloads" name="max_downloads" min="1" max="999999" inputmode="numeric"
-           aria-describedby="max-downloads-hint">
+           aria-describedby="max-downloads-hint">   <!-- max = limits.max_downloads, value = limits.default_max_downloads when set -->
     <p id="max-downloads-hint">The link stops working after this many downloads. Leave empty for no limit.</p>
+    <!-- under a cap: "…, at most N. Leave empty for D." (D: the default, else the cap) -->
   </form>
 
   <div id="upload-panel" hidden>
@@ -208,9 +210,10 @@ share (`DELETE /api/shares/{id}`).
      Only you can open them, in this browser.</p>
   <form id="request-form" data-js-only hidden>
     <label for="request-expires-in">Link expires after</label>
-    <select id="request-expires-in">…same four options…</select>
+    <select id="request-expires-in">…same options…</select>
     <label for="request-max-files">Maximum number of files</label>
     <input type="number" id="request-max-files" min="1" max="1000" value="10" inputmode="numeric">
+    <!-- max = limits.max_request_files, value = min(10, max); the JS refuses values above max -->
     <label><input type="checkbox" id="request-single-use"> Single use</label>
     <button type="submit" id="request-create">Ask someone to send me a file</button>
   </form>
