@@ -23,8 +23,18 @@ import { isAbortError } from "./retry.ts";
 
 export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
-export type ExpiresIn = "1h" | "1d" | "7d" | "30d";
-export const EXPIRY_CHOICES: readonly ExpiresIn[] = ["1h", "1d", "7d", "30d"];
+/**
+ * A link expiry choice of the instance (limits.expiry_choices): a number of
+ * hours or days, "12h" or "7d". The server offers its choices in the
+ * expiry menus; an empty value asks for its default.
+ */
+export type ExpiresIn = string;
+const EXPIRY_RE = /^[1-9]\d{0,3}[hd]$/;
+
+/** Whether v has the shape of an expiry choice (the server checks the list). */
+export function isExpiry(v: string | undefined): v is ExpiresIn {
+  return v !== undefined && EXPIRY_RE.test(v);
+}
 
 /** An API call failed. `message` is safe to show to the user (plain text). */
 export class ApiError extends Error {

@@ -3,6 +3,8 @@ package web
 import (
 	"testing"
 	"time"
+
+	"github.com/scttpr/dropr/internal/i18n"
 )
 
 func TestFormatBytesMatchesJS(t *testing.T) {
@@ -29,6 +31,21 @@ func TestFormatExpiry(t *testing.T) {
 	} {
 		if got := FormatExpiry(now.Unix()+d, now); got != want {
 			t.Errorf("FormatExpiry(+%d) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestFormatExpiryChoice(t *testing.T) {
+	t.Parallel()
+	for choice, want := range map[string][2]string{
+		"1h": {"1 hour", "1 heure"}, "12h": {"12 hours", "12 heures"},
+		"1d": {"1 day", "1 jour"}, "30d": {"30 days", "30 jours"}, "365d": {"365 days", "365 jours"},
+	} {
+		if got := FormatExpiryChoice(i18n.EN, choice); got != want[0] {
+			t.Errorf("EN %q = %q, want %q", choice, got, want[0])
+		}
+		if got := FormatExpiryChoice(i18n.FR, choice); got != want[1] {
+			t.Errorf("FR %q = %q, want %q", choice, got, want[1])
 		}
 	}
 }

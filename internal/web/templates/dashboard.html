@@ -14,12 +14,12 @@
       <div class="field-row">
         <div class="field">
           <label for="expires-in">{{t "Link expires after"}}</label>
-          <select id="expires-in" name="expires_in">{{template "expiry-options" .DefaultExpiry}}</select>
+          <select id="expires-in" name="expires_in">{{template "expiry-options" .}}</select>
         </div>
         <div class="field">
           <label for="max-downloads">{{t "Maximum number of downloads"}} <span class="optional">{{t "(optional)"}}</span></label>
-          <input type="number" id="max-downloads" name="max_downloads" min="1" max="999999" inputmode="numeric" placeholder="{{t "No limit"}}" aria-describedby="max-downloads-hint">
-          <p id="max-downloads-hint" class="hint">{{t "The link stops working after this many downloads. Leave empty for no limit."}}</p>
+          <input type="number" id="max-downloads" name="max_downloads" min="1" max="{{.DownloadCap}}"{{if .DefaultMaxDownloads}} value="{{.DefaultMaxDownloads}}"{{end}} inputmode="numeric" placeholder="{{if .MaxDownloads}}{{t "At most %d" .MaxDownloads}}{{else}}{{t "No limit"}}{{end}}" aria-describedby="max-downloads-hint">
+          <p id="max-downloads-hint" class="hint">{{if .MaxDownloads}}{{t "The link stops working after this many downloads, at most %d. Leave empty for %d." .MaxDownloads .EmptyDownloads}}{{else}}{{t "The link stops working after this many downloads. Leave empty for no limit."}}{{end}}</p>
         </div>
       </div>
     </form>
@@ -58,11 +58,11 @@
       <div class="field-row">
         <div class="field">
           <label for="request-expires-in">{{t "Link expires after"}}</label>
-          <select id="request-expires-in" name="expires_in">{{template "expiry-options" .DefaultExpiry}}</select>
+          <select id="request-expires-in" name="expires_in">{{template "expiry-options" .}}</select>
         </div>
         <div class="field">
           <label for="request-max-files">{{t "Maximum number of files"}}</label>
-          <input type="number" id="request-max-files" name="max_files" min="1" max="1000" value="10" inputmode="numeric">
+          <input type="number" id="request-max-files" name="max_files" min="1" max="{{.MaxRequestFiles}}" value="{{.RequestFilesValue}}" inputmode="numeric">
         </div>
       </div>
       <div class="check">

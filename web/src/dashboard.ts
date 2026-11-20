@@ -17,7 +17,7 @@ import {
   partCount,
   sealMeta,
 } from "./crypto/index.ts";
-import { EXPIRY_CHOICES, type ExpiresIn, api } from "./lib/api.ts";
+import { type ExpiresIn, api, isExpiry } from "./lib/api.ts";
 import { Notice, byId, dataInt, maybeId, pageRoot, revealJsOnly, warnBeforeUnload } from "./lib/dom.ts";
 import { attachDropZone } from "./lib/dropzone.ts";
 import { expiryChoiceText, formatBytes, formatInteger } from "./lib/format.ts";
@@ -28,25 +28,28 @@ import { isAbortError } from "./lib/retry.ts";
 import { ProgressPanel, runUploadWithPanel } from "./lib/transfer-ui.ts";
 import { Uploader } from "./lib/uploader.ts";
 
-function isExpiry(v: string | undefined): v is ExpiresIn {
-  return v !== undefined && (EXPIRY_CHOICES as readonly string[]).includes(v);
-}
-
 function expiryFrom(select: HTMLSelectElement | null, fallback: ExpiresIn): ExpiresIn {
   const v = select?.value;
   return isExpiry(v) ? v : fallback;
 }
 
-/** `data-default-expiry` if valid, else 7 days (DESIGN.md §6). */
+/** `data-default-expiry` if valid, else "" (the server's default, DESIGN.md §6). */
 function defaultExpiryOf(main: HTMLElement): ExpiresIn {
   const d = main.dataset["defaultExpiry"];
-  return isExpiry(d) ? d : "7d";
+  return isExpiry(d) ? d : "";
 }
 
-function optionalPositiveInt(input: HTMLInputElement | null): number | undefined | null {
+/** The `max` attribute of input (the instance cap), else fallback. */
+function inputMax(input: HTMLInputElement | null, fallback: number): number {
+  const m = input?.max ?? "";
+  return /^\d{1,6}$/.test(m) && Number(m) >= 1 ? Number(m) : fallback;
+}
+
+/** The whole number in input, undefined if empty, null if not in 1..max. */
+function optionalPositiveInt(input: HTMLInputElement | null, max: number): number | undefined | null {
   const raw = input?.value.trim() ?? "";
   if (raw === "") return undefined;
-  if (!/^\d{1,6}$/.test(raw) || Number(raw) < 1) return null; // invalid
+  if (!/^\d{1,6}$/.test(raw) || Number(raw) < 1 || Number(raw) > max) return null; // invalid
   return Number(raw);
 }
 
@@ -92,9 +95,10 @@ function initShare(main: HTMLElement): void {
       notice.error(t.fileTooLarge(have, limit));
       return;
     }
-    const maxDownloads = optionalPositiveInt(maxDl);
+    const downloadCap = inputMax(maxDl, 999_999);
+    const maxDownloads = optionalPositiveInt(maxDl, downloadCap);
     if (maxDownloads === null) {
-      notice.error(t.downloadLimitInvalid);
+      notice.error(t.downloadLimitInvalid(formatInteger(downloadCap)));
       maxDl?.focus();
       return;
     }
@@ -180,11 +184,12 @@ function initRequest(main: HTMLElement): void {
     }
     const singleUse = maybeId("request-single-use", HTMLInputElement)?.checked ?? false;
     const maxFilesInput = maybeId("request-max-files", HTMLInputElement);
-    const parsed = singleUse ? 1 : optionalPositiveInt(maxFilesInput);
+    const filesCap = inputMax(maxFilesInput, 1000);
+    const parsed = singleUse ? 1 : optionalPositiveInt(maxFilesInput, filesCap);
     // A single-use link closes on its first file, whatever the field says.
-    const maxFiles = parsed === undefined ? 10 : parsed;
+    const maxFiles = parsed === undefined ? Math.min(10, filesCap) : parsed;
     if (maxFiles === null) {
-      notice.error(t.maxFilesInvalid);
+      notice.error(t.maxFilesInvalid(formatInteger(filesCap)));
       maxFilesInput?.focus();
       return;
     }

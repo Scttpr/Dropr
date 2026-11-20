@@ -5,8 +5,14 @@ package web
 
 // DashboardView is the view model of "/" for a signed-in user.
 type DashboardView struct {
-	MaxFileSize   int64  // limits.max_file_size, plaintext bytes (data-max-file-size)
-	DefaultExpiry string // limits.default_expiry (data-default-expiry)
+	MaxFileSize   int64    // limits.max_file_size, plaintext bytes (data-max-file-size)
+	ExpiryChoices []string // limits.expiry_choices, shortest first
+	DefaultExpiry string   // limits.default_expiry (data-default-expiry)
+	// MaxDownloads caps the download limit of a share (0: no cap);
+	// DefaultMaxDownloads prefills it (0: empty).
+	MaxDownloads        int64
+	DefaultMaxDownloads int64
+	MaxRequestFiles     int // limits.max_request_files
 	// MaxRequestBytes is the default max_bytes of a new request link
 	// (data-max-request-bytes): the ciphertext size of one maximal file.
 	MaxRequestBytes int64
@@ -48,4 +54,26 @@ type RequestView struct {
 	// bytes_received), the value the server enforces.
 	RemainingBytes int64
 	MaxFileSize    int64 // limits.max_file_size, plaintext bytes
+}
+
+// DownloadCap is the largest download limit the form accepts.
+func (v *DashboardView) DownloadCap() int64 {
+	if v.MaxDownloads > 0 {
+		return v.MaxDownloads
+	}
+	return 999_999
+}
+
+// RequestFilesValue is the file count a new request link starts with.
+func (v *DashboardView) RequestFilesValue() int {
+	return min(10, max(v.MaxRequestFiles, 1))
+}
+
+// EmptyDownloads is the download limit a share gets when the field is left
+// empty under a cap: the default, else the cap.
+func (v *DashboardView) EmptyDownloads() int64 {
+	if v.DefaultMaxDownloads > 0 {
+		return v.DefaultMaxDownloads
+	}
+	return v.MaxDownloads
 }

@@ -78,3 +78,23 @@ func FormatExpiryIn(l i18n.Lang, expiresAt int64, now time.Time) string {
 	}
 	return l.T(other, n)
 }
+
+// FormatExpiryChoice renders a link expiry choice ("12h", "7d") as "12
+// hours" or "7 days" for the expiry menus. Choices are validated by the
+// configuration (limits.expiry_choices).
+func FormatExpiryChoice(l i18n.Lang, choice string) string {
+	n, err := strconv.Atoi(choice[:max(len(choice)-1, 0)])
+	if err != nil || n < 1 {
+		return choice
+	}
+	if strings.HasSuffix(choice, "h") {
+		if n == 1 {
+			return l.T(i18n.N("1 hour"))
+		}
+		return l.T(i18n.N("%d hours"), n)
+	}
+	if n == 1 {
+		return l.T(i18n.N("1 day"))
+	}
+	return l.T(i18n.N("%d days"), n)
+}

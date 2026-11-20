@@ -96,6 +96,10 @@ type Options struct {
 	// Brand is the instance's name and logos; the zero value means
 	// DefaultBrand.
 	Brand Brand
+	// Theme and Lang are the display defaults of visitors who picked none;
+	// the zero values mean DefaultTheme and i18n.Default.
+	Theme Theme
+	Lang  i18n.Lang
 }
 
 // PageData is the view model shared by all pages.
@@ -138,6 +142,8 @@ type Renderer struct {
 	assets     *Assets
 	loginLabel string
 	brand      Brand
+	theme      Theme
+	lang       i18n.Lang
 	log        *slog.Logger
 
 	missingOnce sync.Once
@@ -152,15 +158,22 @@ func NewRenderer(assets *Assets, opts Options, log *slog.Logger) (*Renderer, err
 	if opts.Brand.Name == "" {
 		opts.Brand = DefaultBrand
 	}
+	if _, ok := ParseTheme(string(opts.Theme)); !ok {
+		opts.Theme = DefaultTheme
+	}
+	if _, ok := i18n.Parse(string(opts.Lang)); !ok {
+		opts.Lang = i18n.Default
+	}
 	r := &Renderer{pages: map[i18n.Lang]map[string]*template.Template{}, assets: assets,
-		loginLabel: opts.LoginLabel, brand: opts.Brand, log: log}
+		loginLabel: opts.LoginLabel, brand: opts.Brand, theme: opts.Theme, lang: opts.Lang, log: log}
 	for _, lang := range i18n.Supported {
 		funcs := template.FuncMap{
-			"asset":     assets.URL,
-			"integrity": assets.Integrity,
-			"t":         lang.T,
-			"bytes":     func(n int64) string { return FormatBytesIn(lang, n) },
-			"expiresIn": func(at int64) string { return FormatExpiryIn(lang, at, time.Now()) },
+			"asset":        assets.URL,
+			"integrity":    assets.Integrity,
+			"t":            lang.T,
+			"bytes":        func(n int64) string { return FormatBytesIn(lang, n) },
+			"expiresIn":    func(at int64) string { return FormatExpiryIn(lang, at, time.Now()) },
+			"expiryChoice": func(c string) string { return FormatExpiryChoice(lang, c) },
 		}
 		r.pages[lang] = map[string]*template.Template{}
 		for _, name := range pageNames {
@@ -189,7 +202,7 @@ func (r *Renderer) Assets() *Assets { return r.assets }
 // Render writes page with status. Output is buffered so a template error
 // never produces a half-written page.
 func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, status int, page string, data PageData) {
-	lang := i18n.Negotiate(req)
+	lang := i18n.Negotiate(req, r.lang)
 	t, ok := r.pages[lang][page]
 	if !ok {
 		r.log.ErrorContext(req.Context(), "unknown page", "page", page)
@@ -197,7 +210,7 @@ func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, status int, 
 		return
 	}
 	data.Page = page
-	data.Lang, data.Theme, data.Langs = lang, ThemeOf(req), i18n.Supported
+	data.Lang, data.Theme, data.Langs = lang, ThemeOf(req, r.theme), i18n.Supported
 	data.Path = req.URL.RequestURI()
 	data.Brand = r.brand
 	if data.LoginLabel == "" {

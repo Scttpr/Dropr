@@ -100,9 +100,6 @@
 </div>
 {{end}}
 
-{{define "expiry-options"}}
-      <option value="1h"{{if eq . "1h"}} selected{{end}}>{{t "1 hour"}}</option>
-      <option value="1d"{{if eq . "1d"}} selected{{end}}>{{t "1 day"}}</option>
-      <option value="7d"{{if eq . "7d"}} selected{{end}}>{{t "7 days"}}</option>
-      <option value="30d"{{if eq . "30d"}} selected{{end}}>{{t "30 days"}}</option>
+{{define "expiry-options"}}{{range .ExpiryChoices}}
+      <option value="{{.}}"{{if eq . $.DefaultExpiry}} selected{{end}}>{{expiryChoice .}}</option>{{end}}
 {{end}}
