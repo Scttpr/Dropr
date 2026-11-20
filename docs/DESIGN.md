@@ -10,7 +10,7 @@ Exactly two flows. Everything else returns 404.
 
 | # | Actor | Action |
 |---|---|---|
-| A | Authenticated **owner** | Uploads a file and gets a **share link**. Anyone with the link can download. |
+| A | Authenticated **owner** | Uploads one or more files and gets a **share link**. Anyone with the link can download. Several files travel as one ZIP archive built in the browser. |
 | B | Authenticated **owner** | Creates a **request link**. Anyone with it can upload files that only that owner can read. |
 
 Users are strictly isolated. An account sees only the files and links it owns. There is no sharing between accounts, other than through the two link types above.
@@ -25,7 +25,7 @@ Non-goals: local accounts, public sign-up, folders, previews, comments, editing,
 | Supported provider | Microsoft Entra ID is officially supported ([oidc.md](oidc.md)). Other compliant providers (Keycloak, Authentik, Okta, ...) work if they meet the same requirements, on a best-effort basis. Keycloak is used in development and CI. |
 | Request link key | Each request link has its own X25519 key pair, generated in the owner's browser when the link is created. The private key stays in that browser (IndexedDB, non-extractable). OIDC proves identity; the browser profile holds the keys. |
 | Users | Several accounts per instance. Access is granted by a role claim from the provider (in Entra, an app role). A file belongs to exactly one owner. |
-| File size | Configurable per instance and per request link. Default 5 GB, hard maximum 100 GB. |
+| File size | Configurable per instance and per request link. Default 5 GB, hard maximum 100 GB. For a share of several files, the limit applies to the archive (their total). |
 | Lost browser data | Files received through a link open only in the browser profile that created it. Clearing that site's data, or losing the device, makes them unreadable. Accepted. The UI says so where links are created and listed. |
 | Backend language | Go |
 | Architecture | **Monolith**: one Go binary serves the HTML pages, the API and the static assets, all embedded with `go:embed`. Pages are rendered on the server. The only browser JavaScript is what must run client-side: encryption, request link keys, streaming transfers. |

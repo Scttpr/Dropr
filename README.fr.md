@@ -15,7 +15,8 @@ Deux usages, rien de plus :
 * **Demande** : un propriétaire crée un lien de demande. Toute personne qui a
   ce lien peut envoyer des fichiers que seul ce propriétaire pourra lire.
 
-Les fichiers vont jusqu'à 100 Go (plafond par défaut : 5 Go). Les envois
+Les fichiers vont jusqu'à 100 Go (plafond par défaut : 5 Go ; pour plusieurs
+fichiers partagés ensemble, le plafond s'applique à leur total). Les envois
 reprennent après une coupure ; les téléchargements sont écrits au fil de l'eau
 sur le disque. L'interface est en anglais et en français, avec des thèmes
 clair, sombre et système, et peut porter le nom et le logo de votre
