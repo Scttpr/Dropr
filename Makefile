@@ -51,11 +51,12 @@ lint-ci:
 vuln:
 	$(NIX) govulncheck ./...
 
-# Runs every native fuzz target for $(FUZZTIME) each.
+# Runs every native fuzz target for $(FUZZTIME) each (scripts/fuzz.sh: a
+# stop at the deadline with no failing input is not a failure).
 fuzz:
 	@set -e; for pkg in $$($(GO) list ./... 2>/dev/null); do \
 	  for f in $$($(GO) test -list '^Fuzz' $$pkg 2>/dev/null | grep '^Fuzz' || true); do \
-	    echo "== $$pkg $$f"; $(GO) test -run '^$$' -fuzz "^$$f$$" -fuzztime $(FUZZTIME) $$pkg; \
+	    echo "== $$pkg $$f"; $(NIX) scripts/fuzz.sh $$pkg $$f $(FUZZTIME); \
 	  done; \
 	done
 
