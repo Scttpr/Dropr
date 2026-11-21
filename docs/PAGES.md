@@ -147,7 +147,7 @@ share one browser profile without touching each other's keys
 ```html
 <section aria-labelledby="share-heading">
   <h2 id="share-heading">Share files</h2>
-  <form id="share-form" data-js-only hidden>
+  <form id="share-form" data-js-only hidden novalidate>
     <div id="drop-zone" class="drop-zone">
       <label for="file-input">Drop files or folders here, or choose files</label>
       <input type="file" id="file-input" name="files" multiple>
@@ -194,7 +194,9 @@ share one browser profile without touching each other's keys
 </section>
 ```
 
-Required ids: `share-form` (a `<form>`), `drop-zone`, `file-input`
+Required ids: `share-form` (a `<form>` with `novalidate`: the module checks
+the fields and reports errors in `share-error`, which native validation would
+pre-empt), `drop-zone`, `file-input`
 (`<input type=file>`), `upload-panel`, `upload-progress`
 (`<progress>`), `upload-status`, `share-result`, `share-link` (`<input>`),
 `share-copy` (`<button>`), `share-error`. Optional: `expires-in` (`<select>`;
