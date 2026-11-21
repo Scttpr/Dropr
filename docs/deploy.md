@@ -339,7 +339,7 @@ Docker `docker compose exec dropr dropr help` from `/etc/dropr`.
 
   ```sh
   # Everything about one link, from creation to purge:
-  sudo -u dropr dropr log-ref <link-id>          # prints: link 1a2b3c4d5e6f
+  sudo -u dropr dropr log-ref -- <link-id>       # "--": an ID may start with "-"; prints: link 1a2b3c4d5e6f
   journalctl -u dropr -o cat | jq -c 'select(.link == "1a2b3c4d5e6f")'
   # Files received per day:
   journalctl -u dropr -o cat | jq -r 'select(.event == "request.file_received") | .time[:10]' | sort | uniq -c

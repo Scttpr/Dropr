@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -358,6 +359,32 @@ func TestFileCleanupCommands(t *testing.T) {
 	}
 }
 
+func TestParseFlagsAndPositionals(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		args    []string
+		pos     []string
+		cfg     string
+		wantErr bool
+	}{
+		{[]string{"a", "--config", "c", "b"}, []string{"a", "b"}, "c", false},
+		{[]string{"--config", "c", "--", "-x", "--config"}, []string{"-x", "--config"}, "c", false},
+		{[]string{"a", "--", "-b"}, []string{"a", "-b"}, defaultConfig, false},
+		{[]string{"--"}, nil, defaultConfig, false},
+		{[]string{"-b"}, nil, "", true},
+	} {
+		fs, cfg := newFlags("t", io.Discard)
+		pos, err := parse(fs, tc.args)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%q: err %v", tc.args, err)
+			continue
+		}
+		if !tc.wantErr && (!slices.Equal(pos, tc.pos) || *cfg != tc.cfg) {
+			t.Errorf("%q: got %q config %q, want %q config %q", tc.args, pos, *cfg, tc.pos, tc.cfg)
+		}
+	}
+}
+
 // log-ref prints the references the server logs: the same derivation from
 // the refresh_key, the fragment of a link URL ignored and never echoed.
 func TestLogRef(t *testing.T) {
@@ -369,9 +396,10 @@ func TestLogRef(t *testing.T) {
 	}
 	ipKey, _ := seal.Derive(cfg.RefreshKey, seal.InfoIPHash)
 	hasher := httpx.NewIPHasher(ipKey)
-	id := ids.New()
+	// An ID may start with "-" (base64url): it goes after "--".
+	id := "-" + ids.New()[1:]
 	key := "c2VjcmV0LWtleS1vZi10aGUtbGluaw"
-	code, out, errOut := runCLI(t, "", "log-ref", "--config", p, id, "https://drop.example/s/"+id+"#"+key, "/r/"+id,
+	code, out, errOut := runCLI(t, "", "log-ref", "--config", p, "--", id, "https://drop.example/s/"+id+"#"+key, "/r/"+id,
 		"192.0.2.7", "::ffff:192.0.2.7", "2001:db8::1")
 	if code != 0 {
 		t.Fatalf("code %d: %s", code, errOut)
@@ -386,7 +414,7 @@ func TestLogRef(t *testing.T) {
 		t.Error("the link key was printed")
 	}
 
-	code, out, errOut = runCLI(t, "", "log-ref", "--config", p, id, "https://drop.example/x/abc#"+key, "not-an-id")
+	code, out, errOut = runCLI(t, "", "log-ref", "--config", p, "--", id, "https://drop.example/x/abc#"+key, "not-an-id")
 	if code != 2 || out != link+"\n" || !strings.Contains(errOut, "argument 2, 3") || strings.Contains(errOut, key) || strings.Contains(errOut, "not-an-id") {
 		t.Fatalf("invalid: %d %q %q", code, out, errOut)
 	}
