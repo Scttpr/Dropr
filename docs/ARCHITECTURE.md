@@ -4,7 +4,8 @@ This document is the **binding contract** between the Go server, the browser
 modules and the tests. [DESIGN.md](DESIGN.md) is the product spec; this file pins the
 details the design leaves open. Change it only deliberately, and update every
 side at once. "Audit X-n" cites a finding of the
-2026-11 internal audit.
+2026-11 internal audits (the reports are not in the repository; the finding
+names stay in code comments and docs).
 
 ## 0. Environment
 
@@ -56,7 +57,8 @@ web/                      TypeScript browser modules (esbuild), zero runtime dep
 e2e/                      Playwright specs (tests/), fixtures
 dev/                      compose.yaml (dev Keycloak), dropr.toml (dev config), client_secret,
                           keycloak/ (dev realm, TEST-ONLY private_key_jwt key), branding/ (generic test logos)
-docs/                     design, contracts, format, pages, threat model, OIDC providers, 2026-11 audit
+scripts/                  update-hashes.sh (`make hashes`), fuzz.sh (one fuzz target; `make fuzz`, nightly), ci/ (workflow helpers)
+docs/                     design, contracts, format, pages, threat model, OIDC providers, deployment (fr/: French)
 ```
 
 Go: stdlib-first. Direct dependencies: `coreos/go-oidc/v3`, `golang.org/x/oauth2`,

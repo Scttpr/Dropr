@@ -206,6 +206,7 @@ display_claim   = "name"
 * With `offline_access` in `scopes`, Keycloak issues offline tokens that
   survive the end of the SSO session; access is then cut only by disabling the
   user or revoking the offline session. Without it (as above), revalidation
-  follows the SSO session, so keep *SSO Session Idle* at least 30 minutes and
-  *SSO Session Max* at least 8 hours (Dropr's own session limits).
+  follows the SSO session, so keep *SSO Session Idle* and *SSO Session Max* at
+  least Dropr's own `session_idle_timeout` and `session_max_age` (30 minutes
+  and 8 hours by default).
 * A client role works too: `role_claim = "resource_access.<client-id>.roles"`.

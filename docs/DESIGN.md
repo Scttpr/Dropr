@@ -15,7 +15,7 @@ Exactly two flows. Everything else returns 404.
 
 Users are strictly isolated. An account sees only the files and links it owns. There is no sharing between accounts, other than through the two link types above.
 
-Non-goals: local accounts, public sign-up, folders, previews, comments, editing, federation, multi-instance, peer-to-peer transfer (all data goes through the single server).
+Non-goals: local accounts, public sign-up, folders as stored objects (a dropped folder is sent as its files), previews, comments, editing, federation, multi-instance, peer-to-peer transfer (all data goes through the single server).
 
 ## 2. Decisions
 
@@ -112,7 +112,7 @@ revalidate_every = "15m"
 ### 5.3 Sessions
 
 - Server-side sessions with a `__Host-` cookie, `Secure; HttpOnly; SameSite=Strict`. The cookie holds a random 256-bit ID; the database stores only its SHA-256 hash.
-- 30 min idle timeout, 8 h absolute timeout by default (`session_idle_timeout`, `session_max_age`), plus OIDC revalidation every 15 min.
+- 30 min idle timeout, 8 h absolute timeout by default (`session_idle_timeout`, `session_max_age`), plus OIDC revalidation every 15 min by default (`revalidate_every`).
 - By default the cookie lasts until the absolute timeout, across browser restarts. `session_cookie = "browser"` makes it a browser-session cookie (no `Max-Age`): closing the browser signs the user out, unless the browser restores the previous session ("Continue where you left off" keeps session cookies).
 - The session ID rotates at login. Signing in again ends the browser's previous session: its hash travels in the sealed OIDC state cookie and that session is deleted at a successful callback (a cancelled or refused sign-in keeps it).
 
@@ -192,21 +192,21 @@ blobs     (id, parts, size, complete, created_at)
 │   Received files (3)    Active links (2) │
 └──────────────────────────────────────────┘
 ```
-- Chosen files are listed first (name, size, **Remove**), then **Share** uploads them: one file as is, several as one ZIP archive built in the browser. A progress bar (resumable), then the link with **Copy** and the expiry (7 days preselected).
+- Chosen files are listed first (name, size, **Remove**), then **Share** uploads them: one file as is, several as one ZIP archive built in the browser. A progress bar (resumable), then the link with **Copy** and the expiry (the instance default preselected, 7 days unless set).
 - After creating a request link: the link with **Copy**, and a note that files sent through it open only in this browser.
 - Received: name, size, date, **Download** and **Delete**. Files received through a link created in another browser show size, date and **Delete** only.
 
 **Share recipient**: filename, size, a big **Download** button, "Expires in 6 days". No login.
 
-**Request uploader**: "Send a file to Alice", a drop zone, progress, then "✓ Sent. You can close this page." No login.
+**Request uploader**: "Send a file to Alice", a drop zone (several files or a dropped folder; each file is encrypted and sent on its own, within the link's file and size limits), progress, then "✓ Sent. You can close this page." No login.
 
 Errors are written in plain language: "This link has expired."
 
 **Language and theme**: English and French, picked from the browser's
 language (the instance names the fallback, English unless set) and
 switchable on every page; light theme by default (the instance may pick
-another), plus dark and "follow the system". Both work without JavaScript (a small form in the page
-header) and are remembered in cookies.
+another), plus dark and "follow the system". Both work without JavaScript (a
+small form in the page header) and are remembered in cookies.
 
 ## 10. Self-hosting
 
@@ -217,7 +217,7 @@ The product constraints the code enforces:
 - **TLS**: `acme` or `proxy` (§7). Dropr is always served from the root of its own origin; `public_url` has no path.
 - **Startup checks**: Dropr validates the configuration (unknown keys are errors), then checks provider discovery and its capabilities (PKCE S256, `private_key_jwt`, refresh tokens). In production mode, the default, it refuses to start on: a non-`https` `public_url` or issuer, `client_secret` authentication, a provider missing a required capability, a multi-tenant issuer, proxy mode without `trusted_proxies` (or `trust_unix_socket_proxy` on a socket), world-readable secret files, an expired client certificate. Dev mode downgrades the PKCE, refresh-token and `private_key_jwt` checks to warnings and allows `http://localhost`.
 - **Backups**: `dropr backup` writes a consistent online copy of the database; the blobs are already encrypted. The database holds encrypted refresh tokens and HPKE-wrapped file keys, so protect it. Request link private keys are not on the server: they live in the owners' browser profiles, outside any server backup.
-- **Releases**: signed git tags, static binaries with signed checksums, and published asset hashes ([SECURITY.md](../SECURITY.md)).
+- **Releases**: signed git tags, static binaries (Linux amd64 and arm64) with signed checksums and SBOMs, a signed multi-arch container image, and published asset hashes ([SECURITY.md](../SECURITY.md)).
 
 ## 11. Threat model summary
 

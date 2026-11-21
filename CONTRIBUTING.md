@@ -39,7 +39,7 @@ make lint-ci                  # actionlint, zizmor and shellcheck on .github/ an
 make test-keycloak            # Go integration tests with real logins (needs make keycloak-up)
 make e2e                      # Playwright: Chromium, Firefox, WebKit (needs make keycloak-up)
 make e2e E2E_PROJECTS=chromium
-make fuzz FUZZTIME=20s        # every native fuzz target
+make fuzz FUZZTIME=20s        # every native fuzz target (scripts/fuzz.sh)
 cd web && npm ci && npm run typecheck && npm test
 nix flake check               # reference builds, go vet and tests, web tests
 ```
