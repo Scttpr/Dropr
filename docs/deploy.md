@@ -113,14 +113,6 @@ auth_rate_per_minute = 300
 auth_burst           = 100
 ```
 
-**Sign out when the browser closes.** By default the session cookie lasts
-until the 8-hour limit, even across browser restarts. On shared workstations
-set `session_cookie = "browser"`: closing every browser window then ends the
-session (the 30-minute idle and 8-hour limits still apply). Chrome and Edge
-keep session cookies when they restore the previous session ("Continue where
-you left off"); disable it by policy (`RestoreOnStartup` set to a value other
-than 1) for this to work.
-
 **Session length.** A session ends after 30 minutes without activity and
 8 hours after sign-in. Align both with your organization's policy:
 
@@ -128,6 +120,14 @@ than 1) for this to work.
 session_idle_timeout = "1h"    # 5m to 24h
 session_max_age      = "10h"   # 15m to 30d, at least the idle timeout
 ```
+
+**Sign out when the browser closes.** By default the session cookie lasts
+until `session_max_age`, even across browser restarts. On shared workstations
+set `session_cookie = "browser"`: closing every browser window then ends the
+session (both limits above still apply). Chrome and Edge keep session cookies
+when they restore the previous session ("Continue where you left off");
+disable it by policy (`RestoreOnStartup` set to a value other than 1) for this
+to work.
 
 **Link options.** The expiry menus offer 1 hour, 1 day, 7 days and 30 days.
 Offer your own durations, in hours or days (1h to 365d, up to 8), and cap

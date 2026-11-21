@@ -21,7 +21,9 @@ Two flows, nothing else:
 Files go up to 100 GB (default cap 5 GB; for several files shared at once,
 the cap applies to their total). Uploads are resumable; downloads
 stream to disk. The interface is in English and French, with light, dark and
-system themes, and can carry your organization's name and logo.
+system themes, and can carry your organization's name and logo. Each instance
+sets its own link expiries, download and file limits, session lengths and
+display defaults.
 
 ## Security model
 
@@ -96,7 +98,7 @@ admin commands: `user list|revoke|disable|enable|purge|migrate`, `gc`, `backup`,
 
 ## Status
 
-Pre-release. An external security review is required before real use.
+Released as signed versions since v1.0.0 ([releases](https://github.com/Scttpr/Dropr/releases)). Dropr has not had an external security review yet: get one before real use.
 
 ## License
 

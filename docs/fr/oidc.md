@@ -230,7 +230,7 @@ display_claim   = "name"
   survivent à la fin de la session SSO ; l'accès n'est alors coupé qu'en
   désactivant l'utilisateur ou en révoquant la session hors ligne. Sans lui
   (comme ci-dessus), la revalidation suit la session SSO : gardez *SSO Session
-  Idle* à au moins 30 minutes et *SSO Session Max* à au moins 8 heures (les
-  limites de session propres à Dropr).
+  Idle* et *SSO Session Max* au moins égaux aux `session_idle_timeout` et
+  `session_max_age` de Dropr (30 minutes et 8 heures par défaut).
 * Un rôle de client fonctionne aussi :
   `role_claim = "resource_access.<client-id>.roles"`.

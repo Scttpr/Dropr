@@ -509,7 +509,9 @@ Required: `drop-zone`, `file-input` (`<input type=file multiple>`),
 
 Behaviour: the link's public key is in the URL fragment; without a valid
 fragment the drop zone is hidden and "This link is incomplete or damaged…"
-is shown. Files are sent one after the other; then `#upload-done` is shown
+is shown. A dropped folder is walked like on the dashboard (up to 10 000
+files, system files skipped); its files are not zipped. Files are sent one
+after the other, each as its own encrypted file; then `#upload-done` is shown
 and focused. Cancelling says that the link keeps room for the cancelled
 file for up to 24 hours (its reservation is released by the cleanup of
 stale uploads). Dead links: render the state server-side as for `/s/{id}`.

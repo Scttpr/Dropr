@@ -20,7 +20,9 @@ fichiers partagés ensemble, le plafond s'applique à leur total). Les envois
 reprennent après une coupure ; les téléchargements sont écrits au fil de l'eau
 sur le disque. L'interface est en anglais et en français, avec des thèmes
 clair, sombre et système, et peut porter le nom et le logo de votre
-organisation.
+organisation. Chaque instance règle ses durées d'expiration, ses limites de
+téléchargements et de fichiers, la durée des sessions et l'affichage par
+défaut.
 
 ## Modèle de sécurité
 
@@ -111,7 +113,7 @@ En cas de divergence, la version anglaise fait foi.
 
 ## État
 
-Pré-version. Une revue de sécurité externe est nécessaire avant un usage réel.
+Publié en versions signées depuis v1.0.0 ([versions](https://github.com/Scttpr/Dropr/releases)). Dropr n'a pas encore fait l'objet d'une revue de sécurité externe : faites-en faire une avant un usage réel.
 
 ## Licence
 
