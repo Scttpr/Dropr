@@ -356,7 +356,7 @@ Les commandes d'administration tournent sous le compte de service :
 
   ```sh
   # Tout ce qui concerne un lien, de sa création à sa purge :
-  sudo -u dropr dropr log-ref <id-du-lien>       # affiche : link 1a2b3c4d5e6f
+  sudo -u dropr dropr log-ref -- <id-du-lien>    # « -- » : un identifiant peut commencer par « - » ; affiche : link 1a2b3c4d5e6f
   journalctl -u dropr -o cat | jq -c 'select(.link == "1a2b3c4d5e6f")'
   # Fichiers reçus par jour :
   journalctl -u dropr -o cat | jq -r 'select(.event == "request.file_received") | .time[:10]' | sort | uniq -c

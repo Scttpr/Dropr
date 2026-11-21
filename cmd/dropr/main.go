@@ -77,6 +77,7 @@ Commands:
 log-ref takes link IDs (the part after /s/ or /r/), link URLs or IP
 addresses. Prefer the bare ID: a full share link holds its key after "#",
 which your shell history would keep (log-ref ignores and never prints it).
+IDs may start with "-": put them after "--" (dropr log-ref -- -AbC...).
 Every command except version accepts --config (default `+defaultConfig+`).
 `)
 }
@@ -135,19 +136,25 @@ func newFlags(name string, stderr io.Writer) (*flag.FlagSet, *string) {
 	return fs, cfg
 }
 
-// parse parses flags allowing them before or after positional arguments.
+// parse parses flags allowing them before or after positional arguments;
+// after "--" every argument is positional.
 func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	var pos []string
 	for {
 		if err := fs.Parse(args); err != nil {
 			return nil, err
 		}
-		args = fs.Args()
-		if len(args) == 0 {
+		rest := fs.Args()
+		// fs.Parse consumes a "--" terminator: everything after it is
+		// positional, even what starts with "-" (IDs are base64url).
+		if n := len(args) - len(rest); n > 0 && args[n-1] == "--" {
+			return append(pos, rest...), nil
+		}
+		if len(rest) == 0 {
 			return pos, nil
 		}
-		pos = append(pos, args[0])
-		args = args[1:]
+		pos = append(pos, rest[0])
+		args = rest[1:]
 	}
 }
 
