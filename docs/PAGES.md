@@ -208,7 +208,7 @@ share (`DELETE /api/shares/{id}`).
   <h2 id="request-heading">Receive a file</h2>
   <p class="muted">Create a link that lets someone send you files, even without an account.
      Only you can open them, in this browser.</p>
-  <form id="request-form" data-js-only hidden>
+  <form id="request-form" data-js-only hidden novalidate>   <!-- the module validates and reports in request-error -->
     <label for="request-expires-in">Link expires after</label>
     <select id="request-expires-in">…same options…</select>
     <label for="request-max-files">Maximum number of files</label>
