@@ -20,8 +20,9 @@ let report: TestFile;
 let url = "";
 let archiveName = "";
 
-test("owner picks several files, edits the list and shares them as one archive", async ({ alice, filesDir, dropr, browserName }) => {
-  test.skip(browserName !== "chromium", "owner-only (owner pages run in Chromium)");
+// The owner is always in Chromium; this step runs in every project so each
+// worker's Dropr has a share for its recipient browser.
+test("owner picks several files, edits the list and shares them as one archive", async ({ alice, filesDir, dropr }) => {
   mkdirSync(join(filesDir, "a"), { recursive: true });
   mkdirSync(join(filesDir, "b"), { recursive: true });
   notesA = await makeFile(join(filesDir, "a"), "notes.txt", 4_321);
