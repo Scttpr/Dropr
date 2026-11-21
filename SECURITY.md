@@ -60,7 +60,7 @@ the browser bundle is built reproducibly and its hashes are published.
 ### Verify the binaries
 
 ```sh
-V=v1.2.0
+V=v1.3.0
 cosign verify-blob --bundle dropr-$V-SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -82,7 +82,7 @@ Releases up to v1.0.0 were signed by `ci.yml` instead of `release.yml`: use
 ### Verify the container image
 
 ```sh
-V=v1.2.0
+V=v1.3.0
 cosign verify ghcr.io/scttpr/dropr:$V \
   --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
@@ -98,7 +98,7 @@ have been published since v1.1.0.
 Do this before using `dropr-assets-<version>.sha256` in the checks below:
 
 ```sh
-V=v1.2.0
+V=v1.3.0
 cosign verify-blob --bundle dropr-assets-$V.sha256.sigstore.json \
   --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -116,10 +116,10 @@ reproduce their hashes instead.
 
 ```sh
 git clone https://github.com/scttpr/dropr && cd dropr
-git verify-tag v1.2.0 && git checkout v1.2.0
+git verify-tag v1.3.0 && git checkout v1.3.0
 nix build .#web-assets
 { (cd result && sha256sum *); (cd internal/web/static && sha256sum app.css favicon.svg); } | sort -k2 > mine.sha256
-sort -k2 dropr-assets-v1.2.0.sha256 | diff - mine.sha256 && echo "assets match the release"
+sort -k2 dropr-assets-v1.3.0.sha256 | diff - mine.sha256 && echo "assets match the release"
 ```
 
 The build is deterministic: content-hashed file names, no source maps, fixed
@@ -147,7 +147,7 @@ while read -r sum file; do
   esac
   got=$(curl -fsS "$url" | sha256sum | cut -d' ' -f1)
   [ "$got" = "$sum" ] && echo "ok   $file" || echo "DIFF $file"
-done < <(sed 's/  */ /' dropr-assets-v1.2.0.sha256)
+done < <(sed 's/  */ /' dropr-assets-v1.3.0.sha256)
 ```
 
 Any `DIFF`, or a page that references a script not in the release list, means

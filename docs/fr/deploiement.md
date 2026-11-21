@@ -30,7 +30,7 @@ Téléchargez `dropr-<version>-linux-amd64` (ou `-arm64`) et les fichiers
 signature avec [cosign](https://github.com/sigstore/cosign) :
 
 ```sh
-V=v1.2.0
+V=v1.3.0
 cosign verify-blob --bundle dropr-$V-SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -270,7 +270,7 @@ Vérifiez l'image et notez son empreinte (digest), puis créez le répertoire de
 données que systemd créerait sinon :
 
 ```sh
-V=v1.2.0
+V=v1.3.0
 cosign verify ghcr.io/scttpr/dropr:$V \
   --certificate-identity-regexp '^https://github.com/Scttpr/Dropr/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -284,7 +284,7 @@ id dropr    # uid et gid pour le fichier compose
 ```yaml
 services:
   dropr:
-    image: ghcr.io/scttpr/dropr:v1.2.0@sha256:<digest>
+    image: ghcr.io/scttpr/dropr:v1.3.0@sha256:<digest>
     user: "<uid>:<gid>"
     restart: unless-stopped
     stop_grace_period: 35s
