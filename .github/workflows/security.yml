@@ -71,6 +71,12 @@ jobs:
           allow-licenses: >-
             MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD,
             MPL-2.0, BlueOak-1.0.0, CC0-1.0, Unlicense
+          # golang.org/x modules are BSD-3-Clause plus Google's PATENTS grant,
+          # which the scanner reports as LicenseRef-scancode-google-patent-license-golang.
+          allow-dependencies-licenses: >-
+            pkg:golang/golang.org/x/crypto, pkg:golang/golang.org/x/net,
+            pkg:golang/golang.org/x/oauth2, pkg:golang/golang.org/x/sys,
+            pkg:golang/golang.org/x/text, pkg:golang/golang.org/x/time
           show-openssf-scorecard: true
 
   vulnerabilities:
