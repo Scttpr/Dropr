@@ -22,7 +22,7 @@
  */
 
 import { build, type BuildOptions } from "esbuild";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { gzipSync } from "node:zlib";
@@ -45,10 +45,18 @@ const hasSw = tsFiles.includes(SW);
 
 mkdirSync(outdir, { recursive: true });
 const manifestPath = join(outdir, "manifest.json");
-if (existsSync(manifestPath)) {
-  const old = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, string>;
-  for (const file of Object.values(old)) {
-    if (file === basename(file)) rmSync(join(outdir, file), { force: true });
+const old = readPreviousManifest();
+for (const file of Object.values(old)) {
+  if (file === basename(file)) rmSync(join(outdir, file), { force: true });
+}
+
+/** The previous build's manifest, or {} on a first build (read without a separate existence check). */
+function readPreviousManifest(): Record<string, string> {
+  try {
+    return JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, string>;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw e;
   }
 }
 
